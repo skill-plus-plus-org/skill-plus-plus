@@ -31,6 +31,14 @@ nothing real. See §12 for what is built and what is not.
 │   • Passive MCP & terminal execution traces                  │
 │   • Active natural-language text / voice dictation           │
 └───────────────────────────────┬──────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│                        SEGMENTATION                          │
+│   Session cut into task episodes — one workflow per entry    │
+│   Boundaries: completion markers · new prompt                │
+│   No marker and nothing shipped → flagged, not proposed      │
+└───────────────────────────────┬──────────────────────────────┘
                                 │ summarized + sanitized on write
                                 ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -75,7 +83,18 @@ nothing real. See §12 for what is built and what is not.
 * **Passive listener:** A lightweight background daemon or terminal hook observes execution traces — commands, MCP calls, file edit sequences.
 * **Active dictation:** Workflows can be dictated in plain English (*"when we update X, run Y, check Z, then notify the on-call"*), for quick-thinking developers and non-technical contributors alike.
 
-### Step 2 — Summarize on Write (not on read)
+### Step 2 — Segment into tasks
+
+A session is not a workflow. One sitting routinely holds several unrelated tasks — a deploy, an unrelated bug fix, an investigation that goes nowhere — and fingerprinting the whole thing as one unit is why a workflow performed three times can register as three unrelated one-offs that never reach the threshold. **Developers reuse tasks, not sessions**, so the unit of comparison has to be the unit of reuse.
+
+Sessions are therefore cut into episodes before anything is fingerprinted, on two signals that cost nothing to compute:
+
+* **Completion markers** — a command whose success means the developer's *goal* is done, not merely that a step worked. Version-control verbs qualify: nobody commits halfway through a thought. Infrastructure commands (`terraform apply`, `kubectl apply`, `npm publish`) deliberately do not — see §5b.
+* **A new prompt** — the developer stating a fresh goal, recognised by its position in the recorded stream rather than by any clock. No idle-gap timer: a threshold needs tuning per person and misfires the moment somebody reads documentation mid-task.
+
+A boundary that would leave an episode of fewer than two substantive steps is ignored, because one step is not a workflow. An episode that ends only because the session did, with no marker, is **flagged rather than proposed** — that is an investigation with nothing to show for itself.
+
+### Step 3 — Summarize on Write (not on read)
 
 Raw traces are **never persisted**. At capture time each observation is compressed into a compact markdown ledger entry and scrubbed in the same pass:
 
@@ -83,7 +102,7 @@ Raw traces are **never persisted**. At capture time each observation is compress
 * **Sanitization happens once, on write.** An AST/regex scan strips API keys, tokens, credentials, internal URLs, and customer PII before anything touches disk — so the ledger is never a liability sitting in a buffer waiting to be cleaned later.
 * **Searchability comes for free**, because entries are already text.
 
-### Step 3 — Candidate Surfacing (two entry points)
+### Step 4 — Candidate Surfacing (two entry points)
 
 The ledger is not just a suggestion queue; it is a searchable record of your own work.
 
@@ -92,7 +111,7 @@ The ledger is not just a suggestion queue; it is a searchable record of your own
 
 Unapproved candidates expire and self-delete after 7–14 days.
 
-### Step 4 — Review & Promotion (pull, never push)
+### Step 5 — Review & Promotion (pull, never push)
 
 **No interrupting popups.** Candidates persist in the ledger, so review is something the developer pulls when they have attention to spare: an explicit review command, a prompt at session end, a weekly digest, or a nudge at PR time.
 
@@ -104,7 +123,7 @@ Review is designed to take seconds, not minutes:
 
 Nothing is written to the skill library without passing this gate.
 
-### Step 5 — Synthesis
+### Step 6 — Synthesis
 
 Only after approval is a `SKILL.md` generated.
 
@@ -187,6 +206,16 @@ A `SKILL.md` is an instruction file, not a tool definition. It cannot declare a 
 * **Declare dependencies** — required servers and CLIs — in the `metadata` frontmatter key, which is already supported in the wild and requires no spec extension.
 * **Check at pull, not at run.** On install, declared deps are diffed against the teammate's connected servers and missing ones are reported immediately. A skill whose dependency is absent must state what is missing and stop cleanly — never improvise a workaround.
 
+### 5b. Why the marker list is short
+
+Segmentation (§3, step 2) cuts on completion markers, and the temptation is to treat every "work landed" command as one. Infrastructure verbs are excluded on purpose, and the reason generalises.
+
+Take a deploy that runs `terraform apply` and then `./scripts/deploy.sh <target>`. Treat `terraform apply` as a marker and the episode closes one step early, leaving `deploy.sh` as a fragment below the minimum size, which is then discarded. The truncated prefix is *identical across every occurrence*, so it still merges, still reaches the recurrence threshold, and still presents as a clean candidate — one that builds and provisions but never deploys, with nothing anywhere to flag it as incomplete.
+
+**Over-cutting is worse than under-cutting.** An under-cut candidate is visibly wrong — a sprawling signature, a title naming the wrong task — and dies at review. An over-cut one looks correct and is silently missing its payload. A marker therefore has to mean *the developer's goal is done*, not *a step succeeded*.
+
+Tests going red→green are excluded for the same reason: green tests mean the goal was met only when testing *was* the goal. Usually they are mid-task verification, and `signals.py` already mines the failure-then-retry pattern for question generation, which is the right use of it.
+
 ---
 
 ## 6. Lifecycle, Decay & Storage
@@ -235,13 +264,16 @@ Claude Code fires hooks — shell commands receiving JSON on stdin — at `PreTo
 
 **The decisive advantage is `UserPromptSubmit`.** It captures what the developer *asked for* next to what actually *ran*. Intent is the half of the picture a raw command log can never recover, and having it in the same session materially improves synthesis — it is what reduces §4's clarification pass from an interview to a confirmation.
 
+It earns its keep twice over, because a prompt is also a **task boundary**. Prompts are recorded into the ordered step stream, not a separate list, so position alone records which prompt preceded which work — no timestamps, no gap threshold, nothing to tune. A shell-history tool has neither half.
+
 ### Surface mapping
 
 | Skill Plus Plus concept | Claude Code primitive |
 | --- | --- |
 | Trace capture | `PostToolUse` / `PreToolUse` hooks |
 | Intent capture | `UserPromptSubmit` hook |
-| Ledger write + review nudge | `SessionEnd` hook |
+| Task boundaries | `UserPromptSubmit` — recorded in the step stream, so a prompt's position marks where one task ends and the next begins |
+| Segmentation + ledger write + review nudge | `SessionEnd` hook |
 | Pull-based review UI | `.claude/commands/skillpp-review.md` → `/skillpp-review` |
 | Skill output | `.claude/skills/<name>/SKILL.md` + `scripts/` |
 | Dependency check at pull | Diff declared deps against `.mcp.json` and connected `mcp__<server>__<tool>` names |
@@ -319,6 +351,7 @@ to import a third-party package is a hook that breaks somebody's session.
 skillpp/
   config.py      paths and thresholds, all env-overridable
   sanitize.py    secret/PII scrubbing, applied on write
+  segment.py     cuts a session into task episodes
   normalize.py   parameterisation + workflow signatures
   ledger.py      candidate entries: markdown body, JSON payload
   recurrence.py  lexical similarity and merge
@@ -331,7 +364,8 @@ skillpp/
 commands/skillpp-review.md   /skillpp-review — review captured candidates
 commands/skillpp-new.md      /skillpp-new    — build a skill from a description
 examples/demo.sh             end-to-end walkthrough on a scratch ledger
-tests/test_skillpp.py        63 tests
+tests/fixtures/messy_session.py  demo.sh's sessions, polluted with unrelated work
+tests/test_skillpp.py        88 tests
 ```
 
 ### Division of labour
@@ -361,14 +395,25 @@ worth reading. Neither half is useful alone.
 
 ### Built
 
-Capture with intent, sanitize-on-write (typed placeholders that keep
-signatures stable), the ledger with lexical dedup and TTL expiry, all five
-trace gap signals from §4 with the three-question cap and duplicate
-suppression, the dictation path with its completeness check and threshold
-bypass, effect-first proposals, scaffolding with declared deps and
+Capture with intent, segmentation into task episodes, sanitize-on-write (typed
+placeholders that keep signatures stable), the ledger with lexical dedup and
+TTL expiry, all five trace gap signals from §4 with the three-question cap and
+duplicate suppression, the dictation path with its completeness check and
+threshold bypass, effect-first proposals, scaffolding with declared deps and
 `## Known gaps` that close when answered, pull-time dependency checking,
 hot/cold/archived demotion, staleness by reference resolution, and usage
 tracking driven by observed `Skill` calls.
+
+**Segmentation, measured.** `tests/fixtures/messy_session.py` takes the three
+`demo.sh` deploy sessions, keeps the deploy byte-identical across all three so
+it genuinely recurs, and surrounds each occurrence with different unrelated
+work. Folded as whole sessions, the deploy scores 0.358–0.475 against the 0.85
+threshold and is filed as three unrelated one-offs, each titled after whatever
+happened to come first. Segmented, it is recovered as a single candidate at
+three occurrences with a signature identical to the unpolluted baseline, and
+titled after the deploy. Both halves are asserted, because the whole-session
+path survives as `_fold_steps` and is still taken by single-episode sessions —
+so the regression is a live test rather than a git archaeology exercise.
 
 ### Not built
 
@@ -390,6 +435,13 @@ Deliberately deferred — see §13 for phasing.
   care how the words arrive.
 * **The OS-level shell daemon.** Capture is Claude Code hooks only, which is
   the sequencing argued for in §11.
+* **Episode labelling.** Segmentation cuts and titles episodes from their own
+  prompts, but nothing names the *varying parameter* — `staging` versus `prod`
+  — which is what a synthesised skill needs to parameterise. That is judgement,
+  and it belongs with the reviewing agent alongside semantic dedup.
+* **Non-linear segmentation.** Cutting is linear, so a task interrupted by a
+  second task and then resumed is mis-attributed. Recorded as a known
+  limitation in the fixture rather than papered over.
 
 ### Verification status
 
@@ -401,6 +453,17 @@ three hooks verified against real payloads: `PostToolUse` parses `Bash` and
 Coverage is narrower than §8 originally claimed: chat-surface sessions are not
 captured at all. See
 [docs/claude-code.md](docs/claude-code.md#5a-which-sessions-get-captured).
+
+Two limits worth stating plainly about segmentation:
+
+* **`git commit` is the only marker with test coverage.** The other eight, and
+  the artifact-delivery path, are implemented but unexercised.
+* **It has never run against a real session.** Every result above comes from a
+  fixture written for the purpose. The known risk — a mid-task "continue" or
+  "fix that" cutting an episode in half — is precisely the thing a hand-written
+  fixture cannot demonstrate, since its prompts are one-per-task by
+  construction. Replaying real transcripts is the next thing that could show
+  the design is wrong rather than merely incomplete.
 
 ---
 

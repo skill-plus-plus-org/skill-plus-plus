@@ -16,20 +16,25 @@ For the design rationale, see the [README](../README.md).
 ```
   you type a prompt
         │
-        ├──► UserPromptSubmit hook ──► records what you asked for
-        │
+        ├──► UserPromptSubmit hook ──► records what you asked for,
+        │                              and marks a task boundary
   Claude runs tools (Bash, Edit, MCP calls…)
         │
         ├──► PostToolUse hook ──────► records what actually ran,
         │                              scrubbed before it touches disk
   session ends
         │
-        └──► SessionEnd hook ───────► folds the session into one
-                                       ledger candidate, deletes the buffer
+        └──► SessionEnd hook ───────► cuts the session into task
+                                       episodes, folds each into its own
+                                       candidate, deletes the buffer
 ```
 
-Nothing interrupts you. No popup, no proposal mid-task. The candidate sits in
-the ledger until you go looking for it.
+Nothing interrupts you. No popup, no proposal mid-task. The candidates sit in
+the ledger until you go looking for them.
+
+One session usually yields several candidates, because one sitting usually
+holds several tasks. An episode that ends only because the session did, with
+nothing shipped, is flagged rather than proposed — see README §3, step 2.
 
 The pairing of the first two hooks is the point: `UserPromptSubmit` captures
 **intent**, `PostToolUse` captures **execution**. A shell-history tool only ever
@@ -150,8 +155,8 @@ session:
 | Hook | Status |
 | --- | --- |
 | `PostToolUse` | **Confirmed.** `Bash` and `Edit` calls recorded with commands and file paths parsed correctly, zero parse failures. |
-| `UserPromptSubmit` | **Confirmed.** Prompts captured verbatim under the `prompt` field. |
-| `SessionEnd` | Confirmed by direct invocation; folds a buffer into a ledger entry. |
+| `UserPromptSubmit` | **Confirmed.** Prompts captured verbatim under the `prompt` field. Also written into the step stream as a `UserPrompt` sentinel, so position marks a task boundary. |
+| `SessionEnd` | Confirmed by direct invocation; segments the buffer and folds each episode into a ledger entry. |
 
 ```bash
 python3 -c "import json,glob;d=json.load(open(glob.glob('$HOME/.claude/skillpp/sessions/*.json')[0]));print('prompts:',len(d['prompts']),'steps:',len(d['steps']))"
