@@ -1,0 +1,249 @@
+"""The ledger: candidate workflows, stored as readable markdown.
+
+One file per candidate. Human-readable body for browsing and grepping, with a
+lossless JSON payload in a trailing HTML comment so the engine has a single
+authoritative source of truth. Frontmatter is *regenerated* from the payload on
+every write, so the two can never drift.
+
+Entries hold summaries, never raw traces (README 3.2).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import time
+from dataclasses import dataclass, field, asdict
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Iterator
+
+from .config import Config
+
+_DATA_RE = re.compile(r"<!--\s*skillpp:data\s*\n(.*?)\n-->", re.DOTALL)
+
+STATUS_CANDIDATE = "candidate"
+STATUS_PROMOTED = "promoted"
+STATUS_DISMISSED = "dismissed"
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _parse_ts(value: str) -> datetime:
+    try:
+        dt = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+@dataclass
+class Entry:
+    """One candidate workflow in the ledger."""
+
+    id: str
+    signature: str
+    title: str = ""
+    status: str = STATUS_CANDIDATE
+    occurrences: int = 1
+    created: str = field(default_factory=_now)
+    last_seen: str = field(default_factory=_now)
+    projects: list[str] = field(default_factory=list)
+    sessions: list[str] = field(default_factory=list)
+    intents: list[str] = field(default_factory=list)
+    steps: list[dict] = field(default_factory=list)
+    variants: list[list[dict]] = field(default_factory=list)
+    deps_mcp: list[str] = field(default_factory=list)
+    deps_cli: list[str] = field(default_factory=list)
+    skill_path: str = ""
+    notes: str = ""
+    source: str = "capture"  # "capture" | "dictated"
+
+    # -- derived ---------------------------------------------------------
+    @property
+    def age_days(self) -> float:
+        return (datetime.now(timezone.utc) - _parse_ts(self.created)).total_seconds() / 86400
+
+    def ready(self, threshold: int) -> bool:
+        if self.status != STATUS_CANDIDATE:
+            return False
+        # The recurrence threshold exists to filter noise. An explicit request
+        # is not noise, so dictated candidates are ready immediately.
+        if self.source == "dictated":
+            return True
+        return self.occurrences >= threshold
+
+    # -- serialisation ---------------------------------------------------
+    def to_markdown(self) -> str:
+        payload = json.dumps(asdict(self), indent=2, ensure_ascii=False)
+        lines = [
+            "---",
+            f"id: {self.id}",
+            f"title: {self.title}",
+            f"status: {self.status}",
+            f"occurrences: {self.occurrences}",
+            f"created: {self.created}",
+            f"last_seen: {self.last_seen}",
+            f"projects: {json.dumps(self.projects)}",
+            f"deps_mcp: {json.dumps(self.deps_mcp)}",
+            f"deps_cli: {json.dumps(self.deps_cli)}",
+            "---",
+            "",
+            f"# {self.title or self.id}",
+            "",
+            "## Intent",
+            "",
+        ]
+        lines += [f"- {i}" for i in self.intents] or ["- (no stated intent captured)"]
+        lines += ["", "## Steps", ""]
+        for n, step in enumerate(self.steps, 1):
+            lines.append(f"{n}. {describe_step(step)}")
+        if not self.steps:
+            lines.append("_(none)_")
+        if self.notes:
+            lines += ["", "## Notes", "", self.notes]
+        lines += ["", "<!-- skillpp:data", payload, "-->", ""]
+        return "\n".join(lines)
+
+    @classmethod
+    def from_markdown(cls, text: str) -> "Entry":
+        m = _DATA_RE.search(text)
+        if not m:
+            raise ValueError("ledger entry is missing its skillpp:data payload")
+        raw = json.loads(m.group(1))
+        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        return cls(**{k: v for k, v in raw.items() if k in known})
+
+
+def describe_step(step: dict) -> str:
+    """One-line human description of a captured step."""
+    tool = step.get("tool", "?")
+    payload = step.get("input", {}) or {}
+    if tool == "Stated":
+        return str(payload.get("text", "")).strip()
+    if tool == "Bash":
+        cmd = str(payload.get("command", "")).strip().replace("\n", " ⏎ ")
+        marker = "  ✗ failed" if step.get("failed") else ""
+        return f"`{cmd}`{marker}"
+    if tool in ("Edit", "Write", "NotebookEdit"):
+        return f"{tool} `{payload.get('file_path', '?')}`"
+    if tool.startswith("mcp__"):
+        return f"MCP call `{tool}`"
+    return f"{tool}"
+
+
+def make_id(signature: str, salt: str = "") -> str:
+    return hashlib.sha256((signature + salt).encode("utf-8")).hexdigest()[:12]
+
+
+class Ledger:
+    """Directory of candidate entries."""
+
+    def __init__(self, config: Config | None = None) -> None:
+        self.config = config or Config()
+        self.config.ensure_dirs()
+
+    def path_for(self, entry_id: str) -> Path:
+        return self.config.ledger_dir / f"{entry_id}.md"
+
+    def save(self, entry: Entry) -> Path:
+        path = self.path_for(entry.id)
+        tmp = path.with_suffix(".md.tmp")
+        tmp.write_text(entry.to_markdown(), encoding="utf-8")
+        tmp.replace(path)
+        return path
+
+    def get(self, entry_id: str) -> Entry | None:
+        path = self.path_for(entry_id)
+        if not path.exists():
+            # Allow unambiguous id prefixes for convenience.
+            matches = [p for p in self.config.ledger_dir.glob("*.md")
+                       if p.stem.startswith(entry_id)]
+            if len(matches) != 1:
+                return None
+            path = matches[0]
+        try:
+            return Entry.from_markdown(path.read_text(encoding="utf-8"))
+        except (ValueError, json.JSONDecodeError):
+            return None
+
+    def all(self) -> Iterator[Entry]:
+        for path in sorted(self.config.ledger_dir.glob("*.md")):
+            try:
+                yield Entry.from_markdown(path.read_text(encoding="utf-8"))
+            except (ValueError, json.JSONDecodeError, OSError):
+                continue
+
+    def candidates(self, ready_only: bool = False) -> list[Entry]:
+        out = [e for e in self.all() if e.status == STATUS_CANDIDATE]
+        if ready_only:
+            out = [e for e in out if e.ready(self.config.recurrence_threshold)]
+        out.sort(key=lambda e: (-e.occurrences, e.last_seen), reverse=False)
+        out.sort(key=lambda e: e.occurrences, reverse=True)
+        return out
+
+    def delete(self, entry_id: str) -> bool:
+        path = self.path_for(entry_id)
+        if path.exists():
+            path.unlink()
+            return True
+        return False
+
+    def search(self, query: str) -> list[tuple[float, Entry]]:
+        """Plain substring + token scoring over intents, steps and titles."""
+        terms = [t.lower() for t in re.split(r"\W+", query) if t]
+        results: list[tuple[float, Entry]] = []
+        for entry in self.all():
+            haystack = " ".join([
+                entry.title,
+                " ".join(entry.intents),
+                " ".join(describe_step(s) for s in entry.steps),
+                entry.notes,
+            ]).lower()
+            if not terms:
+                continue
+            hits = sum(1 for t in terms if t in haystack)
+            if hits:
+                score = hits / len(terms)
+                # Recency is a mild tiebreaker: this is a record of *your* work.
+                age = (datetime.now(timezone.utc) - _parse_ts(entry.last_seen)).days
+                score += max(0.0, 0.2 - age * 0.005)
+                results.append((score, entry))
+        results.sort(key=lambda pair: pair[0], reverse=True)
+        return results
+
+    def expire(self, now: datetime | None = None) -> list[str]:
+        """Delete unapproved candidates past their TTL.
+
+        Promoted entries are never touched — expiry applies to the ledger, not
+        to the skill library (README 6).
+        """
+        now = now or datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=self.config.candidate_ttl_days)
+        removed: list[str] = []
+        for entry in self.all():
+            if entry.status != STATUS_CANDIDATE:
+                continue
+            if entry.ready(self.config.recurrence_threshold):
+                continue  # proposal is pending review; keep it
+            if _parse_ts(entry.last_seen) < cutoff:
+                if self.delete(entry.id):
+                    removed.append(entry.id)
+        return removed
+
+    def stats(self) -> dict[str, Any]:
+        entries = list(self.all())
+        size = sum(p.stat().st_size for p in self.config.ledger_dir.glob("*.md"))
+        return {
+            "total": len(entries),
+            "candidates": sum(1 for e in entries if e.status == STATUS_CANDIDATE),
+            "ready": sum(1 for e in entries if e.ready(self.config.recurrence_threshold)),
+            "promoted": sum(1 for e in entries if e.status == STATUS_PROMOTED),
+            "dismissed": sum(1 for e in entries if e.status == STATUS_DISMISSED),
+            "bytes": size,
+        }
