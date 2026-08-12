@@ -11,15 +11,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from skillpp.capture import fold_session, handle_prompt, handle_tool, handle_session_end
+from skillpp.capture import (_fold_steps, fold_session, handle_prompt, handle_tool,
+                             handle_session_end)
 from skillpp.config import Config
 from skillpp.ledger import Entry, Ledger, make_id
 from skillpp.lifecycle import check_staleness, parse_frontmatter, record_use, scan
 from skillpp.normalize import normalize_command, parameterize, signature
 from skillpp.recurrence import find_match, similarity
 from skillpp.sanitize import scrub
+from skillpp.segment import segment
 from skillpp.signals import detect, effects
 from skillpp.summary import check_dependencies, scaffold_skill
+
+from fixtures.messy_session import (EXPECTED_OCCURRENCES, LEAKED_TOKEN,
+                                    clean_session_dict, to_captured_session,
+                                    to_session_dict)
 
 
 def bash(command: str, failed: bool = False) -> dict:
@@ -611,6 +617,193 @@ class TestHookRobustness(TempRoot):
             finally:
                 sys.stdin = stdin
             self.assertEqual(code, 0, f"hook must exit 0 for payload {payload!r}")
+
+
+class TestSegmentBoundaries(unittest.TestCase):
+    """Where a task ends. Unit-level, no ledger involved."""
+
+    def _prompt(self, text="do a thing"):
+        return {"tool": "UserPrompt", "input": {"text": text}, "failed": False}
+
+    def test_a_commit_ends_a_task(self):
+        episodes = segment([bash("npm test"), bash("git commit -m 'x'"),
+                            bash("npm outdated"), bash("npm view pkg")])
+        self.assertEqual(len(episodes), 2)
+        self.assertEqual(episodes[0].ended_by, "marker")
+
+    def test_inspection_commands_do_not_end_a_task(self):
+        """git status / diff / add look like completions and are not."""
+        for decoy in ("git status", "git diff", "git add -A", "git stash"):
+            episodes = segment([bash("npm test"), bash(decoy), bash("npm run build")])
+            self.assertEqual(len(episodes), 1, f"{decoy} must not cut")
+
+    def test_a_rejected_commit_does_not_end_a_task(self):
+        """A pre-commit hook rejection means the task is still in progress."""
+        episodes = segment([
+            bash("edit something"), bash("git add -A"),
+            bash("git commit -m 'x'", failed=True),   # rejected
+            bash("npm run lint -- --fix"),
+            bash("git commit -m 'x'"),                # the real end
+        ])
+        self.assertEqual(len(episodes), 1)
+        last = episodes[0].steps[-1]
+        self.assertFalse(last.get("failed"))
+
+    def test_a_boundary_is_ignored_below_the_minimum_size(self):
+        """One step is not a workflow, so a lone marker must not strand it.
+
+        Guards test_cli_dependencies_are_recorded: `gh pr create` first in the
+        list would otherwise become a one-step episode and lose its dep.
+        """
+        episodes = segment([bash("gh pr create"), bash("terraform apply"),
+                            bash("cd /tmp")])
+        self.assertEqual(len(episodes), 1)
+
+    def test_a_new_prompt_ends_the_preceding_work(self):
+        episodes = segment([self._prompt("task one"), bash("npm test"),
+                            bash("./deploy.sh staging"),
+                            self._prompt("task two"), bash("npm outdated"),
+                            bash("npm view pkg")])
+        self.assertEqual(len(episodes), 2)
+        self.assertEqual(episodes[0].ended_by, "prompt")
+
+    def test_a_mid_task_prompt_does_not_cut(self):
+        """"continue" arriving before any work must not shred the episode."""
+        episodes = segment([self._prompt("start"), bash("npm test"),
+                            self._prompt("continue"), bash("npm run build")])
+        self.assertEqual(len(episodes), 1)
+
+    def test_trailing_work_with_nothing_to_show_is_flagged(self):
+        episodes = segment([bash("npm test"), bash("git commit -m 'x'"),
+                            bash("kubectl logs api"), bash("kubectl top pods")])
+        self.assertEqual(len(episodes), 2)
+        self.assertFalse(episodes[0].flagged, "ended in a commit")
+        self.assertTrue(episodes[1].flagged, "no marker, ended only at session end")
+
+    def test_a_single_episode_session_is_never_flagged(self):
+        """A session that did one thing needs no artifact to be believable."""
+        episodes = segment([bash("kubectl logs api"), bash("kubectl top pods")])
+        self.assertEqual(len(episodes), 1)
+        self.assertFalse(episodes[0].flagged)
+
+
+class TestSegmentBeforeAfter(TempRoot):
+    """The regression this exists to prevent, measured both ways.
+
+    ``_fold_steps`` on a whole session is the original behaviour — still a live
+    code path, since single-episode sessions take it — so "before" and "after"
+    are both runnable here rather than one of them being history.
+    """
+
+    SESSIONS = ("s1", "s2", "s3")
+    CLEAN_SIGNATURE = ("bash:npm run | bash:export | bash:terraform apply "
+                       "| bash:deploy.sh")
+
+    def _fold_whole(self, maker):
+        """BEFORE: fingerprint each session as a single unit."""
+        for name in self.SESSIONS:
+            session = maker(name)
+            _fold_steps(self.config, session, session["steps"])
+        return list(Ledger(self.config).all())
+
+    def _fold_segmented(self, maker):
+        """AFTER: cut into episodes first."""
+        for name in self.SESSIONS:
+            fold_session(self.config, maker(name))
+        return list(Ledger(self.config).all())
+
+    def test_before_the_repeated_workflow_is_invisible(self):
+        entries = self._fold_whole(to_session_dict)
+        self.assertEqual(len(entries), 3, "one orphan entry per session")
+        for entry in entries:
+            self.assertEqual(entry.occurrences, 1)
+            self.assertFalse(entry.ready(self.config.recurrence_threshold))
+
+    def test_before_the_sessions_score_far_below_the_threshold(self):
+        entries = self._fold_whole(to_session_dict)
+        scores = [similarity(a.signature, b.signature)
+                  for i, a in enumerate(entries) for b in entries[i + 1:]]
+        self.assertTrue(scores)
+        for score in scores:
+            self.assertLess(score, self.config.similarity_threshold)
+        # Not a near miss: loosening the threshold this far would merge
+        # genuinely unrelated work.
+        self.assertLess(max(scores), 0.6)
+
+    def test_before_every_title_names_the_pollution(self):
+        entries = self._fold_whole(to_session_dict)
+        self.assertFalse(any("deploy" in e.title.lower() for e in entries),
+                         "three deploy sessions, none titled after the deploy")
+
+    def test_after_the_repeated_workflow_reaches_the_threshold(self):
+        self._fold_segmented(to_captured_session)
+        deploys = [e for e in Ledger(self.config).all()
+                   if e.signature == self.CLEAN_SIGNATURE]
+        self.assertEqual(len(deploys), 1, "the deploy must be one entry, not three")
+        self.assertEqual(deploys[0].occurrences, EXPECTED_OCCURRENCES)
+        self.assertTrue(deploys[0].ready(self.config.recurrence_threshold))
+
+    def test_after_the_signature_matches_the_unpolluted_baseline(self):
+        """Pollution must leave no trace in the recovered workflow."""
+        self._fold_segmented(to_captured_session)
+        signatures = {e.signature for e in Ledger(self.config).all()}
+        self.assertIn(self.CLEAN_SIGNATURE, signatures)
+
+    def test_after_the_deploy_is_titled_after_the_deploy(self):
+        self._fold_segmented(to_captured_session)
+        deploy = next(e for e in Ledger(self.config).all()
+                      if e.signature == self.CLEAN_SIGNATURE)
+        self.assertIn("deploy", deploy.title.lower())
+
+    def test_the_clean_baseline_is_unaffected(self):
+        """demo.sh's behaviour must not change: 3 occurrences, one entry."""
+        entries = self._fold_segmented(clean_session_dict)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].occurrences, 3)
+        self.assertEqual(entries[0].signature, self.CLEAN_SIGNATURE)
+
+    def test_secrets_survive_segmentation(self):
+        """Scrubbing happens upstream, but the step lists are now sliced."""
+        for name in self.SESSIONS:
+            session = to_captured_session(name)
+            for step in session["steps"]:
+                command = (step.get("input") or {}).get("command", "")
+                if command:
+                    step["input"]["command"] = scrub(command)
+            fold_session(self.config, session)
+        text = "".join(p.read_text() for p in self.config.ledger_dir.glob("*.md"))
+        self.assertNotIn(LEAKED_TOKEN, text)
+        self.assertIn("REDACTED", text)
+
+
+class TestFixtureIntegrity(unittest.TestCase):
+    """Keeps the fixture from rotting into an easy case."""
+
+    def test_the_deploy_workflow_is_identical_across_sessions(self):
+        """The controlled variable must stay controlled."""
+        shapes = set()
+        for name in ("s1", "s2", "s3"):
+            steps = [s for s in to_session_dict(name)["steps"]
+                     if str((s.get("input") or {}).get("command", ""))
+                     .startswith(("npm run build", "export DEPLOY", "terraform",
+                                  "./scripts/deploy.sh"))]
+            shapes.add(signature(steps))
+        self.assertEqual(len(shapes), 1, "the deploy must recur unchanged")
+
+    def test_the_decoys_are_still_present(self):
+        commands = {str((s.get("input") or {}).get("command", ""))
+                    for name in ("s1", "s2", "s3")
+                    for s in to_session_dict(name)["steps"]}
+        self.assertTrue(any(c.startswith("git status") for c in commands))
+        self.assertTrue(any(c.startswith("git add") for c in commands))
+        self.assertTrue(any(c.startswith("git diff") for c in commands))
+
+    def test_a_rejected_commit_is_still_present(self):
+        rejected = [s for s in to_session_dict("s3")["steps"]
+                    if s.get("failed")
+                    and "git commit" in str((s.get("input") or {}).get("command", ""))]
+        self.assertTrue(rejected, "s3's rejected commit is what proves a failed "
+                                  "marker does not end a task")
 
 
 if __name__ == "__main__":

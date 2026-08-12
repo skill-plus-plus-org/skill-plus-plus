@@ -25,6 +25,7 @@ from .ledger import Entry, Ledger, make_id, STATUS_CANDIDATE
 from .normalize import parameterize, signature
 from .recurrence import find_match
 from .sanitize import scrub, scrub_obj
+from .segment import PROMPT_TOOL, segment
 
 # Tool inputs worth keeping. Anything else is recorded by name only.
 _KEEP_INPUT = {
@@ -34,7 +35,10 @@ _KEEP_INPUT = {
     "NotebookEdit": ("file_path",),
 }
 # Pure exploration: recorded, but never the reason a workflow is proposed.
-_NOISE_TOOLS = {"Read", "Glob", "Grep", "TodoWrite", "Task", "WebFetch", "WebSearch"}
+# UserPrompt is the segmentation sentinel written by handle_prompt — a task
+# boundary, never a step of the workflow itself.
+_NOISE_TOOLS = {"Read", "Glob", "Grep", "TodoWrite", "Task", "WebFetch", "WebSearch",
+                PROMPT_TOOL}
 
 
 def log_error(config: Config, message: str) -> None:
@@ -98,6 +102,17 @@ def handle_prompt(config: Config, payload: dict) -> None:
     session.setdefault("cwd", payload.get("cwd", ""))
     if len(session["prompts"]) < 40:
         session["prompts"].append(prompt[: config.max_field_chars])
+    # Also record the prompt *in the step stream*, so the interleaving of what
+    # was asked and what ran survives to segmentation. Hooks fire in real time,
+    # so position alone carries the ordering — no timestamps needed. The
+    # sentinel is in _NOISE_TOOLS, so it never reaches a signature.
+    if len(session["steps"]) < config.max_steps_per_session:
+        session["steps"].append({
+            "tool": PROMPT_TOOL,
+            "input": {"text": prompt[: config.max_field_chars]},
+            "failed": False,
+            "t": round(time.time(), 1),
+        })
     _save_session(config, session)
 
 
@@ -156,9 +171,44 @@ def handle_session_end(config: Config, payload: dict) -> dict:
 
 
 def fold_session(config: Config, session: dict) -> dict:
-    """Turn a finished session into a new or updated ledger entry."""
+    """Turn a finished session into ledger entries — one per task.
+
+    A session holding several unrelated tasks used to become a single entry
+    whose signature described none of them, which is why a workflow performed
+    three times never reached the recurrence threshold. It is now cut into
+    episodes first (see ``skillpp.segment``) and each is folded separately.
+
+    The return value keeps the shape callers already expect — the last folded
+    episode's result — with an added ``episodes`` key listing every outcome. A
+    session that segments into one episode returns exactly what it always did.
+    """
+    episodes = segment(session.get("steps", []), config.min_episode_steps)
+
+    # An episode with no completion marker, in a session that did segment, is a
+    # fragment with nothing to show for itself. Recording it would recreate the
+    # mega-candidates segmentation exists to remove.
+    foldable = [e for e in episodes if not e.flagged]
+
+    results = []
+    for episode in foldable:
+        result = _fold_steps(config, session, episode.steps)
+        result["ended_by"] = episode.ended_by
+        results.append(result)
+
+    flagged = [e for e in episodes if e.flagged]
+    if not results:
+        return {"status": "too-thin", "steps": 0, "episodes": [],
+                "flagged": len(flagged)}
+
+    summary = dict(results[-1])
+    summary["episodes"] = results
+    summary["flagged"] = len(flagged)
+    return summary
+
+
+def _fold_steps(config: Config, session: dict, steps: list[dict]) -> dict:
+    """Fold one episode's steps into a new or updated ledger entry."""
     cwd = session.get("cwd") or ""
-    steps = session.get("steps", [])
     substantive = [s for s in steps if s.get("tool") not in _NOISE_TOOLS]
     if len(substantive) < 2:
         return {"status": "too-thin", "steps": len(substantive)}
@@ -177,7 +227,7 @@ def fold_session(config: Config, session: dict) -> dict:
 
     ledger = Ledger(config)
     existing = find_match(sig, list(ledger.all()), config.similarity_threshold)
-    intents = [p for p in session.get("prompts", [])][:5]
+    intents = _intents_for(session, steps)
 
     deps_mcp = sorted({s["tool"] for s in substantive if s["tool"].startswith("mcp__")})
     deps_cli = sorted(_cli_dependencies(substantive))
@@ -310,6 +360,39 @@ def fold_dictation(config: Config, text: str, title: str = "") -> dict:
     ledger.save(entry)
     return {"status": "created", "id": entry.id, "ready": True,
             "steps": len(entry.steps)}
+
+
+def _intents_for(session: dict, steps: list[dict]) -> list[str]:
+    """Stated intent for one episode.
+
+    Prefer the prompts recorded *inside* this episode's span: a session's first
+    prompt describes its first task, so using it for every episode is how three
+    deploy sessions ended up titled after whatever happened to come first.
+    Falls back to the session-wide buffer for sessions captured before the
+    sentinel existed, or that never segmented.
+    """
+    leading: list[str] = []
+    trailing: list[str] = []
+    seen_work = False
+    for step in steps:
+        if step.get("tool") != PROMPT_TOOL:
+            if step.get("tool") not in _NOISE_TOOLS:
+                seen_work = True
+            continue
+        text = str((step.get("input") or {}).get("text", ""))
+        if text:
+            (trailing if seen_work else leading).append(text)
+
+    # The operative prompt is the last one before any work started — an episode
+    # can absorb earlier prompts that produced nothing (a question the developer
+    # asked and dropped), and those must not become the title.
+    if leading:
+        own = [leading[-1]] + leading[:-1] + trailing
+    else:
+        own = trailing
+    if own:
+        return own[:5]
+    return list(session.get("prompts", []))[:5]
 
 
 def _cli_dependencies(steps: list[dict]) -> set[str]:

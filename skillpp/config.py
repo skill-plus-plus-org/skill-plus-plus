@@ -49,6 +49,9 @@ class Config:
         self.max_field_chars = _int_env("SKILLPP_MAX_FIELD", 2000)
         # Never ask the developer more than this many questions (README 4).
         self.max_questions = _int_env("SKILLPP_MAX_QUESTIONS", 3)
+        # A boundary that would close an episode smaller than this is ignored:
+        # one step is not a workflow.
+        self.min_episode_steps = _int_env("SKILLPP_MIN_EPISODE_STEPS", 2)
 
     @property
     def ledger_dir(self) -> Path:

@@ -23,17 +23,18 @@ git commit" and call the deploy done.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from skillpp.segment import COMPLETION_MARKERS, PROMPT_TOOL  # noqa: F401
+
 BASE = 1_760_000_000.0  # arbitrary epoch anchor; only deltas matter
 
-# A task *start* is unannounced; a task *end* leaves an artifact. Segmentation
-# anchors on these and walks backwards.
-COMPLETION_MARKERS = (
-    "git commit",
-    "git push",
-    "gh pr create",
-    "test-suite red -> green",
-    "deploy succeeded",
-)
+# COMPLETION_MARKERS is imported from the implementation rather than restated
+# here. An earlier draft kept a second copy, which agreed with the real set only
+# by coincidence and could drift silently in either direction.
 
 # Look like completions, are not. Present in the pollution below.
 DECOYS = ("git status", "git diff", "git add", "failed git commit", "git stash")
@@ -221,12 +222,14 @@ EXPECTED_OCCURRENCES = 3
 
 
 def to_session_dict(name: str, cwd: str = "/proj/api") -> dict:
-    """One polluted session in the shape ``fold_session`` accepts today.
+    """One polluted session in the **pre-segmentation** buffer shape.
 
-    Prompt timestamps are dropped: ``capture.handle_prompt`` appends a bare
-    string and has nowhere to put them. That loss is why prompts cannot be
-    interleaved with steps to find boundaries, and it is the one-line capture
-    fix segmentation needs first.
+    Prompts go only to ``session["prompts"]``, so the interleaving of what was
+    asked and what ran is lost — which is exactly how ``handle_prompt`` behaved
+    before the segmenter, and how any session buffered by older code still
+    looks. Feed this to ``capture._fold_steps`` to reproduce the original
+    whole-session behaviour, or to ``fold_session`` to see what segmentation
+    can manage with markers alone.
     """
     events = SESSIONS[name]()
     return {
@@ -235,6 +238,30 @@ def to_session_dict(name: str, cwd: str = "/proj/api") -> dict:
         "prompts": [e["text"] for e in events if e["kind"] == "prompt"],
         "steps": [{k: v for k, v in e.items() if k != "kind"}
                   for e in events if e["kind"] == "step"],
+    }
+
+
+def to_captured_session(name: str, cwd: str = "/proj/api") -> dict:
+    """The same session in the **post-segmentation** buffer shape.
+
+    Mirrors what ``capture.handle_prompt`` now writes: each prompt lands in
+    ``session["prompts"]`` *and* as a ``UserPrompt`` sentinel in the ordered
+    step stream, so position alone records which prompt preceded which work.
+    No clock involved.
+    """
+    events = SESSIONS[name]()
+    steps: list[dict] = []
+    for event in events:
+        if event["kind"] == "prompt":
+            steps.append({"tool": PROMPT_TOOL, "input": {"text": event["text"]},
+                          "failed": False, "t": event["t"]})
+        else:
+            steps.append({k: v for k, v in event.items() if k != "kind"})
+    return {
+        "session_id": name,
+        "cwd": cwd,
+        "prompts": [e["text"] for e in events if e["kind"] == "prompt"],
+        "steps": steps,
     }
 
 
