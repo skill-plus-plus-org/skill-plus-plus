@@ -165,6 +165,15 @@ def scaffold_skill(
         "---",
         f"name: {name}",
         f"description: {json.dumps(desc)}",
+    ]
+    # Claude Code's skill schema has a dedicated when_to_use field that becomes
+    # part of the tool description used at discovery — before the body ever
+    # loads. Writing this only to the body (below) means the trigger phrasing
+    # never reaches the one place that decides whether the skill fires.
+    when_to_use = answers.get("when_to_use", "").strip()
+    if when_to_use:
+        lines.append(f"when_to_use: {json.dumps(when_to_use)}")
+    lines += [
         "metadata:",
         '  source: "skill-plus-plus"',
         f'  provenance: "ledger:{entry.id}"',

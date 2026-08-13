@@ -399,6 +399,25 @@ class TestDictation(TempRoot):
         self.assertIn("## Known gaps", text)
         self.assertIn("# Fact Check", text, "raw dictation is a poor heading")
 
+    def test_when_to_use_reaches_frontmatter(self):
+        """Claude Code's discovery step reads only name+description from
+        frontmatter before the body ever loads. A trigger condition confirmed
+        only to ## When to use in the body cannot influence that decision."""
+        entry, _ = self.dictate(self.EXAMPLE)
+        text = scaffold_skill(entry, "fact-check", "Verify claims.",
+                              answers={"when_to_use": "When the user pastes a claim."})
+        fm = parse_frontmatter(text)
+        self.assertEqual(fm["when_to_use"], "When the user pastes a claim.")
+        self.assertIn("## When to use", text, "the body copy stays too")
+
+    def test_missing_when_to_use_is_not_placeholder_in_frontmatter(self):
+        """The unresolved-trigger placeholder belongs in the body/## Known
+        gaps, never presented in frontmatter as if it were a real answer."""
+        entry, _ = self.dictate(self.EXAMPLE)
+        text = scaffold_skill(entry, "fact-check", "Verify claims.")
+        fm = parse_frontmatter(text)
+        self.assertNotIn("when_to_use", fm)
+
     def test_answering_a_question_closes_its_gap(self):
         entry, _ = self.dictate(self.EXAMPLE)
         text = scaffold_skill(entry, "fact-check", "Verify claims.", answers={
