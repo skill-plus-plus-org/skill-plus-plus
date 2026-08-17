@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+.DS_Store
+
+# Local scratch output from `skillpp bundle`
+skill-uploads/
