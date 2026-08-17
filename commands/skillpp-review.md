@@ -11,14 +11,47 @@ detection, effect summaries. Your job is the judgement half.
 Arguments (optional): a candidate id, or a search phrase. With no arguments,
 review the highest-occurrence candidate.
 
-## 1. Find the candidate
+## 1. Find the candidate — and check the two side channels
+
+Run all three:
 
 ```bash
-skillpp review --json
+skillpp reconcile          # promoted skills whose file was deleted
+skillpp ignored --json     # parked workflows, and which keep recurring anyway
+skillpp review --json      # the actual queue
 ```
 
 If the developer gave a search phrase instead of an id, use `skillpp search <phrase>`.
 If nothing is ready, say so plainly and stop — do not go looking for work to do.
+
+**The two side channels are reported, never acted on.** Both surface decisions
+that are the developer's to make. In each case:
+
+- **Nothing to report?** Say nothing at all. Do not tell them you checked — a
+  line of reassurance on every review is the noise this design exists to avoid.
+- **Something to report?** One line *before* the review, name the command, then
+  get on with the review. Never run `reopen` or `ignore` yourself, and never
+  stall the review waiting for an answer.
+
+**`reconcile`** reports skills that were promoted but whose file is gone. Point
+at `skillpp reconcile --apply`, which parks them in the ignore list rather than
+re-proposing them. A deleted skill was almost certainly deleted on purpose.
+
+**`ignored --json`** carries `ignore_looks_wrong: true` on any workflow that has
+recurred at least as many times *since* being ignored as it took to propose it
+in the first place. That is the interesting signal: they parked it, and then
+kept doing the work by hand. Surface only those entries — never the whole
+ignore list — and phrase it as evidence, not a nag:
+
+> You've run the release-tagging flow 3 more times since parking it in
+> September. `skillpp reopen a1b2c3` if it's worth another look.
+
+If they reopen it, it re-enters the queue at its full occurrence count and you
+can review it in the same session.
+
+> An ignore means "not now", not "never". The set stays listable with
+> `skillpp ignored` and reversible with `skillpp reopen <id>` — a parking
+> space, not a shredder.
 
 ## 2. Load it
 

@@ -38,11 +38,18 @@ def similarity(a: str, b: str) -> float:
 
 
 def find_match(signature: str, entries: list[Entry], threshold: float) -> Entry | None:
-    """Best entry above *threshold*, or None."""
+    """Best entry above *threshold*, or None.
+
+    **Ignored entries are matched too.** Skipping them looks right but is not:
+    entry ids are derived from the signature, so a recurring ignored workflow
+    would find no match, mint an entry with the same id, and overwrite the
+    ignore with a fresh candidate — silently undoing the user's decision.
+    Matching them instead keeps the ignore intact while still counting the
+    recurrence, which is what makes `recurrences_since_ignored` meaningful.
+    Suppression happens at the surfacing layer (`ready()`), not here.
+    """
     best: tuple[float, Entry] | None = None
     for entry in entries:
-        if entry.status == "dismissed":
-            continue
         score = similarity(signature, entry.signature)
         if score >= threshold and (best is None or score > best[0]):
             best = (score, entry)

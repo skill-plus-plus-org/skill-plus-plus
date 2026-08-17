@@ -25,7 +25,10 @@ _DATA_RE = re.compile(r"<!--\s*skillpp:data\s*\n(.*?)\n-->", re.DOTALL)
 
 STATUS_CANDIDATE = "candidate"
 STATUS_PROMOTED = "promoted"
+STATUS_IGNORED = "ignored"
+# Entries written before the rename. Treated as ignored everywhere.
 STATUS_DISMISSED = "dismissed"
+IGNORED_STATUSES = (STATUS_IGNORED, STATUS_DISMISSED)
 
 
 def _now() -> str:
@@ -61,6 +64,11 @@ class Entry:
     deps_mcp: list[str] = field(default_factory=list)
     deps_cli: list[str] = field(default_factory=list)
     skill_path: str = ""
+    promoted_at: str = ""
+    ignored_at: str = ""
+    # Occurrence count at the moment it was ignored, so later recurrences can be
+    # counted against it. An ignore is "not now", not "never happened".
+    ignored_at_occurrences: int = 0
     notes: str = ""
     source: str = "capture"  # "capture" | "dictated"
 
@@ -68,6 +76,21 @@ class Entry:
     @property
     def age_days(self) -> float:
         return (datetime.now(timezone.utc) - _parse_ts(self.created)).total_seconds() / 86400
+
+    @property
+    def recurrences_since_ignored(self) -> int:
+        """How many times this workflow has happened since being ignored.
+
+        Evidence that the ignore may have been wrong. Entries ignored before
+        this was tracked report 0 rather than a misleading number.
+        """
+        if self.status not in IGNORED_STATUSES or not self.ignored_at_occurrences:
+            return 0
+        return max(0, self.occurrences - self.ignored_at_occurrences)
+
+    def ignore_looks_wrong(self, threshold: int) -> bool:
+        """Recurred as often *since* being ignored as it took to propose it."""
+        return self.recurrences_since_ignored >= threshold
 
     def ready(self, threshold: int) -> bool:
         if self.status != STATUS_CANDIDATE:

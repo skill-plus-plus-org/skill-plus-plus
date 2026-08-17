@@ -203,6 +203,9 @@ The real cost of an unused skill is index bloat, not disk. So skills are **demot
 
 * **Staleness ≠ disuse.** A skill rots when the script it calls is renamed or the flag it passes is removed. Decay is detected by checking whether referenced paths, commands, and tools still resolve — a cheap, accurate signal that a timer cannot approximate.
 * **Expiry applies to the ledger, not the library.** Unapproved candidates disappear after 7–14 days; anything a human blessed is kept.
+* **Deleting a skill is a decision, not an accident.** A deleted skill's workflow is parked in the ignore list, not re-proposed — re-proposing something the developer just deleted is the fastest way to get the whole tool switched off. `skillpp reconcile` reports the drift; `--apply` does the parking.
+* **An ignore means "not now", not "never".** Ignored workflows keep matching and keep counting. Once one has recurred as many times *since* being ignored as it took to propose it originally, it is flagged — the developer parked it and then kept doing the work by hand, which is evidence worth surfacing. It is still never re-proposed automatically: `skillpp ignored` shows the flag, `skillpp reopen` acts on it. The ignore set is listable and reversible throughout — a parking space, not a shredder.
+  > Matching ignored entries is load-bearing, not incidental. Entry ids derive from the workflow signature, so an ignored entry that failed to match would be silently overwritten by the next recurrence — resurrecting it as a fresh candidate and erasing the developer's decision. Suppression therefore lives at the surfacing layer, never at the matching layer.
 * **Storage.** Skill files average 1.5–3 KB; a full organizational library stays under 5 MB. The ledger stays in the same range because entries are summarized on write rather than stored as raw traces.
 * **Context cost.** Agents load only the lightweight `name` + `description` index, pulling full instructions into the context window on demand.
 
@@ -213,7 +216,7 @@ The real cost of an unused skill is index bloat, not disk. So skills are **demot
 Instruction-shaped skills travel cleanly across Claude Code, Cursor, OpenCode, and Microsoft Agent Framework. Tool-bound skills degrade:
 
 * **MCP tool names are host-namespaced.** `mcp__github__create_pr` is not the same identifier in every runtime.
-* **Frontmatter extensions vary.** `name` and `description` are universal; everything beyond them is host-specific.
+* **Frontmatter extensions vary.** `name` and `description` are universal; everything beyond them is host-specific. The scaffolder also emits `when_to_use`, which Claude Code parses as a first-class skill field ("Becomes part of the tool description") and other hosts are expected to ignore. It is additive rather than load-bearing: the same trigger text is repeated in the `## When to use` body section, so a host that drops the frontmatter key still gets the guidance once the skill loads.
 
 Portability is therefore a property of the *skill*, not of the format. The generation rules in §5 exist to keep as many skills as possible in the portable class.
 
@@ -221,9 +224,11 @@ Portability is therefore a property of the *skill*, not of the format. The gener
 
 ## 8. Claude Code Integration
 
-**Terminal (CLI) is the capture surface. Desktop is the distribution surface.**
+**The terminal is the capture surface. Desktop needs an explicit upload.**
 
-Claude Code in the terminal is the reference host for passive capture: hooks fire automatically, the ledger builds from every session, and skills land in `~/.claude/skills/` ready to use. Desktop has no passive capture—the desktop app runs its own Claude Code runtime that never reads the host's `~/.claude/settings.json`—but it does have an upload path for finished skills.
+Claude Code in the terminal is the reference host: hooks fire automatically, the ledger builds from every session, and skills land in `~/.claude/skills/` ready to use.
+
+Neither half crosses to Desktop on its own. Hooks never fire there — Desktop runs its own Claude Code runtime that does not read the host's `~/.claude/settings.json` — and its skill list is account-level rather than a read of the local directory, so a skill reaches Desktop only by being uploaded (§9 records the controlled test, and the two wrong conclusions that preceded it).
 
 > Installation, verification, and the complete terminal→Desktop workflow are
 > covered in [docs/claude-code.md](docs/claude-code.md). This section
@@ -307,6 +312,7 @@ The competitive pressure worth taking seriously is the fourth column: memory and
 * **Do developers actually answer the clarifying questions?** §4 assumes three pre-filled questions get answered rather than skipped. If the skip rate is high, most skills land permanently provisional with open `## Known gaps`, and the judgment layer never materializes.
 * **Will infosec approve a background listener?** Sanitize-on-write and local-first storage are the mitigations. Hook-based capture (§8) sidesteps this almost entirely by removing the daemon, which is an argument for shipping the Claude Code integration first. This remains the primary enterprise adoption risk for the OS-daemon path.
 * **Provisional → trusted promotion:** Landing skills as hints that earn trust through successful use makes shallow review safe. The promotion threshold is unvalidated.
+* **Is the capture layer already a platform feature?** Claude Code's auto-mode setup builds an environment profile by reading shell history and session transcripts, then proposes it for approval before writing to `settings.json` — the same input signal, the same propose-then-approve shape, the same file. It derives *permissions* rather than *procedures*, so it is not a competing product. But the plumbing this project built from scratch — session observation, trace mining, human-gated config writes — demonstrably ships in the platform already, which makes "also derive skills" a far shorter step for Anthropic than for anyone else. If capture is not the moat, the defensible parts are the ledger as searchable work memory (§3, Step 3) and the gap detection that turns a trace into three good questions (§4). Both should be measured on that basis, not on capture fidelity.
 
 ---
 
@@ -353,7 +359,9 @@ worth reading. Neither half is useful alone.
 | `skillpp search <words>` | Search the ledger of your own past work |
 | `skillpp scaffold <id> --name <n>` | Generate a starting `SKILL.md` |
 | `skillpp promote <id> --skill-path <p>` | Mark a candidate promoted |
-| `skillpp dismiss <id>` / `expire` | Dismiss one / delete unapproved past TTL |
+| `skillpp ignore <id>` · `ignored` · `reopen <id>` | Park a workflow so it is never proposed; list the ignore set; put one back in the queue |
+| `skillpp reconcile` | Report promoted skills whose file was deleted (reports only — never decides) |
+| `skillpp expire` | Delete unapproved candidates past TTL |
 | `skillpp lifecycle` / `tier <name> <tier>` | Inventory and demotion |
 | `skillpp check --name <n>` | Dependency check at pull time (exit 2 if missing) |
 | `skillpp bundle --out <dir> [--format upload\|plugin]` | Package skills: `upload` = one zip per skill for Customize → Skills; `plugin` = `.claude-plugin/` + `skills/` |
@@ -398,9 +406,11 @@ three hooks verified against real payloads: `PostToolUse` parses `Bash` and
 `Edit` calls cleanly, `UserPromptSubmit` captures prompts verbatim, and
 `SessionEnd` folds a buffer into a ledger entry.
 
-Coverage is narrower than §8 originally claimed: chat-surface sessions are not
-captured at all. See
-[docs/claude-code.md](docs/claude-code.md#5a-which-sessions-get-captured).
+Coverage is narrower than §8 originally claimed, on both axes: chat-surface
+sessions are never captured, and Desktop does not read `~/.claude/skills/` —
+skills reach it only by upload. Both are now established by test rather than
+inference; see
+[docs/claude-code.md](docs/claude-code.md#5a-capture-coverage-terminal-only).
 
 ---
 
