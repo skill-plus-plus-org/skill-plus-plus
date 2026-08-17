@@ -140,6 +140,22 @@ def _answered_kinds(answers: dict[str, str]) -> set[str]:
     return closed
 
 
+def _resolve_answer(answers: dict[str, str], kind: str) -> str:
+    """The answer for a question kind, under its own name or any alias.
+
+    Gap-closing already honours the aliases, so consuming an answer by literal
+    key alone would mark a trigger resolved while the content reached neither
+    the frontmatter nor the body — silently shipping a placeholder that nothing
+    flags as unresolved.
+    """
+    for key, value in answers.items():
+        if not value:
+            continue
+        if key == kind or _ANSWER_ALIASES.get(key) == kind:
+            return str(value).strip()
+    return ""
+
+
 def scaffold_skill(
     entry: Entry,
     name: str,
@@ -170,7 +186,7 @@ def scaffold_skill(
     # part of the tool description used at discovery — before the body ever
     # loads. Writing this only to the body (below) means the trigger phrasing
     # never reaches the one place that decides whether the skill fires.
-    when_to_use = answers.get("when_to_use", "").strip()
+    when_to_use = _resolve_answer(answers, "missing_trigger")
     if when_to_use:
         lines.append(f"when_to_use: {json.dumps(when_to_use)}")
     lines += [
@@ -187,7 +203,7 @@ def scaffold_skill(
         "",
         "## When to use",
         "",
-        answers.get("when_to_use", "<!-- TODO: replace with the real trigger condition -->"),
+        when_to_use or "<!-- TODO: replace with the real trigger condition -->",
         "",
     ]
 
@@ -215,7 +231,11 @@ def scaffold_skill(
         lines += [f"- `{c}`" for c in eff["destructive"]]
         lines.append("")
 
-    answered = {k: v for k, v in answers.items() if k not in ("when_to_use",) and v}
+    # The trigger has its own frontmatter field and body section under any of
+    # its alias names; repeating it under Judgement would be a third copy.
+    answered = {k: v for k, v in answers.items()
+                if v and k != "missing_trigger"
+                and _ANSWER_ALIASES.get(k, k) != "missing_trigger"}
     if answered:
         lines += ["## Judgement", ""]
         for key, value in answered.items():

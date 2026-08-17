@@ -12,13 +12,15 @@ import argparse
 import json
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
 from .capture import (fold_dictation, handle_prompt, handle_session_end,
                       handle_tool, log_error)
 from .config import Config, default_skills_dir
-from .ledger import Ledger, STATUS_DISMISSED, STATUS_PROMOTED
+from .ledger import (IGNORED_STATUSES, Ledger, STATUS_CANDIDATE,
+                     STATUS_IGNORED, STATUS_PROMOTED)
 from .lifecycle import move_tier, scan
 from .signals import detect
 from .summary import (check_dependencies, questions_for, render_proposal,
@@ -190,6 +192,8 @@ def cmd_promote(args: argparse.Namespace) -> int:
         return 1
     entry.status = STATUS_PROMOTED
     entry.skill_path = str(skill_path) if skill_path else ""
+    entry.promoted_at = datetime.now(timezone.utc).replace(
+        microsecond=0).isoformat()
     if args.note:
         entry.notes = args.note
     ledger.save(entry)
@@ -197,18 +201,87 @@ def cmd_promote(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_dismiss(args: argparse.Namespace) -> int:
+def cmd_ignore(args: argparse.Namespace) -> int:
+    """Park a workflow so it is never proposed again."""
     config = Config(args.root)
     ledger = Ledger(config)
     entry = ledger.get(args.id)
     if not entry:
         print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
         return 1
-    entry.status = STATUS_DISMISSED
+    was = entry.status
+    entry.status = STATUS_IGNORED
+    entry.ignored_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    entry.ignored_at_occurrences = entry.occurrences
     if args.note:
         entry.notes = args.note
     ledger.save(entry)
-    print(f"dismissed {entry.id}")
+    print(f"ignored {entry.id} (was {was}) — {entry.title[:50]}")
+    print("Reverse with:  skillpp reopen " + entry.id)
+    return 0
+
+
+def cmd_ignored(args: argparse.Namespace) -> int:
+    """List the ignore set — the category is only useful if it is visible."""
+    config = Config(args.root)
+    entries = [e for e in Ledger(config).all() if e.status in IGNORED_STATUSES]
+    threshold = config.recurrence_threshold
+    if args.json:
+        print(json.dumps([{
+            "id": e.id, "title": e.title, "notes": e.notes,
+            "occurrences": e.occurrences, "ignored_at": e.ignored_at,
+            "recurrences_since_ignored": e.recurrences_since_ignored,
+            "ignore_looks_wrong": e.ignore_looks_wrong(threshold),
+        } for e in entries], indent=2))
+        return 0
+    if not entries:
+        print("Nothing ignored.")
+        return 0
+
+    print(f"{len(entries)} ignored workflow(s) — never proposed:\n")
+    nagging = []
+    for entry in entries:
+        since = entry.recurrences_since_ignored
+        mark = "  ⚠" if entry.ignore_looks_wrong(threshold) else ""
+        print(f"  {entry.id}  ×{entry.occurrences}  {entry.title[:52]}{mark}")
+        if entry.ignored_at:
+            tail = f", {since}× since" if since else ""
+            print(f"            ignored {entry.ignored_at[:10]}{tail}")
+        if entry.notes:
+            print(f"            {entry.notes[:70]}")
+        if entry.ignore_looks_wrong(threshold):
+            nagging.append(entry)
+
+    if nagging:
+        print(f"\n⚠ {len(nagging)} of these have recurred {threshold}+ times since "
+              f"you ignored them.\n  You keep doing the work — worth a second look:")
+        for entry in nagging:
+            print(f"    skillpp reopen {entry.id}   {entry.title[:44]}")
+    print("\nBring one back:  skillpp reopen <id>")
+    return 0
+
+
+def cmd_reopen(args: argparse.Namespace) -> int:
+    """Return a workflow to the review queue, from ignored or promoted."""
+    config = Config(args.root)
+    ledger = Ledger(config)
+    entry = ledger.get(args.id)
+    if not entry:
+        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
+        return 1
+    was = entry.status
+    if was == STATUS_CANDIDATE:
+        print(f"{entry.id} is already a candidate")
+        return 0
+    entry.status = STATUS_CANDIDATE
+    entry.skill_path = ""
+    entry.notes = args.note or f"Reopened from {was}."
+    ledger.save(entry)
+    ready = entry.ready(config.recurrence_threshold)
+    print(f"reopened {entry.id} (was {was}) — {entry.title[:50]}")
+    print("  surfaces in `skillpp review` now" if ready
+          else f"  at {entry.occurrences} occurrence(s); needs "
+               f"{config.recurrence_threshold} to surface")
     return 0
 
 
@@ -246,6 +319,53 @@ def cmd_lifecycle(args: argparse.Namespace) -> int:
         if args.verbose and skill.stale_refs:
             for ref in skill.stale_refs:
                 print(f"                 ↳ unresolved {ref}")
+    return 0
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    """Match promoted ledger entries against the skills actually on disk."""
+    from .lifecycle import reconcile
+
+    config = Config(args.root)
+    skills_dir = Path(args.skills_dir).expanduser() if args.skills_dir else default_skills_dir()
+    result = reconcile(Ledger(config), skills_dir, config)
+
+    print(f"{len(result['ok'])} promoted skill(s) present and accounted for")
+
+    if result["missing"]:
+        verb = "moved to the ignore list" if args.apply else "would move to the ignore list"
+        print(f"\n{len(result['missing'])} promoted skill(s) no longer on disk — {verb}:")
+        for entry in result["missing"]:
+            when = f" (promoted {entry.promoted_at[:10]})" if entry.promoted_at else ""
+            print(f"\n  {entry.id}  {entry.title[:52]}{when}")
+            print(f"            gone: {entry.skill_path}")
+            if args.apply:
+                entry.status = STATUS_IGNORED
+                entry.ignored_at = datetime.now(timezone.utc).replace(
+                    microsecond=0).isoformat()
+                entry.ignored_at_occurrences = entry.occurrences
+                entry.notes = (
+                    f"Skill deleted (was {entry.skill_path}). Parked here rather "
+                    f"than re-proposed. If the workflow keeps recurring, "
+                    f"`skillpp ignored` will flag it."
+                )
+                entry.skill_path = ""
+                Ledger(config).save(entry)
+            else:
+                print(f"            skillpp reopen {entry.id}   → propose it again")
+
+    if result["unlinked"]:
+        print(f"\n{len(result['unlinked'])} promoted without a recorded path "
+              f"(cannot verify):")
+        for entry in result["unlinked"]:
+            print(f"  {entry.id}  {entry.title[:60]}")
+
+    if result["orphaned"]:
+        print(f"\n{len(result['orphaned'])} skill(s) authored here whose ledger "
+              f"entry is gone (harmless — provenance only):")
+        for skill in result["orphaned"]:
+            print(f"  {skill.name}  ({skill.provenance})")
+
     return 0
 
 
@@ -443,10 +563,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note")
     p.set_defaults(func=cmd_promote)
 
-    p = sub.add_parser("dismiss", help="dismiss a candidate")
+    p = sub.add_parser("ignore", help="never propose this workflow again")
     p.add_argument("id")
     p.add_argument("--note")
-    p.set_defaults(func=cmd_dismiss)
+    p.set_defaults(func=cmd_ignore)
+
+    p = sub.add_parser("ignored", help="list ignored workflows")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_ignored)
+
+    p = sub.add_parser("reopen", help="return a workflow to the review queue")
+    p.add_argument("id")
+    p.add_argument("--note")
+    p.set_defaults(func=cmd_reopen)
 
     p = sub.add_parser("expire", help="delete unapproved candidates past their TTL")
     p.set_defaults(func=cmd_expire)
@@ -456,6 +585,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project-root")
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(func=cmd_lifecycle)
+
+    p = sub.add_parser("reconcile",
+                       help="report drift between the ledger and skills on disk")
+    p.add_argument("--apply", action="store_true",
+                   help="park deleted skills' workflows in the ignore list "
+                        "(visible and reversible; never re-proposes them)")
+    p.add_argument("--skills-dir")
+    p.set_defaults(func=cmd_reconcile)
 
     p = sub.add_parser("tier", help="move a skill between hot/cold/archived")
     p.add_argument("name")

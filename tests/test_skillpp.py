@@ -410,6 +410,19 @@ class TestDictation(TempRoot):
         self.assertEqual(fm["when_to_use"], "When the user pastes a claim.")
         self.assertIn("## When to use", text, "the body copy stays too")
 
+    def test_trigger_alias_reaches_frontmatter_and_body(self):
+        """Gap-closing honours the aliases, so consumption must too — otherwise
+        `trigger` marks the question answered while the content lands nowhere."""
+        entry, _ = self.dictate(self.EXAMPLE)
+        for key in ("when_to_use", "trigger"):
+            text = scaffold_skill(entry, "fact-check", "Verify claims.",
+                                  answers={key: "When a claim is pasted."})
+            fm = parse_frontmatter(text)
+            self.assertEqual(fm.get("when_to_use"), "When a claim is pasted.",
+                             f"answered under {key!r}")
+            self.assertNotIn("TODO", text, f"body placeholder left under {key!r}")
+            self.assertNotIn("## Judgement", text, "trigger must not be a third copy")
+
     def test_missing_when_to_use_is_not_placeholder_in_frontmatter(self):
         """The unresolved-trigger placeholder belongs in the body/## Known
         gaps, never presented in frontmatter as if it were a real answer."""
@@ -614,6 +627,164 @@ class TestInstall(unittest.TestCase):
             path.write_text(json.dumps(merged))
             _, changes = plan_settings(path)
         self.assertTrue(all("no change" in c for c in changes), changes)
+
+
+class TestReconcile(TempRoot):
+    """Deleting a promoted skill must not silently retire the workflow."""
+
+    def _promoted(self, path, title="deploy the api"):
+        """A workflow that recurred to threshold, was promoted, then deleted.
+
+        Occurrences are preserved across the reopen — the workflow already
+        proved itself, so it should not have to re-accumulate from zero.
+        """
+        from skillpp.capture import fold_session
+        cmds = ["npm run build", "./deploy.sh prod", "curl -f https://app/health"]
+        for n in range(3):
+            fold_session(self.config, {"session_id": f"s{n}", "cwd": "/proj",
+                                       "prompts": [title],
+                                       "steps": [bash(c) for c in cmds]})
+        ledger = Ledger(self.config)
+        entry = list(ledger.all())[0]
+        entry.status = "promoted"
+        entry.skill_path = str(path)
+        entry.promoted_at = "2026-08-12T10:00:00+00:00"
+        ledger.save(entry)
+        return ledger, entry
+
+    def test_reconcile_reports_but_never_changes_status(self):
+        """Deleting a skill is usually deliberate — do not second-guess it."""
+        from skillpp.lifecycle import reconcile
+        ledger, entry = self._promoted(self.root / "skills" / "gone" / "SKILL.md")
+
+        result = reconcile(ledger, self.root / "skills", self.config)
+        self.assertEqual([e.id for e in result["missing"]], [entry.id])
+        self.assertEqual(ledger.get(entry.id).status, "promoted",
+                         "reconcile must not mutate the ledger")
+
+    def test_present_skill_is_left_alone(self):
+        from skillpp.lifecycle import reconcile
+        d = self.root / "skills" / "deploy-api"
+        d.mkdir(parents=True)
+        md = d / "SKILL.md"
+        md.write_text('---\nname: deploy-api\ndescription: "x"\n---\nbody\n')
+        ledger, entry = self._promoted(md)
+
+        result = reconcile(ledger, self.root / "skills", self.config)
+        self.assertEqual([e.id for e in result["ok"]], [entry.id])
+        self.assertEqual(result["missing"], [])
+
+    def test_reopen_puts_it_back_in_the_queue(self):
+        from skillpp.cli import main
+        ledger, entry = self._promoted(self.root / "skills" / "gone" / "SKILL.md")
+        self.assertEqual(ledger.candidates(True), [], "promoted, so not proposed")
+
+        self.assertEqual(main(["--root", str(self.config.root), "reopen", entry.id]), 0)
+        back = ledger.get(entry.id)
+        self.assertEqual(back.status, "candidate")
+        self.assertEqual(back.skill_path, "", "stale path cleared")
+        self.assertIn(entry.id, [c.id for c in ledger.candidates(True)],
+                      "occurrences are preserved, so it surfaces at once")
+
+    def test_ignore_then_reopen_round_trip(self):
+        """Suppression lives at the surfacing layer, not the matching layer."""
+        from skillpp.cli import main
+        from skillpp.recurrence import find_match
+        ledger, entry = self._promoted(self.root / "skills" / "gone" / "SKILL.md")
+
+        main(["--root", str(self.config.root), "ignore", entry.id])
+        ignored = ledger.get(entry.id)
+        self.assertEqual(ignored.status, "ignored")
+        self.assertNotIn(entry.id, [c.id for c in ledger.candidates(True)],
+                         "ignored workflows are never proposed")
+        self.assertIsNotNone(
+            find_match(ignored.signature, list(ledger.all()), 0.85),
+            "but they must still match, or a recurrence would overwrite them")
+
+        main(["--root", str(self.config.root), "reopen", entry.id])
+        self.assertEqual(ledger.get(entry.id).status, "candidate")
+        self.assertIn(entry.id, [c.id for c in ledger.candidates(True)],
+                      "reopening puts it back in the queue")
+
+    def test_ignoring_survives_the_workflow_recurring(self):
+        """Ids derive from the signature, so a skipped match would overwrite
+        the ignored entry with a fresh candidate — silently undoing the user."""
+        from skillpp.capture import fold_session
+        from skillpp.cli import main
+        ledger, entry = self._promoted(self.root / "skills" / "gone" / "SKILL.md")
+        main(["--root", str(self.config.root), "ignore", entry.id])
+
+        cmds = ["npm run build", "./deploy.sh prod", "curl -f https://app/health"]
+        fold_session(self.config, {"session_id": "later", "cwd": "/proj",
+                                   "prompts": ["deploy the api"],
+                                   "steps": [bash(c) for c in cmds]})
+
+        after = ledger.get(entry.id)
+        self.assertEqual(after.status, "ignored", "the ignore must hold")
+        self.assertEqual(after.occurrences, 4, "but the recurrence still counts")
+        self.assertEqual(len(list(ledger.all())), 1, "no duplicate entry")
+        self.assertNotIn(entry.id, [c.id for c in ledger.candidates(True)])
+
+    def test_recurring_while_ignored_is_flagged_after_threshold(self):
+        from skillpp.capture import fold_session
+        from skillpp.cli import main
+        ledger, entry = self._promoted(self.root / "skills" / "gone" / "SKILL.md")
+        main(["--root", str(self.config.root), "ignore", entry.id])
+        cmds = ["npm run build", "./deploy.sh prod", "curl -f https://app/health"]
+
+        for n in range(2):
+            fold_session(self.config, {"session_id": f"x{n}", "cwd": "/proj",
+                                       "prompts": ["deploy"], "steps": [bash(c) for c in cmds]})
+        mid = ledger.get(entry.id)
+        self.assertEqual(mid.recurrences_since_ignored, 2)
+        self.assertFalse(mid.ignore_looks_wrong(self.config.recurrence_threshold))
+
+        fold_session(self.config, {"session_id": "x2", "cwd": "/proj",
+                                   "prompts": ["deploy"], "steps": [bash(c) for c in cmds]})
+        flagged = ledger.get(entry.id)
+        self.assertEqual(flagged.recurrences_since_ignored, 3)
+        self.assertTrue(flagged.ignore_looks_wrong(self.config.recurrence_threshold),
+                        "3 recurrences since ignoring is evidence the ignore was wrong")
+        self.assertEqual(flagged.status, "ignored", "flagged, but still not proposed")
+
+    def test_deleted_skill_parks_in_the_ignore_list(self):
+        from skillpp.cli import main
+        ledger, entry = self._promoted(self.root / "skills" / "gone" / "SKILL.md")
+        main(["--root", str(self.config.root), "reconcile",
+              "--skills-dir", str(self.root / "skills"), "--apply"])
+        parked = ledger.get(entry.id)
+        self.assertEqual(parked.status, "ignored")
+        self.assertEqual(parked.skill_path, "")
+        self.assertEqual(parked.ignored_at_occurrences, parked.occurrences)
+        self.assertIn("Skill deleted", parked.notes)
+
+    def test_legacy_ignored_entry_reports_no_false_recurrences(self):
+        """Entries ignored before tracking existed must not report a number."""
+        ledger, entry = self._promoted(self.root / "skills" / "gone" / "SKILL.md")
+        entry.status = "dismissed"          # pre-rename, no ignored_at_occurrences
+        ledger.save(entry)
+        stale = ledger.get(entry.id)
+        self.assertEqual(stale.recurrences_since_ignored, 0)
+        self.assertFalse(stale.ignore_looks_wrong(3))
+
+    def test_ignored_listing_is_visible(self):
+        from skillpp.cli import main
+        ledger, entry = self._promoted(self.root / "skills" / "gone" / "SKILL.md")
+        main(["--root", str(self.config.root), "ignore", entry.id, "--note", "not worth it"])
+        listed = [e for e in ledger.all() if e.status == "ignored"]
+        self.assertEqual([e.id for e in listed], [entry.id])
+        self.assertEqual(listed[0].notes, "not worth it")
+
+    def test_orphaned_skill_is_reported_not_touched(self):
+        from skillpp.lifecycle import reconcile
+        d = self.root / "skills" / "stray"
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            '---\nname: stray\ndescription: "x"\nmetadata:\n'
+            '  provenance: "ledger:doesnotexist"\n---\nbody\n')
+        result = reconcile(Ledger(self.config), self.root / "skills", self.config)
+        self.assertEqual([s.name for s in result["orphaned"]], ["stray"])
+        self.assertTrue((d / "SKILL.md").exists(), "never deletes a skill file")
 
 
 class TestHookRobustness(TempRoot):

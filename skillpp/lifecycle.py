@@ -225,6 +225,47 @@ def scan(skills_dir: Path, config: Config,
     return found
 
 
+def reconcile(ledger, skills_dir: Path, config: Config) -> dict:
+    """Report drift between the ledger's promoted entries and the skills on disk.
+
+    **Reports only — never changes status.** A promoted entry whose skill file
+    has been deleted is a real dead end (it keeps matching future occurrences
+    while never surfacing for review), but reopening it automatically would
+    second-guess a deletion that was almost certainly deliberate, and would
+    re-propose the same workflow every time the user declines. Deciding is the
+    developer's job: `skillpp reopen <id>` or `skillpp ignore <id>`.
+    """
+    from .ledger import STATUS_PROMOTED
+
+    on_disk = {s.name: s for s in scan(skills_dir, config)}
+    by_provenance = {
+        s.provenance.split(":", 1)[1]: s
+        for s in on_disk.values()
+        if s.provenance.startswith("ledger:")
+    }
+
+    result: dict[str, list] = {"ok": [], "missing": [], "unlinked": [], "orphaned": []}
+
+    for entry in ledger.all():
+        if entry.status != STATUS_PROMOTED:
+            continue
+        if not entry.skill_path:
+            result["unlinked"].append(entry)
+            continue
+        if Path(entry.skill_path).exists():
+            result["ok"].append(entry)
+            continue
+
+        result["missing"].append(entry)
+
+    # A skill this tool authored whose ledger entry has since gone.
+    for entry_id, skill in by_provenance.items():
+        if ledger.get(entry_id) is None:
+            result["orphaned"].append(skill)
+
+    return result
+
+
 def move_tier(skill: SkillInfo, target_tier: str, skills_dir: Path,
               config: Config) -> Path:
     """Move a skill between hot / cold / archived. Never deletes."""
