@@ -91,3 +91,93 @@ of task" is where the remaining error lives. Worth more cases before trusting
 - **No recurrence interaction.** An episode parked on its first sighting never
   gets to recur. Whether a second sighting should reopen it — as a recurring
   ignored workflow does elsewhere — is undecided.
+
+---
+
+## The larger run: 14 real candidates, and the false-drop count
+
+A 1.4 MB ledger from real work — the pre-clear backup of a developer building
+this tool. 14 candidates, `gemma3n:e4b`, 1.5–6.7s each.
+
+**All 14 were dropped.** Labelled by hand afterwards:
+
+| | count | |
+| --- | --- | --- |
+| Correct drops | **11** | diff review, an install smoke-test, "is this a good direction?", 216 steps of SVG and browser work, writing a module, "did it record?" debugging, a 189-step website analysis, hero-copy editing, a Desktop investigation, two bug fixes |
+| **Likely false drop** | **1** | `9b7fc39f8457` — grep tracked files for secrets and personal data → check the diff → commit. Pre-commit hygiene is a method someone repeats |
+| Borderline | 2 | `9a881ce54ffd`, `c976ef423f6f` |
+
+**False-drop rate: 1 in 14 (7%) strict, 3 in 14 (21%) counting borderline.**
+
+### The positive control exists after all — and it passes
+
+The same backup holds four entries the developer had already judged, which is
+real ground truth rather than a fixture: two **promoted** into live skills, one
+**dismissed**, one **ignored**.
+
+| Entry | Human | Filter | |
+| --- | --- | --- | --- |
+| Weekly manager update email | promoted | **keep** | ✓ 1.8s |
+| Tool evaluation note | promoted | **keep** | ✓ 2.2s |
+| `vim app.py` (an install probe) | ignored | **drop** | ✓ 1.4s |
+| Author a new skill from a description | dismissed | keep | ✗ 47.4s |
+
+**3 of 4, and zero false drops on the two known methods.** That is the result
+that matters: 14 of 14 was the corpus, not a filter that says no to everything.
+
+The miss is a false *keep* — the cheap direction, one line in a review list —
+and it is defensible. That entry is a dictated four-step procedure; it was
+dismissed for being redundant with an existing command, which is a different
+question from whether it is a method. The 47s also stands out: its steps are
+long prose blocks rather than commands, and cost ~20x the usual call.
+
+### What the 14-of-14 number cannot tell you
+
+**There were no keeps, so there is no positive control here.** A filter that
+dropped everything unconditionally would score identically on this corpus. The
+evidence that it *can* keep is the scenario set, where it kept `refine`,
+`distinct-tasks` (both) and `recurs` — not this run.
+
+That said, 14 of 14 is plausible rather than alarming for this corpus: it is a
+developer's own feature work, investigations and bug fixes. Genuine repeatable
+procedures are rare in that population, which is exactly the premise the tool
+rests on. It is also the uncomfortable implication — if a real ledger yields no
+methods, the filter is working and the *product* still has nothing to offer.
+
+### The false drop is not a data artefact
+
+The obvious explanation was the title: that entry's `{ASK}` was a raw shell
+command rather than a stated intent, so the model had no request to judge
+against. Tested by re-asking with the same steps under three framings — the
+command as banked, an explicit *"check nothing personal or secret is in tracked
+files, then commit"*, and a terse *"commit safely"*.
+
+**`no` all three times.** The title is not the cause; the model consistently
+reads that sequence as one particular job. There is a defensible reading behind
+it — the generalisable part is a *rule* ("never commit secrets"), not a
+multi-step procedure — but by the labelling above it is still a false drop, and
+it sits on the same boundary as the `retry` miss: *this instance* versus *this
+kind of task*.
+
+### One borderline case is a segmentation failure, not a filter failure
+
+`9a881ce54ffd` is 93 steps of documentation editing with a real, reusable
+procedure buried inside it — bundle a skill, open the settings page, upload it.
+The filter judged the episode correctly: taken whole, it is not a method. The
+defect is that it was ever one episode. Better boundaries would surface the
+procedure; no filter can extract it from an episode that large.
+
+## Verdict on running it unattended
+
+**Deliberately, yes. Unattended, not yet.**
+
+For it: zero false drops on the two known methods, both kept in under 3s. The
+one ground-truth miss is a false keep, which costs a line in a list. Nothing is
+deleted, and `reopen` reverses any verdict.
+
+Against it: 1 likely false drop in 14 unlabelled candidates, and it survives
+rephrasing — the model is consistently wrong there rather than uncertain, so the
+fail-safe does not catch it. Two known methods is also a thin positive control.
+
+So run it as a command and read what it parked. Do not put it in a cron or a
+hook until the labelled set is larger than four.
