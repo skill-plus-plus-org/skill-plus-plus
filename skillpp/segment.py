@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import re
+
 from .normalize import normalize_command
 
 # What ends a task.
@@ -52,6 +54,18 @@ COMPLETION_MARKERS = frozenset({
     "gh pr create", "gh pr merge", "gh release create", "glab mr create",
 })
 
+# Commands that only inspect. Anchored on purpose: `grep` is a read,
+# `vim $(grep ...)` is not. Ported from the capture branch, which is the one
+# place that design got something this one lacked.
+_READ_ONLY_RE = re.compile(
+    r"(?i)\A(?:sudo\s+)?(?:grep|rg|ag|ack|cat|bat|head|tail|less|more|ls|ll|tree|"
+    r"find|fd|wc|file|stat|du|df|ps|top|which|whereis|pwd|env|printenv|date|"
+    r"man|type|echo|jq|column|sort|uniq|diff|cmp|"
+    r"git\s+(?:log|show|status|diff|blame|branch|remote|config)|"
+    r"kubectl\s+(?:get|describe|logs)|docker\s+(?:ps|images|logs)|"
+    r"terraform\s+(?:plan|show)|npm\s+(?:ls|view)|pip\s+(?:show|list))\b")
+
+
 # Tools whose invocation is itself the delivery of a finished thing.
 ARTIFACT_TOOLS = frozenset({"SendUserFile"})
 
@@ -67,6 +81,7 @@ class Episode:
     steps: list[dict] = field(default_factory=list)
     ended_by: str = "session-end"   # "marker" | "prompt" | "session-end"
     flagged: bool = False           # no marker, and the session did segment
+    trimmed: int = 0                # leading read-only steps dropped
 
     @property
     def has_marker(self) -> bool:
@@ -94,6 +109,60 @@ def is_marker(step: dict) -> bool:
 
 def is_prompt(step: dict) -> bool:
     return step.get("tool") == PROMPT_TOOL
+
+
+def is_read_only(step: dict) -> bool:
+    """Does *step* only look at things?
+
+    Bash only. A tool call that edits or writes is work by definition, and an
+    MCP call cannot be judged from its name.
+    """
+    if step.get("tool") != "Bash":
+        return False
+    command = str((step.get("input") or {}).get("command", ""))
+    return bool(_READ_ONLY_RE.match(command.strip()))
+
+
+def trim_leading_exploration(steps: list[dict],
+                             min_steps: int = 2) -> tuple[list[dict], int]:
+    """Drop the searching that *found* the task, keep the work that did it.
+
+    A recipe's first real action changes something; the reads before it are how
+    the developer located the problem, not how they solved it. Eight greps then
+    a one-line fix is a two-step recipe, and the greps are noise in it.
+
+    This matters twice over here. It shortens the episode, and it changes what a
+    reader concludes from it: a nine-step episode whose method is three curls
+    under six greps reads as one particular job, and reads as a method once the
+    greps are gone. Measured — the same model flips its verdict.
+
+    Only a *leading* run goes. Reads interleaved with real work stay, because
+    those are usually genuine steps: "check the logs, then restart".
+
+    Prompt sentinels are never cut. They carry the stated intent an episode is
+    titled from, and dropping them would leave the episode named after a
+    command.
+    """
+    prefix: list[dict] = []
+    index = cut = 0
+    while index < len(steps):
+        step = steps[index]
+        if is_prompt(step):
+            prefix.append(step)
+            index += 1
+            continue
+        if is_read_only(step):
+            cut += 1
+            index += 1
+            continue
+        break
+    remaining = prefix + steps[index:]
+    if sum(1 for s in remaining if not is_prompt(s)) < min_steps:
+        # Trimming to nothing is how an exploration-only episode would become a
+        # two-step "recipe" of whatever happened to follow it. Leave it whole
+        # and let the flagging rules deal with it.
+        return steps, 0
+    return remaining, cut
 
 
 def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
@@ -150,6 +219,10 @@ def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
 
     if substantive_count(current) > 0:
         episodes.append(current)
+
+    for episode in episodes:
+        episode.steps, episode.trimmed = trim_leading_exploration(
+            episode.steps, min_steps)
 
     if len(episodes) > 1:
         for episode in episodes:

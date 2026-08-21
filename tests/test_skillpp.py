@@ -1069,3 +1069,82 @@ class TestDraftCommand(TempRoot):
         real, subprocess.run = subprocess.run, boom
         self.addCleanup(lambda: setattr(subprocess, "run", real))
         self.assertEqual(cmd_draft(self._args(apply=True)), 1)
+
+
+class TestLeadingExplorationTrim(unittest.TestCase):
+    """Ported from the capture branch — the one thing that design got right.
+
+    It earns its place twice: shorter episodes, and episodes a reader judges
+    differently. `secrets` was dropped as "one particular job" with six greps in
+    front of it and kept as a method without them.
+    """
+
+    def bash(self, command, **kw):
+        return {"tool": "Bash", "input": {"command": command}, **kw}
+
+    def prompt(self, text):
+        return {"tool": "UserPrompt", "input": {"prompt": text}}
+
+    def test_drops_the_greps_that_found_the_bug(self):
+        from skillpp.segment import trim_leading_exploration
+        steps = [self.bash("grep -rn timeout src/"), self.bash("cat src/api.py"),
+                 self.bash("sed -i s/5/30/ src/api.py"),
+                 self.bash("git commit -am fix")]
+        kept, cut = trim_leading_exploration(steps)
+        self.assertEqual(cut, 2)
+        self.assertEqual(len(kept), 2)
+
+    def test_keeps_reads_that_are_real_steps(self):
+        """"check the logs, then restart" is a two-step recipe, not exploration."""
+        from skillpp.segment import trim_leading_exploration
+        steps = [self.bash("systemctl restart api"),
+                 self.bash("journalctl -u api -n 50")]
+        kept, cut = trim_leading_exploration(steps)
+        self.assertEqual(cut, 0)
+        self.assertEqual(len(kept), 2)
+
+    def test_never_trims_below_two_substantive_steps(self):
+        """Otherwise an exploration-only episode becomes a recipe of its tail."""
+        from skillpp.segment import trim_leading_exploration
+        steps = [self.bash("grep -rn x ."), self.bash("grep -rn y ."),
+                 self.bash("./deploy.sh")]
+        kept, cut = trim_leading_exploration(steps)
+        self.assertEqual(cut, 0)
+        self.assertEqual(len(kept), 3)
+
+    def test_a_prompt_sentinel_survives_the_trim(self):
+        """The episode is titled from it; losing it names the episode after a command."""
+        from skillpp.segment import is_prompt, trim_leading_exploration
+        steps = [self.prompt("push today's metrics like last week"),
+                 self.bash("grep -rn metrics src/"), self.bash("grep -rn m2 src/"),
+                 self.bash("curl -X POST https://dash/api/metrics"),
+                 self.bash("curl -s https://dash/api/metrics/latest")]
+        kept, cut = trim_leading_exploration(steps)
+        self.assertEqual(cut, 2)
+        self.assertTrue(is_prompt(kept[0]))
+
+    def test_an_all_reads_episode_is_left_alone(self):
+        from skillpp.segment import trim_leading_exploration
+        steps = [self.bash("git status"), self.bash("git diff"), self.bash("ls -la")]
+        kept, cut = trim_leading_exploration(steps)
+        self.assertEqual((len(kept), cut), (3, 0))
+
+    def test_a_write_is_never_read_only(self):
+        from skillpp.segment import is_read_only
+        self.assertFalse(is_read_only({"tool": "Write",
+                                       "input": {"file_path": "/tmp/x"}}))
+
+    def test_an_anchored_read_is_not_fooled_by_a_substring(self):
+        from skillpp.segment import is_read_only
+        self.assertTrue(is_read_only(self.bash("grep -rn x .")))
+        self.assertFalse(is_read_only(self.bash("vim $(grep -l x .)")))
+
+    def test_segment_records_what_it_trimmed(self):
+        from skillpp.segment import segment
+        episodes = segment([self.prompt("fix the export"),
+                            self.bash("grep -rn export src/"),
+                            self.bash("cat src/export.py"),
+                            self.bash("sed -i s/a/b/ src/export.py"),
+                            self.bash("git commit -am fix")])
+        self.assertEqual(len(episodes), 1)
+        self.assertEqual(episodes[0].trimmed, 2)

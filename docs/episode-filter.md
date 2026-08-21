@@ -403,3 +403,73 @@ true, and both are about the same missing piece. `segment.py` has no exploration
 trim, so a real procedure arrives diluted by the greps that found it, and the
 filter — judging what it was shown — says no. Porting
 `trim_leading_exploration` is the next thing, not a better prompt.
+
+---
+
+## After porting the exploration trim
+
+`trim_leading_exploration` and its read-only vocabulary are now in `segment.py`,
+ported from `feat/ignore-list-and-drift-tracking`. Prompt sentinels survive the
+trim — they carry the intent an episode is titled from — and nothing is ever
+trimmed below two substantive steps.
+
+All three sets re-run.
+
+### Set 1 — six scenarios, hook path: **5 of 6, unchanged**
+
+The trim did what it was ported for: `explore-then-fix` now banks **2 steps
+instead of 10**. It is still dropped by the filter, which is correct — a one-off
+bug hunt is not a procedure. `retry` is still the one false drop, and it was
+never an exploration problem.
+
+### Set 2 — seven fixtures: 75% → 67% false drops, and two new findings
+
+| Fixture | Ground truth | before | after |
+| --- | --- | --- | --- |
+| `secrets` | 1 procedure | dropped ✗ | **kept ✓ — fixed** |
+| `barren` | nothing | 0 ✓ | **1 kept ✗ — regressed** |
+| `new`/`match(a)` | the bug-filing procedure | — | banked, then dropped ✗ |
+| `match(b)` | the same, ×2 | — | banked **at ×2**, then dropped ✗ |
+| `big` | 1 procedure in 433 KB | 0 ✗ | 0 ✗ |
+| `incomplete` | nothing | 0 ✓ | 0 ✓ |
+| `two` | 2 procedures | 1 of 2 | 1 of 2 |
+
+**`secrets` confirms the hypothesis end to end.** Nine steps became three, and
+the same model flipped from *"one particular job"* to *"a method worth
+repeating"*. The filter had been judging a procedure outnumbered two to one by
+the greps that found it.
+
+**`barren` regressed, and that is the trim's own cost.** Trimming left a tidy
+two-step `merge main in`, which reads like a method precisely because the noise
+around it is gone. Cleaner episodes are easier to judge in both directions.
+
+### The finding that matters more than either: recurrence is ignored
+
+`match(b)` banked the bug-filing procedure **at ×2** — recognised as the same
+work across two sessions, which is the thing the capture branch never managed at
+all. Then `sift` dropped it.
+
+That is backwards. An episode the developer has actually performed twice is
+behavioural evidence that it is a method, and it is stronger evidence than a
+model's reading of the steps. The filter never sees the count: `is_reusable`
+renders intent and steps and nothing else.
+
+The rule that follows is simple and does not need a model: **never discard
+something that has been done more than once.** Recurrence is the whole promotion
+gate in this design, and the one stage that can discard is currently allowed to
+veto it.
+
+### Set 3 — real ledger: unchanged
+
+14 of 14 dropped, 3 of 4 against human labels, both promoted skills kept. The
+trim runs at segmentation time, so entries already banked by another branch's
+segmentation are unaffected.
+
+### Where the remaining false drops actually come from
+
+| Cause | Fixture | Fixable by |
+| --- | --- | --- |
+| exploration diluting the method | `secrets` | **done** — the trim |
+| recurrence ignored | `match(b)`, `new` | a count check, no model needed |
+| episodes over-merged into 60-step blobs | `big` | segmentation, not the filter |
+| genuine boundary judgement | `retry` | unresolved; may not be resolvable |
