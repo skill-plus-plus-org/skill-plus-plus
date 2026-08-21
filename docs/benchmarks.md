@@ -324,3 +324,46 @@ instead of a considered judgement, twice, on failures that had not been
 anticipated. And the agent itself refused to fabricate a draft or to route
 around a sandbox restriction every single time — it was the only party in the
 loop behaving correctly.
+
+---
+
+## A failed attempt to fix the ranker (recorded so it is not repeated)
+
+`sift` ranks `migration-with-a-lock` and `meeting-prep` as `one-off` when both
+are methods. The diagnosis looked easy: one rule in `prompts/reusable.md` reads
+*"one broken deploy … finding out why something specific was wrong and fixing it
+is `no`"*, which describes the migration case superficially even though the
+drain/migrate/restore technique generalises. Two attempts, both worse:
+
+| Prompt | Ranking |
+| --- | --- |
+| **Baseline** | **12 of 15** |
+| Rewritten around "would this save a colleague an afternoon?" | 8 of 15 |
+| Baseline plus one narrow workaround exception | 9 of 15 |
+
+The second attempt is the useful one. A single added paragraph, scoped to
+workarounds, with a worked example on each side — *draining replicas is a
+method; adding a null check is not* — **did not fix its target** and broke
+`onboard-a-repository`, `answer-one-question` and `two-chores-one-sitting`, none
+of which it mentions. At temperature 0, so that is the added text shifting
+unrelated judgements rather than sampling noise.
+
+Which reproduces the lesson `feat/pattern-detection` recorded as its most
+expensive: **every auxiliary hint in a prompt gets read as a rule.** Seven
+revisions of its locator prompt, each removing a hint the model had started
+treating as sufficient on its own.
+
+So the prompt is at a local optimum and these two cases sit on the real boundary
+between *this instance* and *this kind of task* — the same boundary `retry` sat
+on, unmoved across five attempts in different shapes.
+
+**Why that is tolerable rather than a blocker.** `sift` ranks and never
+discards, so both stay in the queue, ranked low and visible. And `draft` already
+judges `migration-with-a-lock` correctly — it named it
+`draining-app-replicas-to-clear-a-migration-lock` with four honest open
+questions. The pipeline has a stage that gets it right; a conservative ranker
+costs a position in a list, not the candidate.
+
+**The direction worth trying is the opposite one:** let `draft` correct the hint
+when it disagrees with `sift`, rather than making the cheap stage cleverer. The
+expensive stage is the one with the context to be right.
