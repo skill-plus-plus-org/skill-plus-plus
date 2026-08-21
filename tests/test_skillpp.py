@@ -1889,3 +1889,107 @@ class TestParkingSticks(TempRoot):
         eid = self._park(status="one-off")
         self._session("s2")
         self.assertEqual(Ledger(self.config).get(eid).status, "one-off")
+
+
+class TestWeb(TempRoot):
+    """A page that shows the current ledger, not the one it was written for.
+
+    The previous version predates `hint`, `description`, `parked_at_occurrences`
+    and the one-off/split statuses, so it would have rendered parked entries as
+    live ones and no ranking at all. A stale view that looks authoritative is
+    worse than no view, which is why this was rewritten rather than ported.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.skills = self.root / "skills"
+        self.skills.mkdir(parents=True, exist_ok=True)
+        self.ledger = Ledger(self.config)
+
+    def _step(self, c):
+        return {"tool": "Bash", "input": {"command": c}}
+
+    def test_the_state_separates_parked_from_candidates(self):
+        from skillpp.ledger import STATUS_DISMISSED
+        from skillpp.web import collect_state
+        self.ledger.save(Entry(id="a", signature="s1", title="live one",
+                               steps=[self._step("npm test")]))
+        self.ledger.save(Entry(id="b", signature="s2", title="parked one",
+                               status=STATUS_DISMISSED,
+                               steps=[self._step("ls")]))
+        state = collect_state(self.config, self.skills)
+        self.assertEqual([e["id"] for e in state["candidates"]], ["a"])
+        self.assertEqual([e["id"] for e in state["parked"]], ["b"])
+
+    def test_the_ranking_and_description_reach_the_page(self):
+        """Both are new since the old UI, and both decide what a reader does."""
+        from skillpp.web import collect_state
+        self.ledger.save(Entry(id="a", signature="s", title="t", hint="method",
+                               description="When a migration is lock-blocked.",
+                               steps=[self._step("npm test")]))
+        row = collect_state(self.config, self.skills)["candidates"][0]
+        self.assertEqual(row["hint"], "method")
+        self.assertIn("lock-blocked", row["description"])
+
+    def test_deviation_is_visible_on_a_parked_entry(self):
+        from skillpp.ledger import STATUS_DISMISSED
+        from skillpp.web import collect_state
+        self.ledger.save(Entry(id="a", signature="s", title="t",
+                               status=STATUS_DISMISSED, occurrences=4,
+                               parked_at_occurrences=1,
+                               steps=[self._step("npm test")]))
+        row = collect_state(self.config, self.skills)["parked"][0]
+        self.assertEqual(row["since_parked"], 3)
+        self.assertTrue(row["parking_looks_wrong"])
+
+    def test_a_traversal_name_is_refused_not_sanitised(self):
+        from skillpp.web import _skill_path
+        for name in ("../../etc/passwd", "..", "a/../../b", "", "x" * 80):
+            self.assertIsNone(_skill_path(self.skills, self.config, name), name)
+
+    def test_saving_a_skill_without_a_description_is_refused(self):
+        """It is the only thing read when deciding whether to load a skill."""
+        from skillpp.web import save_skill
+        path = self.skills / "x" / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("---\nname: x\ndescription: original\n---\nbody\n")
+        result = save_skill(path, "---\nname: x\n---\nbody\n")
+        self.assertFalse(result["ok"])
+        self.assertIn("description", result["error"])
+        self.assertIn("original", path.read_text())
+
+    def test_an_over_long_description_is_refused(self):
+        from skillpp.web import save_skill
+        path = self.skills / "x" / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("---\nname: x\ndescription: fine\n---\n")
+        long = "y" * 201
+        result = save_skill(path, f"---\nname: x\ndescription: {long}\n---\n")
+        self.assertFalse(result["ok"])
+        self.assertIn("200", result["error"])
+
+    def test_a_valid_save_keeps_the_previous_version(self):
+        from skillpp.web import save_skill
+        path = self.skills / "x" / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("---\nname: x\ndescription: before\n---\n")
+        result = save_skill(path, "---\nname: x\ndescription: after\n---\n")
+        self.assertTrue(result["ok"])
+        self.assertIn("after", path.read_text())
+        self.assertTrue(list(path.parent.glob("*.bak-*")))
+
+    def test_reopen_is_the_only_status_change_the_page_makes(self):
+        from skillpp.ledger import STATUS_CANDIDATE, STATUS_DISMISSED
+        from skillpp.web import reopen
+        self.ledger.save(Entry(id="a", signature="s", title="t",
+                               status=STATUS_DISMISSED))
+        self.assertTrue(reopen(self.config, "a")["ok"])
+        self.assertEqual(Ledger(self.config).get("a").status, STATUS_CANDIDATE)
+        # not applicable to anything that was not parked
+        self.assertFalse(reopen(self.config, "a")["ok"])
+
+    def test_the_page_carries_no_external_references(self):
+        """Dependency-free on purpose, and offline by consequence."""
+        from skillpp.web import PAGE
+        for bad in ("http://", "https://cdn", "//cdn.", "<script src"):
+            self.assertNotIn(bad, PAGE.replace("http://127.0.0.1", ""))

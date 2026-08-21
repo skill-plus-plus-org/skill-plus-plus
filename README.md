@@ -392,6 +392,7 @@ worth reading. Neither half is useful alone.
 | `skillpp keep` | Save the work so far as a candidate, without ending the session |
 | `skillpp reconcile` | Report promoted skills whose file is gone; reports only, never decides |
 | `skillpp ignored [--threshold N]` | List parked candidates and how often that work happened anyway |
+| `skillpp web [--port N] [--no-browser]` | Browse the ledger in a local page; loopback only, no auth |
 | `skillpp draft <id> [--apply]` | Have your own agent write a draft `SKILL.md`; never installs it. Dry run without `--apply` |
 | `skillpp show <id>` | Effect summary, evidence, open questions |
 | `skillpp search <words>` | Search the ledger of your own past work |

@@ -388,6 +388,31 @@ def cmd_keep(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_web(args: argparse.Namespace) -> int:
+    """Serve the ledger as a local page. Loopback only; there is no auth."""
+    from .config import default_skills_dir
+    from .web import serve
+
+    config = Config(args.root)
+    config.ensure_dirs()
+    skills_dir = (Path(args.skills_dir).expanduser() if args.skills_dir
+                  else default_skills_dir())
+    httpd = serve(config, skills_dir, port=args.port,
+                  open_browser=not args.no_browser)
+    url = f"http://127.0.0.1:{httpd.server_port}/"
+    print(f"serving  {url}")
+    print(f"ledger   {config.root}")
+    print(f"skills   {skills_dir}")
+    print("Ctrl-C to stop.")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+    finally:
+        httpd.server_close()
+    return 0
+
+
 def cmd_ignored(args: argparse.Namespace) -> int:
     """List what has been parked, and what has happened since.
 
@@ -962,6 +987,13 @@ def build_parser() -> argparse.ArgumentParser:
                             "ending the session")
     p.add_argument("--session-id", help="which session; defaults to the newest")
     p.set_defaults(func=cmd_keep)
+
+    p = sub.add_parser("web", help="browse the ledger in a local page")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--skills-dir")
+    p.add_argument("--no-browser", action="store_true",
+                   help="do not open a browser window")
+    p.set_defaults(func=cmd_web)
 
     p = sub.add_parser("ignored",
                        help="list parked candidates and what has recurred since")
