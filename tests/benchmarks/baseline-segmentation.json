@@ -1,10 +1,17 @@
 {
-  "cases": 17,
+  "cases": 22,
   "segmentation": {
-    "passed": 17,
-    "of": 17
+    "passed": 20,
+    "of": 22
   },
-  "ranking": null,
+  "ranking": {
+    "passed": 15,
+    "of": 18
+  },
+  "recurrence": {
+    "passed": 1,
+    "of": 2
+  },
   "rows": [
     {
       "name": "release-a-service",
@@ -17,10 +24,16 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 1,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 1,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "cut the 2.4 release"
+      ],
+      "hints": [
+        "method"
       ]
     },
     {
@@ -34,10 +47,16 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 1,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 1,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "rotate the staging database password"
+      ],
+      "hints": [
+        "method"
       ]
     },
     {
@@ -50,10 +69,16 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 1,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 1,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "get this repo running locally"
+      ],
+      "hints": [
+        "method"
       ]
     },
     {
@@ -66,10 +91,16 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 1,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 0,
+      "ranking": false,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "the staging migration is stuck, get it green"
+      ],
+      "hints": [
+        "one-off"
       ]
     },
     {
@@ -83,10 +114,16 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 0,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 0,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "the export endpoint 500s intermittently, find out why"
+      ],
+      "hints": [
+        "one-off"
       ]
     },
     {
@@ -101,6 +138,9 @@
       "expected_methods": 0,
       "got_methods": null,
       "ranking": null,
+      "expected_occurrences": 1,
+      "got_occurrences": 0,
+      "recurrence": null,
       "titles": []
     },
     {
@@ -113,11 +153,18 @@
       "got_episodes": 2,
       "segmentation": true,
       "expected_methods": 2,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 2,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "now bump CI to node 22",
         "cut the 2.4 release tag"
+      ],
+      "hints": [
+        "method",
+        "method"
       ]
     },
     {
@@ -130,10 +177,16 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 0,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 0,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "users report a crash on empty carts"
+      ],
+      "hints": [
+        "one-off"
       ]
     },
     {
@@ -148,10 +201,16 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 1,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 1,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "draft my weekly update for Ludwig"
+      ],
+      "hints": [
+        "method"
       ]
     },
     {
@@ -165,10 +224,16 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 1,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 1,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "do my expenses for March"
+      ],
+      "hints": [
+        "method"
       ]
     },
     {
@@ -182,10 +247,16 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 1,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 1,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "go through the support inbox"
+      ],
+      "hints": [
+        "method"
       ]
     },
     {
@@ -199,10 +270,16 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 1,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 0,
+      "ranking": false,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "prep me for the quarterly review with the platform team"
+      ],
+      "hints": [
+        "one-off"
       ]
     },
     {
@@ -216,10 +293,16 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 0,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 0,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "what did we decide about the retry cap last month?"
+      ],
+      "hints": [
+        "one-off"
       ]
     },
     {
@@ -235,6 +318,9 @@
       "expected_methods": 0,
       "got_methods": null,
       "ranking": null,
+      "expected_occurrences": 1,
+      "got_occurrences": 0,
+      "recurrence": null,
       "titles": []
     },
     {
@@ -248,12 +334,20 @@
       "got_episodes": 3,
       "segmentation": true,
       "expected_methods": 1,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 2,
+      "ranking": false,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "and the login redirect is broken on staging",
         "now bump lodash to 4.17.21",
         "cut the 2.4 release tag"
+      ],
+      "hints": [
+        "one-off",
+        "method",
+        "method"
       ]
     },
     {
@@ -268,11 +362,18 @@
       "got_episodes": 2,
       "segmentation": true,
       "expected_methods": 2,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 2,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "also do March expenses while we are here",
         "draft my weekly update"
+      ],
+      "hints": [
+        "method",
+        "method"
       ]
     },
     {
@@ -287,10 +388,129 @@
       "got_episodes": 1,
       "segmentation": true,
       "expected_methods": 1,
-      "got_methods": null,
-      "ranking": null,
+      "got_methods": 1,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
       "titles": [
         "roll out the api hotfix to staging"
+      ],
+      "hints": [
+        "method"
+      ]
+    },
+    {
+      "name": "deploy-then-status-email",
+      "kind": "programming",
+      "tags": [
+        "multi",
+        "no-marker",
+        "needs-split"
+      ],
+      "expected_episodes": 2,
+      "got_episodes": 1,
+      "segmentation": false,
+      "expected_methods": 2,
+      "got_methods": null,
+      "ranking": null,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
+      "titles": [
+        "ship the api hotfix and then draft my weekly update"
+      ]
+    },
+    {
+      "name": "the-same-release-twice",
+      "kind": "programming",
+      "tags": [
+        "recurrence"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": 1,
+      "ranking": true,
+      "expected_occurrences": 2,
+      "got_occurrences": 2,
+      "recurrence": true,
+      "titles": [
+        "cut the 2.4 release"
+      ],
+      "hints": [
+        "method"
+      ]
+    },
+    {
+      "name": "the-same-release-different-runner",
+      "kind": "programming",
+      "tags": [
+        "near-miss",
+        "needs-merge"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 2,
+      "segmentation": false,
+      "expected_methods": 1,
+      "got_methods": null,
+      "ranking": null,
+      "expected_occurrences": 2,
+      "got_occurrences": 1,
+      "recurrence": false,
+      "titles": [
+        "cut the 2.4 release",
+        "cut the 2.5 release"
+      ]
+    },
+    {
+      "name": "abandoned-then-done-another-way",
+      "kind": "programming",
+      "tags": [
+        "failure-then-fix",
+        "no-commit"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": 1,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
+      "titles": [
+        "get the staging certs renewed"
+      ],
+      "hints": [
+        "method"
+      ]
+    },
+    {
+      "name": "two-chores-then-nothing",
+      "kind": "productivity",
+      "tags": [
+        "multi",
+        "mcp",
+        "trailing-noise"
+      ],
+      "expected_episodes": 2,
+      "got_episodes": 2,
+      "segmentation": true,
+      "expected_methods": 2,
+      "got_methods": 2,
+      "ranking": true,
+      "expected_occurrences": 1,
+      "got_occurrences": 1,
+      "recurrence": null,
+      "titles": [
+        "now file the March expenses",
+        "do the weekly update"
+      ],
+      "hints": [
+        "method",
+        "method"
       ]
     }
   ]

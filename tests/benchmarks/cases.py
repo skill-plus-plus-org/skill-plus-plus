@@ -59,6 +59,13 @@ class Case:
     episodes: int                 # candidates a correct run banks
     methods: int                  # of those, how many are reusable procedures
     tags: list = field(default_factory=list)
+    # A second session, played into the same ledger after the first. Recurrence
+    # and merging are invisible within one session by definition — occurrences
+    # count sessions — so the corpus could not see either until this existed.
+    follow: list = None
+    # Highest occurrence count a correct run reaches. Only meaningful with
+    # `follow`, and the whole promotion gate rests on it.
+    occurrences: int = 1
 
 
 CASES = [
@@ -251,6 +258,91 @@ CASES += [
          B("git log --since=14.days --oneline"), B("cat .github/workflows/nightly.yml"),
          B("tail -200 logs/nightly.log")],
         episodes=1, methods=1, tags=["boundary", "multi", "mixed"]),
+]
+
+
+# Cases for the three capabilities the corpus could not see. Each was added
+# after a feature shipped with nothing here able to score it, which is its own
+# finding: `merge`, recurrence and the split all measured zero on a 17-case
+# corpus that scored 17 of 17.
+CASES += [
+    Case(
+        "deploy-then-status-email", "programming",
+        "One request, two procedures from different worlds, and no marker "
+        "between them. The unambiguous version of `case C` — nobody calls a "
+        "helm rollout and a status email one procedure.",
+        [P("ship the api hotfix and then draft my weekly update"),
+         B("helm upgrade api charts/api --set image.tag=2.2.1 --wait"),
+         B("kubectl rollout status deploy/api -n staging"),
+         B("git log --author=me --since=7.days --oneline"),
+         W("/tmp/weekly-update.md"),
+         M("Gmail__create_draft", to="ludwig@example.com")],
+        # Two procedures, so two candidates. Code banks one — there is no
+        # marker to cut at — and `draft` splits it afterwards. Recorded as a
+        # segmentation miss on purpose: the gap is real and the fix is
+        # downstream, so hiding it here would flatter the segmenter.
+        episodes=2, methods=2, tags=["multi", "no-marker", "needs-split"]),
+
+    Case(
+        "the-same-release-twice", "programming",
+        "Two sessions, one procedure. Occurrences count sessions, so this is "
+        "the only shape that can reach the threshold at all — and it had never "
+        "been tested.",
+        [P("cut the 2.4 release"),
+         B("git checkout main"), B("git pull --ff-only"), B("npm test"),
+         B("npm version 2.4.0"), B("git tag -s v2.4.0 -m rel"),
+         B("git push --follow-tags")],
+        follow=[P("cut the 2.5 release"),
+                B("git checkout main"), B("git pull --ff-only"), B("npm test"),
+                B("npm version 2.5.0"), B("git tag -s v2.5.0 -m rel"),
+                B("git push --follow-tags")],
+        episodes=1, methods=1, occurrences=2, tags=["recurrence"]),
+
+    Case(
+        "the-same-release-different-runner", "programming",
+        "The same release with one step served by a different tool. Lexical "
+        "similarity scores this 0.786 against a 0.85 threshold — the worst "
+        "place to land — so it banks twice and needs `merge` to become one.",
+        [P("cut the 2.4 release"),
+         B("git checkout main"), B("git pull --ff-only"), B("npm test"),
+         B("npm version 2.4.0"), B("git tag -s v2.4.0 -m rel"),
+         B("git push --follow-tags")],
+        follow=[P("cut the 2.5 release"),
+                B("git checkout main"), B("git pull --ff-only"), B("pytest -q"),
+                B("npm version 2.5.0"), B("git tag -s v2.5.0 -m rel"),
+                B("git push --follow-tags")],
+        # One procedure done twice, so one entry at x2. Lexical similarity
+        # banks two at x1 and `merge` folds them. Recorded as the miss it is.
+        episodes=1, methods=1, occurrences=2, tags=["near-miss", "needs-merge"]),
+
+    Case(
+        "abandoned-then-done-another-way", "programming",
+        "A first approach abandoned mid-way, then a different one that worked. "
+        "The failed attempt is not a procedure and the session is not empty.",
+        [P("get the staging certs renewed"),
+         B("certbot renew --dry-run", failed=True),
+         B("cat /etc/letsencrypt/renewal/staging.conf"),
+         B("acme.sh --renew -d staging.example.com"),
+         B("kubectl create secret tls staging-tls --cert=fullchain.pem "
+           "--key=privkey.pem --dry-run=client -o yaml | kubectl apply -f -"),
+         B("curl -sI https://staging.example.com")],
+        episodes=1, methods=1, tags=["failure-then-fix", "no-commit"]),
+
+    Case(
+        "two-chores-then-nothing", "productivity",
+        "Two real chores, then a spell of reading that concluded nothing. The "
+        "reading must not attach itself to the second chore.",
+        [P("do the weekly update"),
+         B("git log --since=7.days --oneline"), W("/tmp/weekly.md"),
+         M("Gmail__create_draft", to="ludwig@example.com"),
+         P("now file the March expenses"),
+         M("Drive__search_files", query="receipt March"),
+         W("/tmp/expenses.csv"),
+         M("Sheets__append_rows", spreadsheet="Expenses 2026"),
+         P("what was the pricing decision again?"),
+         M("Slack__search_messages", query="pricing"),
+         R("/tmp/pricing.md")],
+        episodes=2, methods=2, tags=["multi", "mcp", "trailing-noise"]),
 ]
 
 

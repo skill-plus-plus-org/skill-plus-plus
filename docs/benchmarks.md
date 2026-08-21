@@ -501,3 +501,58 @@ recorded from a decision rather than from ground truth I wrote.
 Decisions made before `sift` ran are counted separately as `unranked` rather than
 folded in, and the latest decision per candidate wins, because parked → reopened
 → promoted is one judgement with a history, not three.
+
+---
+
+## Five more cases, and the score went down
+
+The corpus was 17 cases scoring 17 of 17 — while **three shipped capabilities
+measured exactly zero on it.** `merge`, `split` and recurrence were all
+invisible, recurrence most importantly of all: occurrences count sessions, every
+case was one session, so the promotion gate the whole design rests on had never
+been tested.
+
+Fixed by giving `Case` a `follow` — a second session played into the same ledger
+— and scoring a third axis.
+
+| | before | after |
+| --- | --- | --- |
+| Cases | 17 | **22** |
+| Multi-session | 0 | 2 |
+| Axes | 2 | **3** |
+| Segmentation | 17/17 | **20/22** |
+| Ranking | 12/15 | **15/18** |
+| Recurrence | not measured | **1/2** |
+
+### The mistake worth recording
+
+The first version of the two new cases set `episodes` to **what the code
+currently does** — 1 for the unsplit deploy-then-email, 2 for the unmerged
+release pair. Both passed, and the corpus stayed at 22 of 22.
+
+That is encoding the implementation's opinion as ground truth, which this
+document already warns against two sections above, and it is the second time the
+same error has appeared here. Corrected to what is *correct*, both fail and the
+gaps are visible.
+
+A benchmark that agrees with the code is not measuring the code.
+
+### Both gaps are closed downstream, and verified
+
+**`the-same-release-different-runner`** — capture banks two entries at ×1;
+`merge` folds them: lexical 0.747, embedding 0.945, one entry at **×2**. Run
+live, not assumed.
+
+**`deploy-then-status-email`** — capture banks one; `draft` splits at index 2,
+demonstrated 3 for 3 including the two cases that must *not* split.
+
+So segmentation alone is 20 of 22 and the pipeline handles 22 of 22 — but only
+if the commands are run, and the benchmark is right to score the stages
+separately rather than blur that into one flattering number.
+
+### The suite now names the gaps instead of tolerating them
+
+`test_the_known_gaps_are_still_exactly_the_known_gaps` asserts the failing set
+is *exactly* those two. A suite that silently tolerates a documented gap cannot
+tell you when the gap closes, and a stale exclusion is how a benchmark quietly
+stops measuring.

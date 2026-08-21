@@ -75,6 +75,24 @@ def play(case, root: Path, api) -> list:
             payload["tool_response"] = {"is_error": True, "error": "command failed"}
         handle_tool(config, payload)
     handle_session_end(config, {"session_id": sid})
+    if case.follow:
+        # A distinct session id, because occurrences count sessions and a
+        # replay under the same id would measure nothing.
+        for tool, body, failed in case.follow:
+            if tool == "prompt":
+                handle_prompt(config, {"session_id": sid + "-2", "cwd": "/w",
+                                       "prompt": body})
+                continue
+            payload = {"session_id": sid + "-2", "cwd": "/w", "tool_name": tool}
+            if tool.startswith("mcp__"):
+                payload["tool_input"] = body
+            else:
+                payload["tool_input"] = {_INPUT_KEY.get(tool, "value"): body}
+            if failed:
+                payload["tool_response"] = {"is_error": True,
+                                            "error": "command failed"}
+            handle_tool(config, payload)
+        handle_session_end(config, {"session_id": sid + "-2"})
     return list(Ledger(config).all())
 
 
@@ -86,10 +104,17 @@ def score(cases, use_model: bool, repo=None) -> dict:
         with tempfile.TemporaryDirectory() as tmp:
             banked = play(case, Path(tmp) / "skillpp", api)
             seg_ok = len(banked) == case.episodes
+            top = max((e.occurrences for e in banked), default=0)
             row = {"name": case.name, "kind": case.kind, "tags": case.tags,
                    "expected_episodes": case.episodes, "got_episodes": len(banked),
                    "segmentation": seg_ok, "expected_methods": case.methods,
                    "got_methods": None, "ranking": None,
+                   "expected_occurrences": case.occurrences,
+                   "got_occurrences": top,
+                   # Only scored where the case has a second session; a single
+                   # session can never advance a count that counts sessions.
+                   "recurrence": (top == case.occurrences
+                                  if case.follow else None),
                    "titles": [e.title[:60] for e in banked]}
             # Ranking is only meaningful where segmentation produced the right
             # episodes; otherwise it is scoring the wrong objects.
@@ -105,11 +130,14 @@ def score(cases, use_model: bool, repo=None) -> dict:
             rows.append(row)
     seg = [r for r in rows if r["segmentation"]]
     ranked = [r for r in rows if r["ranking"] is not None]
+    recur = [r for r in rows if r["recurrence"] is not None]
     return {
         "cases": len(rows),
         "segmentation": {"passed": len(seg), "of": len(rows)},
         "ranking": ({"passed": sum(1 for r in ranked if r["ranking"]),
                      "of": len(ranked)} if ranked else None),
+        "recurrence": ({"passed": sum(1 for r in recur if r["recurrence"]),
+                        "of": len(recur)} if recur else None),
         "rows": rows,
     }
 
@@ -136,6 +164,9 @@ def main() -> int:
         if r["ranking"] is not None:
             detail += (f" · {r['got_methods']}/{r['expected_methods']} method"
                        f" {'ok' if r['ranking'] else 'MISS'}")
+        if r["recurrence"] is not None:
+            detail += (f" · x{r['got_occurrences']}/x{r['expected_occurrences']}"
+                       f" {'ok' if r['recurrence'] else 'MISS'}")
         print(f"{mark} {r['kind'][:4]:4} {r['name']:30} {detail}")
         for title in r["titles"]:
             print(f"          · {title}")
@@ -146,6 +177,10 @@ def main() -> int:
         k = result["ranking"]
         print(f"ranking       {k['passed']}/{k['of']}   "
               f"(only cases that segmented correctly)")
+    if result["recurrence"]:
+        k = result["recurrence"]
+        print(f"recurrence    {k['passed']}/{k['of']}   "
+              f"(only cases with a second session)")
     return 0
 
 
