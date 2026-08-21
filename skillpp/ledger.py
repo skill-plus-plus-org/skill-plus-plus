@@ -30,6 +30,12 @@ STATUS_DISMISSED = "dismissed"
 # rather than deleted: the verdict came from a model and has to be auditable
 # and reversible, so it parks the entry instead of removing it.
 STATUS_ONE_OFF = "one-off"
+# Superseded by two entries a frontier reader split it into. Retained rather
+# than deleted so the split is auditable and the original steps survive: markers
+# and prompt boundaries are what code can see, and where it saw neither it banks
+# one candidate covering two procedures. Splitting is the expensive stage
+# correcting the cheap one.
+STATUS_SPLIT = "split"
 
 
 def _now() -> str:

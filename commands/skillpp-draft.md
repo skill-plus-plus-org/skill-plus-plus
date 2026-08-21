@@ -25,7 +25,30 @@ python3 bin/skillpp show <id> --json
 That gives the effect summary, the evidence it came from, declared dependencies,
 and the questions the engine generated.
 
-## 2. Name it, before deciding anything else
+## 2. One procedure, or two?
+
+Code cuts a session only where it sees a completion marker or a new request.
+Where a single request did two things and neither finished in a way a regex
+recognises — a deploy then a smoke test, an MCP call then another — both arrive
+here as one candidate.
+
+Read the steps and ask whether they are **one procedure or two**. If two, say
+where the second begins and split before doing anything else:
+
+```bash
+python3 bin/skillpp split <id> --at <index of the first step of the second procedure>
+```
+
+Then name and draft **the first half only**, and say in your reply that the other
+half is now a separate candidate awaiting its own draft.
+
+**Default to one.** Repetition is not a boundary: `migrate → scale → migrate →
+scale` is one workaround, not two procedures, and a retry after a failure
+belongs to the attempt it retried. Split only when the second half would still
+make sense as a procedure with the first half deleted — and if you are weighing
+it up at all, do not split.
+
+## 3. Name it, before deciding anything else
 
 ```bash
 python3 bin/skillpp name <id> --title "<what the task is>" \
@@ -47,7 +70,7 @@ call this if they had to find it again in six months.
 read when choosing what to load, so write the trigger, not a summary: *when* does
 someone need this? 200 characters, hard limit.
 
-## 3. Write the body
+## 4. Write the body
 
 ```bash
 python3 bin/skillpp scaffold <id> --name <skill-name> \
@@ -68,7 +91,7 @@ Then edit that file into something a colleague could follow.
 A candidate titled after a greeting or a shell command is a real failure mode
 here — name the *task*, never the prompt that happened to start it.
 
-## 4. Do not ask — record instead
+## 5. Do not ask — record instead
 
 The interactive review asks the developer up to three questions. You cannot, so
 every question you would have asked becomes a line under:
@@ -81,7 +104,7 @@ Write what you do not know, not a guess dressed as fact. A draft that admits two
 gaps is worth more than one that invents the answers, because the reader can see
 what to check.
 
-## 5. Stop before installing
+## 6. Stop before installing
 
 **Do not run `python3 bin/skillpp promote`. Do not write into the skills directory.** Leave
 the draft where the scaffold put it and print the path.
@@ -90,7 +113,7 @@ Installing is the developer's decision and this run does not have their
 attention. A skill that appears without anyone approving it is the failure this
 whole design exists to prevent.
 
-## 6. If it should not exist
+## 7. If it should not exist
 
 If reading the evidence convinces you this is not a reusable procedure — one
 particular bug, a session of looking around, work that never finished — write

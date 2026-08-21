@@ -243,6 +243,67 @@ def cmd_name(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_split(args: argparse.Namespace) -> int:
+    """Split a candidate that holds two procedures, at a step boundary.
+
+    Reached from `skillpp draft`, where a frontier model is already reading the
+    candidate. Code banks one candidate per episode and cuts only at markers and
+    prompt boundaries, so a single request that did two things with no
+    recognisable finish between them arrives as one entry. A local model can
+    locate that boundary when told one exists but cannot tell whether one does —
+    measured 3 of 5 — which is why this is not attempted cheaply.
+
+    The original is kept as `split`, not deleted: the verdict came from a model
+    and the steps are the only evidence there was.
+    """
+    from .ledger import STATUS_CANDIDATE, STATUS_SPLIT, Entry, make_id
+    from .normalize import signature
+
+    config = Config(args.root)
+    ledger = Ledger(config)
+    entry = ledger.get(args.id)
+    if not entry:
+        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
+        return 1
+
+    at = args.at
+    head, tail = entry.steps[:at], entry.steps[at:]
+    floor = config.min_episode_steps
+    if len(head) < floor or len(tail) < floor:
+        print(f"Refusing: a split at {at} leaves {len(head)} and {len(tail)} "
+              f"steps, and {floor} is the minimum for a workflow. One step is "
+              f"not a procedure, so this would strand it.", file=sys.stderr)
+        return 1
+
+    made = []
+    for steps in (head, tail):
+        sig = signature(steps)
+        if not sig:
+            print("Refusing: one half has no signature to match on.",
+                  file=sys.stderr)
+            return 1
+        part = Entry(
+            id=make_id(sig), signature=sig, status=STATUS_CANDIDATE,
+            title=entry.title, steps=steps,
+            # Provenance is shared: both halves were observed in the same
+            # sessions, and occurrences count sessions.
+            projects=list(entry.projects), sessions=list(entry.sessions),
+            intents=list(entry.intents), occurrences=entry.occurrences,
+            source=entry.source)
+        ledger.save(part)
+        made.append(part)
+
+    entry.status = STATUS_SPLIT
+    entry.notes = (f"{entry.notes}\nsplit at step {at} into "
+                   f"{made[0].id} and {made[1].id}").strip()
+    ledger.save(entry)
+    print(f"split {entry.id} at step {at}:")
+    for part in made:
+        print(f"  {part.id}  {len(part.steps)} steps")
+    print("Name each half with: skillpp name <id> --title … --description …")
+    return 0
+
+
 def cmd_merge(args: argparse.Namespace) -> int:
     """Merge candidates that are the same procedure worded differently.
 
@@ -751,6 +812,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--description",
                    help="one line on when this applies; max 200 chars")
     p.set_defaults(func=cmd_name)
+
+    p = sub.add_parser("split",
+                       help="split a candidate that holds two procedures")
+    p.add_argument("id")
+    p.add_argument("--at", type=int, required=True,
+                   help="index of the first step of the second procedure")
+    p.set_defaults(func=cmd_split)
 
     p = sub.add_parser("merge",
                        help="merge candidates that are the same procedure "

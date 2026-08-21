@@ -1516,3 +1516,72 @@ class TestNaming(TempRoot):
         cmd_name(self._args(description="Use when a migration is lock-blocked."))
         text = Ledger(self.config).path_for("cand").read_text()
         self.assertIn("description: Use when a migration is lock-blocked.", text)
+
+
+class TestSplit(TempRoot):
+    """The expensive stage correcting the cheap one.
+
+    Code cuts only at markers and prompt boundaries. A single request that did
+    two things, neither finishing recognisably, arrives as one candidate — case
+    C in the benchmark. A local model can find that boundary when told one
+    exists but cannot tell whether one does (3 of 5), so this is reached from
+    `draft`, where a frontier reader is already looking.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        import argparse
+        self.argparse = argparse
+        self.ledger = Ledger(self.config)
+        self.ledger.save(Entry(
+            id="both", signature="sig", title="roll out api then smoke-test",
+            intents=["roll out api then smoke-test staging"], sessions=["s1"],
+            steps=[{"tool": "Bash", "input": {"command": c}} for c in (
+                "helm upgrade api charts/api --wait",
+                "kubectl rollout status deploy/api",
+                "./scripts/smoke.sh staging",
+                "curl -s https://staging/health")]))
+
+    def _split(self, at):
+        from skillpp.cli import cmd_split
+        return cmd_split(self.argparse.Namespace(
+            root=self.config.root, id="both", at=at))
+
+    def test_a_split_produces_two_candidates(self):
+        from skillpp.ledger import STATUS_CANDIDATE
+        self.assertEqual(self._split(2), 0)
+        cands = [e for e in Ledger(self.config).all()
+                 if e.status == STATUS_CANDIDATE]
+        self.assertEqual(sorted(len(e.steps) for e in cands), [2, 2])
+
+    def test_the_original_is_kept_not_deleted(self):
+        """The verdict came from a model and the steps are the only evidence."""
+        from skillpp.ledger import STATUS_SPLIT
+        self._split(2)
+        original = Ledger(self.config).get("both")
+        self.assertEqual(original.status, STATUS_SPLIT)
+        self.assertEqual(len(original.steps), 4)
+        self.assertIn("split at step 2", original.notes)
+
+    def test_a_split_that_would_strand_a_step_is_refused(self):
+        """One step is not a procedure, so cutting there loses it."""
+        from skillpp.ledger import STATUS_CANDIDATE
+        self.assertEqual(self._split(1), 1)
+        self.assertEqual(Ledger(self.config).get("both").status,
+                         STATUS_CANDIDATE)
+
+    def test_a_split_at_the_end_is_refused(self):
+        self.assertEqual(self._split(4), 1)
+
+    def test_both_halves_inherit_the_provenance(self):
+        """Occurrences count sessions, and both halves were seen in the same one."""
+        from skillpp.ledger import STATUS_CANDIDATE
+        self._split(2)
+        for e in Ledger(self.config).all():
+            if e.status == STATUS_CANDIDATE:
+                self.assertEqual(e.sessions, ["s1"])
+
+    def test_a_split_entry_is_not_offered_for_review(self):
+        self._split(2)
+        ids = {e.id for e in Ledger(self.config).candidates(ready_only=False)}
+        self.assertNotIn("both", ids)
