@@ -86,8 +86,8 @@ of task" is where the remaining error lives. Worth more cases before trusting
 
 - **n is small.** Ten cases total, six of them synthetic and written by someone
   who knew the answer. The three real ones are the only unbiased evidence.
-- **One model.** `gemma3n:e4b` only. Whether a 1.2B holds up here, as it did on
-  the coarser triage question, is untested.
+- **Two models, one of them unusable.** `gemma3n:e4b` works; a 1.2B keeps 79%
+  of a junk corpus. Nothing between them has been tried, and nothing larger.
 - **No recurrence interaction.** An episode parked on its first sighting never
   gets to recur. Whether a second sighting should reopen it — as a recurring
   ignored workflow does elsewhere — is undecided.
@@ -166,6 +166,36 @@ procedure buried inside it — bundle a skill, open the settings page, upload it
 The filter judged the episode correctly: taken whole, it is not a method. The
 defect is that it was ever one episode. Better boundaries would surface the
 procedure; no filter can extract it from an episode that large.
+
+## Model size is a constraint here, unlike on the coarser question
+
+The same 14 entries, two models:
+
+| Model | keep | drop | wall clock |
+| --- | --- | --- | --- |
+| `gemma3n:e4b` | 0 | 14 | 6s (warm cache; 1.5–6.7s per call cold) |
+| `lfm2.5-thinking:1.2b` | **11** | 3 | 170s |
+
+The 1.2B kept an install smoke-test, a 216-step SVG session, a website analysis,
+"did you test it with different scenarios", "yes fix both bugs" and six more —
+**a false-keep rate near 79% on a corpus that is almost entirely one-off work.**
+As a filter it is unusable: it says yes to nearly everything.
+
+This is worth stating flatly because the opposite result holds one question
+earlier. On *triage* — "is this session worth reading at all" — a 1.2B answered
+correctly, and the conclusion drawn there was that model size was not the
+constraint. **That does not transfer.** Deciding whether a sequence generalises
+is materially harder than noticing a session contains work, and the same model
+that handles the first fails the second.
+
+Also note the speed inversion: the 1.2B took 28x longer, because it is a
+*thinking* model and spends tokens reasoning before answering. Smaller is not
+faster.
+
+One aside: the 1.2B did keep `9b7fc39f8457`, the entry labelled above as a
+likely false drop — agreeing with the human label on the single ambiguous case
+while getting ten obvious ones wrong. Not evidence of anything except that a
+permissive filter is right by accident on the cases where keeping is correct.
 
 ## Verdict on running it unattended
 
