@@ -207,3 +207,61 @@ One bug worth recording: the first `fold_into` set
 corrected once before. Occurrences are the size of the **session union**, never
 a sum, because two sightings inside one session are one occurrence. A test now
 pins both directions.
+
+---
+
+## `feat/pattern-detection`'s real product, finally measured
+
+Every earlier comparison scored only its hook path, which is vestigial by
+design. Its actual product reads a transcript with a frontier model, one call per
+session, and needed an authenticated CLI to run at all.
+
+`tests/benchmarks/as_transcript.py` renders each case as a Claude Code
+transcript, so both designs see the same 17 sessions in their own native input
+and the comparison is not measuring an adapter. One `/log-session` call per case,
+a **fresh store each time** — the pilot showed why: run two cases against one
+store and the second recognises what the first taught it, which measures
+recurrence rather than detection.
+
+Scored on the **methods** axis, because that branch records only what it judges
+worth keeping, whereas this one banks candidates and ranks them. Comparing its
+proposals against our episode counts would be comparing different things.
+
+| | this branch | `pattern-detection` |
+| --- | --- | --- |
+| Methods axis | **14 of 17** | **14 of 17** |
+| Splitting multi-task sessions | **3 of 3** | 1 of 3 |
+| False positives on one-offs | none | 1 — a grep sweep recorded as a procedure |
+| Missed real procedures | 2 | 0 |
+| Over-split | 1 | 0 |
+| Naming | the developer's prompt, verbatim | the task, named |
+
+**A tie, with opposite failure modes.** This branch splits sessions correctly and
+under-calls methods. That one judges a single procedure correctly and cannot
+split a session at all. Its two misses on multi-task sessions and its one false
+positive are precisely what its own `docs/bakeoff.md` conceded losing on.
+
+### Naming is the difference that is not a tuning gap
+
+`migration-with-a-lock` is the clearest case. It named the procedure
+**`draining-app-replicas-to-clear-a-migration-lock`** — identifying that the
+reusable knowledge is the workaround, not the incident. This branch titles the
+same session `the staging migration is stuck, get it green`.
+
+Others from the same run: `cutting-a-signed-release`,
+`rotating-a-database-credential-in-kubernetes`,
+`bootstrapping-a-local-dev-environment`,
+`compiling-meeting-agenda-and-posting-to-slack`.
+
+A skill's description is the only thing read when deciding whether to load it, so
+a correctly-detected candidate carrying a prompt for a name is still dead. This
+is structural rather than fixable by tuning: code can only reuse a string it
+observed, and a model can name what it read. It is the one defect that has
+survived every fix here, and the strongest argument for the two designs being
+complementary rather than competing.
+
+### Caveat on this branch's numbers
+
+The 17 of 17 segmentation score followed fixing four defects this corpus found,
+so it measures a detector shaped by the corpus. The 14 of 17 methods figure is
+the less-tuned one, and it is where the tie is.
