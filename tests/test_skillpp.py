@@ -959,3 +959,113 @@ class TestSiftCommand(TempRoot):
         ep.ask = boom
         cmd_sift(self._args(apply=True))
         self.assertEqual(self._status(), STATUS_CANDIDATE)
+
+
+class TestDraftCommand(TempRoot):
+    """Claude writes the body; nothing installs it.
+
+    No agent is launched: `subprocess.run` is replaced. What is pinned is the
+    command that would be built and the promise that promotion stays human.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        import argparse
+        self.argparse = argparse
+        self.ledger = Ledger(self.config)
+        self.ledger.save(Entry(
+            id="cand1", signature="s", title="Weekly manager update email",
+            intents=["draft the weekly update"],
+            steps=[{"tool": "Bash", "input": {"command": "git log --since=7.days"}},
+                   {"tool": "Write", "input": {"file_path": "/tmp/update.md"}}]))
+
+    def _args(self, **kw):
+        base = dict(root=self.config.root, id="cand1", name=None, apply=False,
+                    cwd=None, timeout=900)
+        base.update(kw)
+        return self.argparse.Namespace(**base)
+
+    def _spy(self, exit_code=0, writes=None):
+        """Capture argv instead of running an agent."""
+        import subprocess
+        seen = {}
+
+        def fake(argv, **kw):
+            seen["argv"] = argv
+            seen["kw"] = kw
+            for rel in (writes or []):
+                path = self.config.root / "drafts" / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("---\nname: x\n---\n", encoding="utf-8")
+            return subprocess.CompletedProcess(argv, exit_code)
+        real = subprocess.run
+        subprocess.run = fake
+        self.addCleanup(lambda: setattr(subprocess, "run", real))
+        return seen
+
+    def test_a_dry_run_launches_nothing(self):
+        from skillpp.cli import cmd_draft
+        seen = self._spy()
+        self.assertEqual(cmd_draft(self._args()), 0)
+        self.assertNotIn("argv", seen)
+
+    def test_the_prompt_is_one_argument_with_the_id(self):
+        """A space inside --allowed-tools once split it into two broken args."""
+        from skillpp.cli import cmd_draft
+        seen = self._spy()
+        cmd_draft(self._args(apply=True))
+        argv = seen["argv"]
+        self.assertIn("/skillpp-draft cand1", argv)
+        # `skillpp` is not on PATH; the CLI is invoked as `python3 bin/skillpp`,
+        # so a pattern naming the bare binary would allow nothing.
+        self.assertIn("Bash(python3 bin/skillpp *),Read,Write,Edit", argv)
+
+    def test_the_agent_runs_where_the_cli_resolves(self):
+        """The allowed-tools pattern is relative, so the cwd is load-bearing."""
+        from skillpp.cli import cmd_draft
+        seen = self._spy()
+        cmd_draft(self._args(apply=True))
+        self.assertTrue((Path(seen["kw"]["cwd"]) / "bin" / "skillpp").exists())
+
+    def test_the_agent_is_configurable(self):
+        """A command template, so no vendor and no API key are baked in."""
+        import os
+        from skillpp.cli import cmd_draft
+        seen = self._spy()
+        os.environ["SKILLPP_AGENT"] = "my-agent --go {PROMPT}"
+        self.addCleanup(lambda: os.environ.pop("SKILLPP_AGENT", None))
+        cmd_draft(self._args(apply=True))
+        self.assertEqual(seen["argv"][:2], ["my-agent", "--go"])
+
+    def test_drafting_never_promotes(self):
+        from skillpp.cli import cmd_draft
+        from skillpp.ledger import STATUS_CANDIDATE
+        self._spy(writes=["cand1/SKILL.md"])
+        cmd_draft(self._args(apply=True))
+        entry = Ledger(self.config).get("cand1")
+        self.assertEqual(entry.status, STATUS_CANDIDATE)
+        self.assertEqual(entry.skill_path, "")
+
+    def test_a_draft_lands_outside_the_skills_directory(self):
+        from skillpp.cli import cmd_draft
+        self._spy(writes=["cand1/SKILL.md"])
+        cmd_draft(self._args(apply=True))
+        drafted = list((self.config.root / "drafts").rglob("SKILL.md"))
+        self.assertEqual(len(drafted), 1)
+        self.assertNotIn("skills", drafted[0].parts[:-2])
+
+    def test_writing_nothing_is_not_an_error(self):
+        """The prompt tells the agent to write nothing when there is no procedure."""
+        from skillpp.cli import cmd_draft
+        self._spy(writes=[])
+        self.assertEqual(cmd_draft(self._args(apply=True)), 0)
+
+    def test_a_missing_agent_reports_how_to_fix_it(self):
+        import subprocess
+        from skillpp.cli import cmd_draft
+
+        def boom(*a, **k):
+            raise FileNotFoundError("claude")
+        real, subprocess.run = subprocess.run, boom
+        self.addCleanup(lambda: setattr(subprocess, "run", real))
+        self.assertEqual(cmd_draft(self._args(apply=True)), 1)

@@ -59,6 +59,15 @@ class Config:
         # filter is the only thing that uses these, and it runs on demand
         # rather than in a hook: a hook that waits on a model is a hook
         # that stalls a session.
+        # How to invoke the developer's own agent to write a draft. A command
+        # template rather than an API call, so this needs no key and no
+        # vendor: whatever agent the developer already uses writes the body,
+        # authenticated as they already are. {PROMPT} is the only
+        # substitution.
+        self.agent_command = _str_env(
+            "SKILLPP_AGENT",
+            "claude -p {PROMPT} --no-session-persistence "
+            '--allowed-tools "Bash(python3 bin/skillpp *),Read,Write,Edit"')
         self.ollama_url = _str_env("SKILLPP_OLLAMA", "http://127.0.0.1:11434")
         self.local_model = _str_env("SKILLPP_LOCAL_MODEL", "gemma3n:e4b")
         self.min_episode_steps = _int_env("SKILLPP_MIN_EPISODE_STEPS", 2)

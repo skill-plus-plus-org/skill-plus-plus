@@ -61,6 +61,82 @@ def cmd_hook(args: argparse.Namespace) -> int:
 # ledger inspection
 # --------------------------------------------------------------------------
 
+def cmd_draft(args: argparse.Namespace) -> int:
+    """Have the developer's own agent write a draft SKILL.md for a candidate.
+
+    The division of labour this whole tool rests on: code decides *which*
+    candidate is worth the call (capture, segmentation, then `sift`), and a
+    frontier model writes the body, because that is the half measured out of
+    reach of a local one — a 7B transcribes the run instead of generalising it.
+
+    An agent command rather than an API call, so there is no key to hold and no
+    vendor baked in: whatever agent the developer already uses does the writing,
+    already authenticated.
+
+    Drafts land under `<root>/drafts/` and are never installed. Promotion stays
+    a human act — an unapproved skill appearing in the skills directory is the
+    failure the design exists to prevent.
+    """
+    import shlex
+    import subprocess
+
+    config = Config(args.root)
+    entry = Ledger(config).get(args.id)
+    if not entry:
+        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
+        return 1
+
+    out_dir = config.root / "drafts" / (args.name or entry.id)
+    prompt = f"/skillpp-draft {entry.id}"
+    try:
+        template = config.agent_command
+        argv = [prompt if part == "{PROMPT}" else part.replace("{PROMPT}", prompt)
+                for part in shlex.split(template)]
+    except ValueError as exc:
+        print(f"SKILLPP_AGENT is not a valid command: {exc}", file=sys.stderr)
+        return 1
+
+    import shutil
+    found = shutil.which(argv[0])
+    print(f"candidate  {entry.id}  x{entry.occurrences}  {entry.title[:60]}")
+    print(f"draft dir  {out_dir}")
+    print(f"agent      {' '.join(shlex.quote(a) for a in argv)}")
+    # Said before the call rather than discovered during it: `claude` is often
+    # not on PATH even where Claude Code is in use.
+    print(f"resolves   {found or 'NO — not on PATH; set SKILLPP_AGENT'}")
+    if not args.apply:
+        print("\nDry run. Re-run with --apply to spend one model call.")
+        return 0
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        # Default to the package root: the allowed-tools pattern names
+        # `python3 bin/skillpp`, which only resolves from there.
+        where = args.cwd or Path(__file__).resolve().parent.parent
+        proc = subprocess.run(argv, cwd=where, timeout=args.timeout)
+    except FileNotFoundError:
+        print(f"\nNo such agent: {argv[0]}. Set SKILLPP_AGENT to how yours is "
+              f"invoked.", file=sys.stderr)
+        return 1
+    except subprocess.TimeoutExpired:
+        print(f"\nThe agent did not finish within {args.timeout}s.",
+              file=sys.stderr)
+        return 1
+
+    written = sorted(out_dir.rglob("SKILL.md"))
+    if not written:
+        # Not an error: the draft prompt tells the agent to write nothing when
+        # the evidence says this is not a reusable procedure.
+        print("\nNo draft written — the agent judged there was nothing here, "
+              "or it failed. Read its output above.")
+        return proc.returncode
+    for path in written:
+        print(f"\ndrafted {path}")
+    print("Read it, then install with: skillpp promote "
+          f"{entry.id} --skill-path <path>")
+    return proc.returncode
+
+
 def cmd_reopen(args: argparse.Namespace) -> int:
     """Undo a sift verdict.
 
@@ -486,6 +562,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--event", help="override hook_event_name")
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(func=cmd_hook)
+
+    p = sub.add_parser("draft",
+                       help="have your own agent write a draft SKILL.md for a "
+                            "candidate; never installs it")
+    p.add_argument("id")
+    p.add_argument("--name", help="directory name for the draft")
+    p.add_argument("--apply", action="store_true",
+                   help="actually invoke the agent; one model call")
+    p.add_argument("--cwd", help="run the agent from here")
+    p.add_argument("--timeout", type=int, default=900)
+    p.set_defaults(func=cmd_draft)
 
     p = sub.add_parser("reopen", help="undo a sift verdict; put a candidate back")
     p.add_argument("id")

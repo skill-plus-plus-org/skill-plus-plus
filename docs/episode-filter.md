@@ -211,3 +211,65 @@ fail-safe does not catch it. Two known methods is also a thin positive control.
 
 So run it as a command and read what it parked. Do not put it in a cron or a
 hook until the labelled set is larger than four.
+
+---
+
+## Who writes the skill
+
+The filter decides *which* candidates deserve a model call. It does not write
+anything. That split is the point, and it is measured rather than assumed: a 7B
+asked to write a `SKILL.md` body transcribes the run instead of generalising it,
+names the repository it happened to touch, and picks procedures a frontier judge
+rejects — one call or four decomposed ones.
+
+So the pipeline is four stages, and only the last one costs anything:
+
+| Stage | Who | Cost |
+| --- | --- | --- |
+| capture | hooks | free |
+| cut the session into episodes at `SessionEnd` | `segment.py` | free |
+| **discard the one-off ones** | local model, `sift` | free |
+| **write the body** | the developer's own agent, `draft` | one call |
+
+### `skillpp draft <id>`
+
+Invokes whatever agent the developer already uses, via a **command template**
+rather than an API call:
+
+    SKILLPP_AGENT="claude -p {PROMPT} --no-session-persistence ..."
+
+That is deliberate. No API key is held, no vendor is baked in, and the agent is
+already authenticated as the developer — a Cursor user's model writes it in
+Cursor. `{PROMPT}` is the only substitution, and the prompt itself is a markdown
+file (`commands/skillpp-draft.md`), not code.
+
+### It drafts; it never installs
+
+Drafts land in `<root>/drafts/` and promotion stays a human act. The prompt says
+so twice, and a test asserts that a draft leaves `status` and `skill_path`
+untouched.
+
+This matters more here than anywhere else in the tool. `draft` runs when nobody
+is watching, so the agent cannot ask the up-to-three questions the interactive
+review asks. Instead every question it would have asked becomes a line under
+`## Open questions` — a draft that admits two gaps is worth more than one that
+invents the answers. And an unapproved skill appearing in the skills directory
+is precisely the failure the whole design exists to prevent.
+
+The prompt also permits writing **nothing**: if the evidence says this was one
+particular bug after all, the agent says so in a line and stops. That is not
+treated as an error, because it is the filter being right in a place the filter
+could not see.
+
+### Two wiring facts that will bite
+
+**`claude` is usually not on PATH**, even on a machine where Claude Code is in
+daily use — only a version-pinned binary inside the application bundle. So the
+dry run prints whether the agent resolves before you spend anything, rather than
+failing halfway through.
+
+**The tool pattern is relative.** `Bash(python3 bin/skillpp *)` only matches if
+the agent runs from the package root, so `draft` sets that cwd itself. An
+earlier version allowed `Bash(skillpp *)` — a binary that does not exist — and
+would have allowed the agent nothing at all. `shlex` had also split that
+pattern in two at the space inside the parentheses. Both are pinned by tests.
