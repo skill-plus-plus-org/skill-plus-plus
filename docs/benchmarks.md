@@ -461,3 +461,43 @@ should have been the signal not to score it.
 **One loose end by design:** the second half inherits the original title and is
 not named until it gets its own `draft`. It sits in the queue titled after the
 developer's prompt in the meantime.
+
+---
+
+## Ground truth that maintains itself
+
+The corpus above is 17 hand-written cases whose truth was authored by whoever
+wrote the detector. That measures internal consistency, and it already hid one
+defect: case C was written as a two-procedure case *while noting out loud that
+it was arguable*, and then scored against.
+
+`feat/pattern-detection` solved this and its `truth.py` says why: labels read out
+of reviews the pipeline already wrote are *"what the fixtures are not, and the
+reason three separate defects in this work were invisible until real data."*
+
+Ported as `decisions.jsonl` — append-only, one line per human decision, never
+read by the capture path. Statuses are overwritten in place, so without it every
+judgement is lost the moment it is superseded.
+
+The line records **the ranker's hint and the person's decision together**, which
+is what makes it a measurement rather than history:
+
+| Person did | Means | Scored against |
+| --- | --- | --- |
+| `promote` | it was a method | the hint at that moment |
+| `dismiss` | it was not | the hint at that moment |
+| `reopen` | a model parked something they wanted back | a false drop, caught in the act |
+| `sift --park` | the model's own act | **never truth** — that would be grading its own homework |
+
+`skillpp accuracy` reports the tally and lists the disagreements. On a seeded
+run it correctly surfaced the one that matters:
+
+    agreed 2/3 (67%)
+      ranker said one-off · you promoted · drain replicas then migrate
+
+Which is the known miss — the case two prompt rewrites failed to fix — now
+recorded from a decision rather than from ground truth I wrote.
+
+Decisions made before `sift` ran are counted separately as `unranked` rather than
+folded in, and the latest decision per candidate wins, because parked → reopened
+→ promoted is one judgement with a history, not three.

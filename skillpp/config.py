@@ -95,6 +95,19 @@ class Config:
         self.min_episode_steps = _int_env("SKILLPP_MIN_EPISODE_STEPS", 2)
 
     @property
+    def decisions_file(self) -> Path:
+        """Append-only log of what a person decided about a candidate.
+
+        Statuses are overwritten in place, so without this every decision is
+        lost the moment it is superseded — and with it the only ground truth
+        that is not hand-written. Ported in spirit from the pattern-detection
+        branch, whose `truth.py` reads labels out of reviews the pipeline
+        already wrote, on the reasoning that hand-made fixtures are exactly
+        what hid three defects until real data arrived.
+        """
+        return self.root / "decisions.jsonl"
+
+    @property
     def ledger_dir(self) -> Path:
         return self.root / "ledger"
 

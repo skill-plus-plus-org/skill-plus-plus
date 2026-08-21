@@ -360,6 +360,36 @@ def cmd_merge(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_accuracy(args: argparse.Namespace) -> int:
+    """How often the ranker agreed with you, on decisions you actually made.
+
+    The benchmark in `tests/benchmarks` is 17 hand-written cases whose ground
+    truth was authored by whoever wrote the detector — which measures internal
+    consistency, and hid a defect until it was scored against real work. This
+    measures the thing itself, and it grows on its own: every promote, dismiss
+    and reopen adds a label.
+    """
+    from . import decisions
+
+    config = Config(args.root)
+    result = decisions.score(config)
+    if not result["judged"]:
+        print("No decisions recorded yet. Promote or dismiss a candidate and "
+              "this starts filling in.")
+        return 0
+    print(f"decisions   {result['judged']}")
+    if result["unranked"]:
+        print(f"unranked    {result['unranked']}   (decided before sift ran; "
+              f"not scorable)")
+    if result["scored"]:
+        pct = 100 * result["agreed"] / result["scored"]
+        print(f"agreed      {result['agreed']}/{result['scored']}  ({pct:.0f}%)")
+    for miss in result["misses"]:
+        print(f"  ranker said {miss['hint']:8} · you {miss['decision']:9} "
+              f"· {miss['title'][:44]}")
+    return 0
+
+
 def cmd_reopen(args: argparse.Namespace) -> int:
     """Undo a sift verdict.
 
@@ -378,6 +408,11 @@ def cmd_reopen(args: argparse.Namespace) -> int:
             return 1
         entry.status = STATUS_CANDIDATE
         ledger.save(entry)
+        # A reopen is a false drop caught in the act, and the most informative
+        # label there is: a model parked something a person wanted back.
+        from . import decisions
+        decisions.record(config, entry, decisions.REOPENED,
+                         "parked by sift, wanted back")
         print(f"reopened {entry.id} — {entry.title[:60]}")
         return 0
     print(f"No entry {args.id}.")
@@ -439,7 +474,9 @@ def cmd_sift(args: argparse.Namespace) -> int:
     if not parkable:
         print("\nNothing to park.")
         return 0
+    from . import decisions
     for entry in parkable:
+        decisions.record(config, entry, decisions.PARKED, "sift --park")
         entry.status = STATUS_ONE_OFF
         ledger.save(entry)
     print(f"\nparked {len(parkable)} on a local model's opinion. Measured at "
@@ -567,6 +604,7 @@ def cmd_scaffold(args: argparse.Namespace) -> int:
 
 def cmd_promote(args: argparse.Namespace) -> int:
     """Mark a candidate promoted. The SKILL.md itself is written by the agent."""
+    from . import decisions
     config = Config(args.root)
     ledger = Ledger(config)
     entry = ledger.get(args.id)
@@ -577,6 +615,9 @@ def cmd_promote(args: argparse.Namespace) -> int:
     if skill_path and not skill_path.exists():
         print(f"Skill file does not exist: {skill_path}", file=sys.stderr)
         return 1
+    # Logged before the status changes, so the recorded hint is the one that
+    # was on screen when the decision was made.
+    decisions.record(config, entry, decisions.PROMOTED)
     entry.status = STATUS_PROMOTED
     entry.skill_path = str(skill_path) if skill_path else ""
     if args.note:
@@ -587,12 +628,14 @@ def cmd_promote(args: argparse.Namespace) -> int:
 
 
 def cmd_dismiss(args: argparse.Namespace) -> int:
+    from . import decisions
     config = Config(args.root)
     ledger = Ledger(config)
     entry = ledger.get(args.id)
     if not entry:
         print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
         return 1
+    decisions.record(config, entry, decisions.DISMISSED, args.note or "")
     entry.status = STATUS_DISMISSED
     if args.note:
         entry.notes = args.note
@@ -828,6 +871,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--floor", type=float,
                    help="lowest lexical similarity worth a model call")
     p.set_defaults(func=cmd_merge)
+
+    p = sub.add_parser("accuracy",
+                       help="how often the ranker agreed with your own "
+                            "promote/dismiss decisions")
+    p.set_defaults(func=cmd_accuracy)
 
     p = sub.add_parser("reopen", help="undo a sift verdict; put a candidate back")
     p.add_argument("id")

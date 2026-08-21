@@ -1585,3 +1585,103 @@ class TestSplit(TempRoot):
         self._split(2)
         ids = {e.id for e in Ledger(self.config).candidates(ready_only=False)}
         self.assertNotIn("both", ids)
+
+
+class TestDecisionLog(TempRoot):
+    """Ground truth that nobody has to maintain.
+
+    The benchmark is 17 hand-written cases whose truth was authored by whoever
+    wrote the detector — internal consistency, and it hid a defect until real
+    work was scored. This accumulates labels from decisions that actually
+    happened, which is the idea `truth.py` on the pattern-detection branch
+    exists to serve.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        import argparse
+        self.argparse = argparse
+        self.ledger = Ledger(self.config)
+
+    def _entry(self, eid, hint="", **kw):
+        entry = Entry(id=eid, signature="s", title=f"work {eid}", hint=hint, **kw)
+        self.ledger.save(entry)
+        return entry
+
+    def test_a_promote_records_a_method_label(self):
+        from skillpp import decisions
+        decisions.record(self.config, self._entry("a", hint="method"),
+                         decisions.PROMOTED)
+        rows = decisions.read(self.config)
+        self.assertEqual(rows[0]["decision"], "promoted")
+        self.assertEqual(rows[0]["hint"], "method")
+
+    def test_the_hint_is_captured_alongside_the_decision(self):
+        """Without the pair, the line is history rather than a measurement."""
+        from skillpp import decisions
+        decisions.record(self.config, self._entry("a", hint="one-off"),
+                         decisions.PROMOTED)
+        score = decisions.score(self.config)
+        self.assertEqual(score["disagreed"], 1)
+        self.assertEqual(score["misses"][0]["hint"], "one-off")
+
+    def test_agreement_is_counted_both_ways(self):
+        from skillpp import decisions
+        decisions.record(self.config, self._entry("a", hint="method"),
+                         decisions.PROMOTED)
+        decisions.record(self.config, self._entry("b", hint="one-off"),
+                         decisions.DISMISSED)
+        score = decisions.score(self.config)
+        self.assertEqual((score["agreed"], score["disagreed"]), (2, 0))
+
+    def test_an_unranked_decision_is_not_scored(self):
+        """Deciding before sift ran says nothing about sift."""
+        from skillpp import decisions
+        decisions.record(self.config, self._entry("a"), decisions.PROMOTED)
+        score = decisions.score(self.config)
+        self.assertEqual(score["unranked"], 1)
+        self.assertEqual(score["scored"], 0)
+
+    def test_the_latest_decision_wins_per_candidate(self):
+        """Parked, reopened, then promoted is one judgement with a history."""
+        from skillpp import decisions
+        entry = self._entry("a", hint="one-off")
+        decisions.record(self.config, entry, decisions.PARKED)
+        decisions.record(self.config, entry, decisions.REOPENED)
+        decisions.record(self.config, entry, decisions.PROMOTED)
+        score = decisions.score(self.config)
+        self.assertEqual(score["judged"], 1)
+        self.assertEqual(score["disagreed"], 1)
+
+    def test_parking_is_never_truth(self):
+        """It is the model's own act, so scoring it would grade its own homework."""
+        from skillpp import decisions
+        decisions.record(self.config, self._entry("a", hint="one-off"),
+                         decisions.PARKED)
+        self.assertEqual(decisions.score(self.config)["judged"], 0)
+
+    def test_a_reopen_counts_as_a_method(self):
+        from skillpp import decisions
+        decisions.record(self.config, self._entry("a", hint="one-off"),
+                         decisions.REOPENED)
+        self.assertEqual(decisions.score(self.config)["disagreed"], 1)
+
+    def test_an_unwritable_log_does_not_break_the_command(self):
+        """Losing a label must never fail a promote.
+
+        A directory where the file belongs makes the open fail without any
+        permission juggling, which would otherwise outlive the test.
+        """
+        from skillpp import decisions
+        entry = self._entry("a", hint="method")
+        self.config.decisions_file.mkdir(parents=True, exist_ok=True)
+        decisions.record(self.config, entry, decisions.PROMOTED)  # must not raise
+        self.assertEqual(decisions.read(self.config), [])
+
+    def test_a_corrupt_line_is_skipped_not_fatal(self):
+        from skillpp import decisions
+        decisions.record(self.config, self._entry("a", hint="method"),
+                         decisions.PROMOTED)
+        with self.config.decisions_file.open("a") as fh:
+            fh.write("{not json\n")
+        self.assertEqual(len(decisions.read(self.config)), 1)
