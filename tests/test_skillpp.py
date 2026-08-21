@@ -808,3 +808,154 @@ class TestFixtureIntegrity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestEpisodeFilter(TempRoot):
+    """The one step that can discard, so every case here is about restraint.
+
+    No model is contacted: ``ask`` is replaced per test. What is being pinned is
+    the wiring and the fail-safe direction, not the model's judgement — that is
+    measured separately and cannot be asserted in a unit test.
+    """
+
+    def _entry(self, **kw) -> Entry:
+        base = dict(id="e1", signature="sig", title="cut the release",
+                    intents=["cut the 2.4 release"],
+                    steps=[{"tool": "Bash", "input": {"command": "npm test"}},
+                           {"tool": "Bash", "input": {"command": "git tag v2.4"}}])
+        base.update(kw)
+        return Entry(**base)
+
+    def _answer(self, reply):
+        """Point episode.ask at a canned reply, or an exception to raise."""
+        import skillpp.episode as ep
+
+        def fake(model, prompt, *, host=None, timeout=None):
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+        self._real, ep.ask = ep.ask, fake
+        self.addCleanup(lambda: setattr(ep, "ask", self._real))
+
+    def test_yes_keeps_and_no_drops(self):
+        from skillpp.episode import is_reusable
+        self._answer("yes")
+        self.assertIs(is_reusable(self._entry())[0], True)
+
+    def test_no_is_a_drop(self):
+        from skillpp.episode import is_reusable
+        self._answer("no")
+        self.assertIs(is_reusable(self._entry())[0], False)
+
+    def test_a_verbose_answer_still_parses(self):
+        """One-word instructions are advisory; a model that explains still counts."""
+        from skillpp.episode import is_reusable
+        self._answer("**No** — this was one particular bug.")
+        self.assertIs(is_reusable(self._entry())[0], False)
+
+    def test_unreachable_model_keeps_the_episode(self):
+        """The expensive error is dropping real work, so absence means keep."""
+        from skillpp.episode import is_reusable
+        from skillpp.local import LocalModelUnavailable
+        self._answer(LocalModelUnavailable("connection refused"))
+        verdict, why = is_reusable(self._entry())
+        self.assertIsNone(verdict)
+        self.assertIn("keeping", why)
+
+    def test_an_unclear_answer_keeps_the_episode(self):
+        from skillpp.episode import is_reusable
+        self._answer("it depends on what you mean by reusable")
+        verdict, why = is_reusable(self._entry())
+        self.assertIsNone(verdict)
+        self.assertIn("keeping", why)
+
+    def test_render_keeps_the_whole_command(self):
+        """Crisp, not lossy: fingerprinting hides that tests ran at all."""
+        from skillpp.episode import render_step
+        line = render_step({"tool": "Bash",
+                            "input": {"command": "python3 -m unittest discover"}})
+        self.assertIn("unittest discover", line)
+
+    def test_render_marks_a_failed_step(self):
+        from skillpp.episode import render_step
+        self.assertTrue(render_step(
+            {"tool": "Bash", "input": {"command": "npm test"},
+             "failed": True}).startswith("!"))
+
+    def test_render_truncates_a_giant_step(self):
+        from skillpp.episode import render_step
+        line = render_step({"tool": "Bash", "input": {"command": "x" * 5000}})
+        self.assertLess(len(line), 260)
+
+    def test_a_parked_entry_is_not_ready_and_not_a_candidate(self):
+        """Why a new status rather than a flag: `ready` already gates on it."""
+        from skillpp.ledger import STATUS_ONE_OFF
+        entry = self._entry(occurrences=9, status=STATUS_ONE_OFF)
+        ledger = Ledger(self.config)
+        ledger.save(entry)
+        self.assertFalse(entry.ready(3))
+        self.assertEqual(list(ledger.candidates(ready_only=False)), [])
+
+    def test_parking_survives_a_round_trip(self):
+        from skillpp.ledger import STATUS_ONE_OFF
+        ledger = Ledger(self.config)
+        ledger.save(self._entry(status=STATUS_ONE_OFF))
+        self.assertEqual([e.status for e in ledger.all()], [STATUS_ONE_OFF])
+
+
+class TestSiftCommand(TempRoot):
+    """Dry run by default, and reversible when applied."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        import argparse
+        import skillpp.episode as ep
+        self.argparse = argparse
+        ep.ask, self._real = (lambda *a, **k: "no"), ep.ask
+        self.addCleanup(lambda: setattr(ep, "ask", self._real))
+        self.ledger = Ledger(self.config)
+        self.ledger.save(Entry(
+            id="one", signature="s1", title="find out why the export 500s",
+            intents=["find out why the export 500s"],
+            steps=[{"tool": "Bash", "input": {"command": "grep -rn export src/"}},
+                   {"tool": "Bash", "input": {"command": "git commit -am fix"}}]))
+
+    def _args(self, **kw):
+        base = dict(root=self.config.root, id=[], apply=False, model=None)
+        base.update(kw)
+        return self.argparse.Namespace(**base)
+
+    def _status(self) -> str:
+        return next(e.status for e in Ledger(self.config).all() if e.id == "one")
+
+    def test_a_dry_run_changes_nothing(self):
+        from skillpp.cli import cmd_sift
+        from skillpp.ledger import STATUS_CANDIDATE
+        cmd_sift(self._args())
+        self.assertEqual(self._status(), STATUS_CANDIDATE)
+
+    def test_apply_parks_the_entry(self):
+        from skillpp.cli import cmd_sift
+        from skillpp.ledger import STATUS_ONE_OFF
+        cmd_sift(self._args(apply=True))
+        self.assertEqual(self._status(), STATUS_ONE_OFF)
+
+    def test_reopen_puts_it_back(self):
+        from skillpp.cli import cmd_reopen, cmd_sift
+        from skillpp.ledger import STATUS_CANDIDATE
+        cmd_sift(self._args(apply=True))
+        cmd_reopen(self.argparse.Namespace(root=self.config.root, id="one"))
+        self.assertEqual(self._status(), STATUS_CANDIDATE)
+
+    def test_an_unreachable_model_parks_nothing(self):
+        """A dead daemon must not read as "none of this is a procedure"."""
+        import skillpp.episode as ep
+        from skillpp.cli import cmd_sift
+        from skillpp.ledger import STATUS_CANDIDATE
+        from skillpp.local import LocalModelUnavailable
+
+        def boom(*a, **k):
+            raise LocalModelUnavailable("connection refused")
+        ep.ask = boom
+        cmd_sift(self._args(apply=True))
+        self.assertEqual(self._status(), STATUS_CANDIDATE)

@@ -20,6 +20,10 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _str_env(name: str, default: str) -> str:
+    return os.environ.get(name) or default
+
+
 def _float_env(name: str, default: float) -> float:
     try:
         return float(os.environ[name])
@@ -51,6 +55,12 @@ class Config:
         self.max_questions = _int_env("SKILLPP_MAX_QUESTIONS", 3)
         # A boundary that would close an episode smaller than this is ignored:
         # one step is not a workflow.
+        # Where a local model is served, and which one to ask. The episode
+        # filter is the only thing that uses these, and it runs on demand
+        # rather than in a hook: a hook that waits on a model is a hook
+        # that stalls a session.
+        self.ollama_url = _str_env("SKILLPP_OLLAMA", "http://127.0.0.1:11434")
+        self.local_model = _str_env("SKILLPP_LOCAL_MODEL", "gemma3n:e4b")
         self.min_episode_steps = _int_env("SKILLPP_MIN_EPISODE_STEPS", 2)
 
     @property

@@ -383,6 +383,8 @@ worth reading. Neither half is useful alone.
 | `skillpp hook --event <E>` | Hook entry point; reads JSON on stdin, always exits 0 |
 | `skillpp dictate --text "…"` | Create a candidate from a description instead of a trace |
 | `skillpp review [--all]` | Candidates at or above the recurrence threshold |
+| `skillpp sift [--apply]` | Ask a local model which candidates are methods rather than one-off jobs; parks the rest. Dry run without `--apply`. See [docs/episode-filter.md](docs/episode-filter.md) |
+| `skillpp reopen <id>` | Undo a sift verdict |
 | `skillpp show <id>` | Effect summary, evidence, open questions |
 | `skillpp search <words>` | Search the ledger of your own past work |
 | `skillpp scaffold <id> --name <n>` | Generate a starting `SKILL.md` |

@@ -61,6 +61,89 @@ def cmd_hook(args: argparse.Namespace) -> int:
 # ledger inspection
 # --------------------------------------------------------------------------
 
+def cmd_reopen(args: argparse.Namespace) -> int:
+    """Undo a sift verdict.
+
+    The filter's judgement comes from a model, so being able to put an entry
+    back is what makes parking it acceptable in the first place.
+    """
+    from .ledger import STATUS_CANDIDATE, STATUS_ONE_OFF
+
+    config = Config(args.root)
+    ledger = Ledger(config)
+    for entry in ledger.all():
+        if entry.id != args.id:
+            continue
+        if entry.status != STATUS_ONE_OFF:
+            print(f"{entry.id} is {entry.status}, not parked by sift.")
+            return 1
+        entry.status = STATUS_CANDIDATE
+        ledger.save(entry)
+        print(f"reopened {entry.id} — {entry.title[:60]}")
+        return 0
+    print(f"No entry {args.id}.")
+    return 1
+
+
+def cmd_sift(args: argparse.Namespace) -> int:
+    """Ask a local model which banked episodes are methods rather than one jobs.
+
+    Dry run unless ``--apply``. The filter is the only step that can discard, so
+    it shows its verdicts before acting on them and parks rather than deletes.
+
+    Not wired into the SessionEnd hook on purpose: a hook that waits on a model
+    adds that wait to every session and fails when the model is not there.
+    """
+    from .episode import is_reusable
+    from .ledger import STATUS_CANDIDATE, STATUS_ONE_OFF
+
+    config = Config(args.root)
+    ledger = Ledger(config)
+    model = args.model or config.local_model
+    entries = [e for e in ledger.all() if e.status == STATUS_CANDIDATE]
+    if args.id:
+        entries = [e for e in entries if e.id in set(args.id)]
+    if not entries:
+        print("No candidates to sift.")
+        return 0
+
+    kept, dropped, unsure = [], [], []
+    for entry in entries:
+        verdict, why = is_reusable(entry, model=model, host=config.ollama_url)
+        label = f"{entry.id}  {entry.title[:56]}"
+        if verdict is None:
+            unsure.append((label, why))
+        elif verdict:
+            kept.append((label, why))
+        else:
+            dropped.append((entry, label, why))
+
+    if kept:
+        print(f"method         {len(kept)}")
+        for label, _why in kept:
+            print(f"                 {label}")
+    if dropped:
+        print(f"one particular job {len(dropped)}")
+        for _entry, label, _why in dropped:
+            print(f"                 {label}")
+    if unsure:
+        # Counted separately and never dropped. Folding these into "method"
+        # would hide a dead model behind a plausible-looking result.
+        print(f"no opinion     {len(unsure)}   (kept)")
+        for label, why in unsure:
+            print(f"                 {label}  — {why}")
+
+    if not args.apply:
+        if dropped:
+            print(f"\nDry run. Re-run with --apply to park {len(dropped)}.")
+        return 0
+    for entry, label, _why in dropped:
+        entry.status = STATUS_ONE_OFF
+        ledger.save(entry)
+    print(f"\nparked {len(dropped)}; reopen one with: skillpp reopen <id>")
+    return 0
+
+
 def cmd_review(args: argparse.Namespace) -> int:
     config = Config(args.root)
     ledger = Ledger(config)
@@ -403,6 +486,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--event", help="override hook_event_name")
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(func=cmd_hook)
+
+    p = sub.add_parser("reopen", help="undo a sift verdict; put a candidate back")
+    p.add_argument("id")
+    p.set_defaults(func=cmd_reopen)
+
+    p = sub.add_parser("sift",
+                       help="ask a local model which candidates are methods "
+                            "rather than one-off jobs (needs Ollama)")
+    p.add_argument("id", nargs="*", help="only these candidates")
+    p.add_argument("--apply", action="store_true",
+                   help="park the one-off ones instead of only reporting")
+    p.add_argument("--model", help="local model to ask; defaults to "
+                                   "SKILLPP_LOCAL_MODEL")
+    p.set_defaults(func=cmd_sift)
 
     p = sub.add_parser("review", help="list candidates ready for review")
     p.add_argument("--all", action="store_true", help="include below-threshold candidates")

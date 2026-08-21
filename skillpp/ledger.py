@@ -26,6 +26,10 @@ _DATA_RE = re.compile(r"<!--\s*skillpp:data\s*\n(.*?)\n-->", re.DOTALL)
 STATUS_CANDIDATE = "candidate"
 STATUS_PROMOTED = "promoted"
 STATUS_DISMISSED = "dismissed"
+# Judged one particular job rather than a method, by `skillpp sift`. Kept
+# rather than deleted: the verdict came from a model and has to be auditable
+# and reversible, so it parks the entry instead of removing it.
+STATUS_ONE_OFF = "one-off"
 
 
 def _now() -> str:
@@ -245,5 +249,6 @@ class Ledger:
             "ready": sum(1 for e in entries if e.ready(self.config.recurrence_threshold)),
             "promoted": sum(1 for e in entries if e.status == STATUS_PROMOTED),
             "dismissed": sum(1 for e in entries if e.status == STATUS_DISMISSED),
+            "one_off": sum(1 for e in entries if e.status == STATUS_ONE_OFF),
             "bytes": size,
         }
