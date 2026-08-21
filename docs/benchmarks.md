@@ -84,3 +84,60 @@ find anything.
 
 A case marked `methods=0` with `episodes=1` is not a detection failure — it is
 real work that happened once and should be ranked low, not discarded.
+
+---
+
+## Scored against `feat/pattern-detection`
+
+The runner takes `--repo`, so the corpus can be pointed at any checkout exposing
+the three hook handlers and a `Ledger`. Segmentation only — ranking is this
+branch's concept and that one has no equivalent.
+
+| | this branch | `pattern-detection` |
+| --- | --- | --- |
+| Segmentation | **17 of 17** | **12 of 17** |
+| Multi-task sessions | **3 of 3** | **0 of 3** |
+
+Its five misses are all one shape: it banks exactly one candidate per session.
+That is right whenever a session held one task, and wrong the moment it held two
+— it merged a release with a CI bump, three morning tasks into one, and a weekly
+update with the expenses that followed it. The two sessions that should have
+banked nothing each banked one.
+
+**The first version of this corpus could not see that.** 13 of its 14 cases held
+a single task, where banking one entry is correct by construction, and
+`pattern-detection` scored 11 of 14 — a detector that does no segmentation at
+all, looking respectable. Three multi-task cases were added for that reason, and
+they are what separates the two designs.
+
+A corpus that cannot distinguish *segments correctly* from *never segments* is
+not measuring segmentation. Worth re-checking whenever a case is added.
+
+## What the productivity half found in this branch
+
+Two defects that the programming cases could not reach, because both are about
+work that never produces a `git commit`.
+
+**A finished task was discarded for lacking a marker.** `two-chores-one-sitting`
+drafts the weekly email, then does the expenses. The expenses episode ended at
+session end with no marker — MCP work never produces one — and the flagging rule
+threw it away as work that trailed off. So *any session whose last task was a
+productivity one lost that task.*
+
+The rule now only flags a trailing markerless episode if it was **entirely**
+looking around. An episode that changed something finished, whether or not a
+regex can see it, and pure exploration is caught by its own guard regardless of
+how it ended.
+
+**One test had to change its mind, and that is worth recording.**
+`test_a_single_episode_session_is_never_flagged` asserted that a lone episode is
+never flagged, on the reasoning that a session which did one thing needs no
+artifact to be believable. Its example was `kubectl logs` then `kubectl top` —
+pure reading. The rule is right for work and wrong for looking around, so it is
+now two tests: a single episode that *did something* is not flagged, and one
+that only looked around is. The old assertion was load-bearing for the two
+"nothing here" cases failing.
+
+Extending the read-only vocabulary along the way — `kubectl top`, `explain`,
+`version`, `docker inspect` — was found by that same test failing for the right
+reason.

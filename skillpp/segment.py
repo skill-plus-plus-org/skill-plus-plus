@@ -62,7 +62,8 @@ _READ_ONLY_RE = re.compile(
     r"find|fd|wc|file|stat|du|df|ps|top|which|whereis|pwd|env|printenv|date|"
     r"man|type|echo|jq|column|sort|uniq|diff|cmp|"
     r"git\s+(?:log|show|status|diff|blame|branch|remote|config)|"
-    r"kubectl\s+(?:get|describe|logs)|docker\s+(?:ps|images|logs)|"
+    r"kubectl\s+(?:get|describe|logs|top|explain|version)|"
+    r"docker\s+(?:ps|images|logs|inspect)|"
     r"terraform\s+(?:plan|show)|npm\s+(?:ls|view)|pip\s+(?:show|list))\b")
 
 
@@ -241,8 +242,19 @@ def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
 
     if len(episodes) > 1:
         for episode in episodes:
-            episode.flagged = (episode.ended_by == "session-end"
-                               and not episode.has_marker)
+            # A trailing episode with no marker used to be flagged outright, on
+            # the reasoning that it was an investigation that trailed off. That
+            # holds only where markers exist: MCP work never produces a
+            # `git commit`, so the rule silently discarded any session whose
+            # last task was a productivity one — measured, the expenses half of
+            # a session that also drafted an email. An episode that changed
+            # something finished, whether or not a regex can see it, and pure
+            # looking-around is caught below regardless of how it ended.
+            episode.flagged = (
+                episode.ended_by == "session-end"
+                and not episode.has_marker
+                and all(is_read_only(s) for s in episode.steps
+                        if not is_prompt(s)))
 
     # An episode whose every substantive step only looked at things contains no
     # method, however it ended and however long it ran. Without this, a whole

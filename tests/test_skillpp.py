@@ -680,11 +680,30 @@ class TestSegmentBoundaries(unittest.TestCase):
         self.assertFalse(episodes[0].flagged, "ended in a commit")
         self.assertTrue(episodes[1].flagged, "no marker, ended only at session end")
 
-    def test_a_single_episode_session_is_never_flagged(self):
-        """A session that did one thing needs no artifact to be believable."""
-        episodes = segment([bash("kubectl logs api"), bash("kubectl top pods")])
+    def test_a_single_episode_session_that_did_something_is_not_flagged(self):
+        """A session that did one thing needs no artifact to be believable.
+
+        The rule this protects: a marker is not required. Deployments end in
+        `./scripts/deploy.sh`, productivity work ends in an MCP call, and
+        neither is a regex the segmenter knows.
+        """
+        episodes = segment([bash("kubectl logs api"),
+                            bash("kubectl scale deploy/api --replicas=3")])
         self.assertEqual(len(episodes), 1)
         self.assertFalse(episodes[0].flagged)
+
+    def test_a_session_that_only_looked_around_is_flagged(self):
+        """Deliberately the opposite of what this file asserted before.
+
+        The old rule exempted every single-episode session from flagging, so a
+        whole session of reading banked one candidate titled after the question
+        that started it. Two benchmark cases exist for exactly that shape. A
+        session that only looked at things did not "do one thing" — it looked
+        around, and there is no method in it however it ended.
+        """
+        episodes = segment([bash("kubectl logs api"), bash("kubectl top pods")])
+        self.assertEqual(len(episodes), 1)
+        self.assertTrue(episodes[0].flagged)
 
 
 class TestSegmentBeforeAfter(TempRoot):

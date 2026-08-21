@@ -1,0 +1,297 @@
+{
+  "cases": 17,
+  "segmentation": {
+    "passed": 17,
+    "of": 17
+  },
+  "ranking": null,
+  "rows": [
+    {
+      "name": "release-a-service",
+      "kind": "programming",
+      "tags": [
+        "marker",
+        "recurring-shape"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "cut the 2.4 release"
+      ]
+    },
+    {
+      "name": "rotate-a-credential",
+      "kind": "programming",
+      "tags": [
+        "no-commit",
+        "rare"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "rotate the staging database password"
+      ]
+    },
+    {
+      "name": "onboard-a-repository",
+      "kind": "programming",
+      "tags": [
+        "no-commit"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "get this repo running locally"
+      ]
+    },
+    {
+      "name": "migration-with-a-lock",
+      "kind": "programming",
+      "tags": [
+        "failure-then-fix"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "the staging migration is stuck, get it green"
+      ]
+    },
+    {
+      "name": "explore-then-one-line-fix",
+      "kind": "programming",
+      "tags": [
+        "exploration",
+        "one-off"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 0,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "the export endpoint 500s intermittently, find out why"
+      ]
+    },
+    {
+      "name": "investigation-that-goes-nowhere",
+      "kind": "programming",
+      "tags": [
+        "nothing-here"
+      ],
+      "expected_episodes": 0,
+      "got_episodes": 0,
+      "segmentation": true,
+      "expected_methods": 0,
+      "got_methods": null,
+      "ranking": null,
+      "titles": []
+    },
+    {
+      "name": "two-tasks-one-sitting",
+      "kind": "programming",
+      "tags": [
+        "boundary"
+      ],
+      "expected_episodes": 2,
+      "got_episodes": 2,
+      "segmentation": true,
+      "expected_methods": 2,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "now bump CI to node 22",
+        "cut the 2.4 release tag"
+      ]
+    },
+    {
+      "name": "hotfix-one-specific-bug",
+      "kind": "programming",
+      "tags": [
+        "one-off"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 0,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "users report a crash on empty carts"
+      ]
+    },
+    {
+      "name": "weekly-status-email",
+      "kind": "productivity",
+      "tags": [
+        "mcp",
+        "no-commit",
+        "recurring-shape"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "draft my weekly update for Ludwig"
+      ]
+    },
+    {
+      "name": "expense-report",
+      "kind": "productivity",
+      "tags": [
+        "mcp",
+        "no-commit"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "do my expenses for March"
+      ]
+    },
+    {
+      "name": "triage-the-support-queue",
+      "kind": "productivity",
+      "tags": [
+        "mcp",
+        "recurring-shape"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "go through the support inbox"
+      ]
+    },
+    {
+      "name": "meeting-prep",
+      "kind": "productivity",
+      "tags": [
+        "mcp",
+        "reads"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "prep me for the quarterly review with the platform team"
+      ]
+    },
+    {
+      "name": "answer-one-question",
+      "kind": "productivity",
+      "tags": [
+        "mcp",
+        "one-off"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 0,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "what did we decide about the retry cap last month?"
+      ]
+    },
+    {
+      "name": "reading-around",
+      "kind": "productivity",
+      "tags": [
+        "nothing-here",
+        "mcp"
+      ],
+      "expected_episodes": 0,
+      "got_episodes": 0,
+      "segmentation": true,
+      "expected_methods": 0,
+      "got_methods": null,
+      "ranking": null,
+      "titles": []
+    },
+    {
+      "name": "three-tasks-one-morning",
+      "kind": "programming",
+      "tags": [
+        "boundary",
+        "multi"
+      ],
+      "expected_episodes": 3,
+      "got_episodes": 3,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "and the login redirect is broken on staging",
+        "now bump lodash to 4.17.21",
+        "cut the 2.4 release tag"
+      ]
+    },
+    {
+      "name": "two-chores-one-sitting",
+      "kind": "productivity",
+      "tags": [
+        "boundary",
+        "multi",
+        "mcp"
+      ],
+      "expected_episodes": 2,
+      "got_episodes": 2,
+      "segmentation": true,
+      "expected_methods": 2,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "also do March expenses while we are here",
+        "draft my weekly update"
+      ]
+    },
+    {
+      "name": "a-procedure-then-a-dead-end",
+      "kind": "programming",
+      "tags": [
+        "boundary",
+        "multi",
+        "mixed"
+      ],
+      "expected_episodes": 1,
+      "got_episodes": 1,
+      "segmentation": true,
+      "expected_methods": 1,
+      "got_methods": null,
+      "ranking": null,
+      "titles": [
+        "roll out the api hotfix to staging"
+      ]
+    }
+  ]
+}

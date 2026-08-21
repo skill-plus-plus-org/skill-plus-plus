@@ -32,16 +32,33 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO), str(Path(__file__).resolve().parent)]
 
 from cases import CASES, by_kind  # noqa: E402
-from skillpp.capture import handle_prompt, handle_session_end, handle_tool  # noqa: E402
-from skillpp.config import Config  # noqa: E402
-from skillpp.ledger import Ledger  # noqa: E402
+
+
+def load(repo: Path | None):
+    """Import the capture pipeline from *repo*, defaulting to this checkout.
+
+    A corpus is only worth having if it can be pointed at more than the design
+    that produced it, so the import is late and parameterised rather than a
+    module-level binding. Any branch exposing the three hook handlers and a
+    Ledger can be scored — which is the same trick `replay.py` uses on the
+    pattern-detection branch, for the same reason.
+    """
+    if repo is not None:
+        sys.path.insert(0, str(Path(repo).resolve()))
+        for name in [m for m in sys.modules if m.startswith("skillpp")]:
+            del sys.modules[name]
+    from skillpp.capture import handle_prompt, handle_session_end, handle_tool
+    from skillpp.config import Config
+    from skillpp.ledger import Ledger
+    return handle_prompt, handle_tool, handle_session_end, Config, Ledger
 
 _INPUT_KEY = {"Bash": "command", "Write": "file_path", "Edit": "file_path",
               "Read": "file_path"}
 
 
-def play(case, root: Path) -> list:
+def play(case, root: Path, api) -> list:
     """Drive one case through the real hook handlers and return what was banked."""
+    handle_prompt, handle_tool, handle_session_end, Config, Ledger = api
     config = Config(root)
     config.ensure_dirs()
     sid = case.name
@@ -61,11 +78,13 @@ def play(case, root: Path) -> list:
     return list(Ledger(config).all())
 
 
-def score(cases, use_model: bool) -> dict:
+def score(cases, use_model: bool, repo=None) -> dict:
+    api = load(repo)
+    Config, Ledger = api[3], api[4]
     rows = []
     for case in cases:
         with tempfile.TemporaryDirectory() as tmp:
-            banked = play(case, Path(tmp) / "skillpp")
+            banked = play(case, Path(tmp) / "skillpp", api)
             seg_ok = len(banked) == case.episodes
             row = {"name": case.name, "kind": case.kind, "tags": case.tags,
                    "expected_episodes": case.episodes, "got_episodes": len(banked),
@@ -101,9 +120,12 @@ def main() -> int:
     ap.add_argument("--no-model", action="store_true",
                     help="segmentation only — free and deterministic")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--repo", type=Path,
+                    help="score another checkout's pipeline instead of this one")
     args = ap.parse_args()
 
-    result = score(by_kind(args.kind), use_model=not args.no_model)
+    result = score(by_kind(args.kind), use_model=not args.no_model,
+                   repo=args.repo)
     if args.json:
         print(json.dumps(result, indent=2))
         return 0

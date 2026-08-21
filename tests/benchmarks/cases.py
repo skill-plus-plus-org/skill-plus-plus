@@ -205,5 +205,54 @@ CASES = [
 ]
 
 
+# Multi-task sessions. Added after the first cross-branch run, where a detector
+# doing no segmentation at all scored 11 of 14 — because 13 of the 14 cases held
+# one task, and banking exactly one entry is right by construction there. A
+# corpus that cannot separate "segments correctly" from "never segments" is not
+# measuring segmentation.
+CASES += [
+    Case(
+        "three-tasks-one-morning", "programming",
+        "A release, a dependency bump and a hotfix. Three procedures a "
+        "session-level detector reports as one.",
+        [P("cut the 2.4 release tag"),
+         B("npm test"), B("git tag -s v2.4.0 -m rel"), B("git push --follow-tags"),
+         P("now bump lodash to 4.17.21"),
+         E("package.json"), B("npm ci"), B("npm test"),
+         B("git commit -am 'chore: bump lodash'"),
+         P("and the login redirect is broken on staging"),
+         B("grep -rn redirect src/auth/"), E("src/auth/login.py"),
+         B("pytest tests/test_auth.py"), B("git commit -am 'fix: login redirect'")],
+        episodes=3, methods=1, tags=["boundary", "multi"]),
+
+    Case(
+        "two-chores-one-sitting", "productivity",
+        "Friday: the update, then the expenses. Unrelated, both recurring.",
+        [P("draft my weekly update"),
+         B("git log --author=jane.doe --since=7.days --oneline"),
+         W("/tmp/weekly.md"),
+         M("Gmail__create_draft", to="ludwig@example.com"),
+         P("also do March expenses while we are here"),
+         M("Drive__search_files", query="receipt March"),
+         W("/tmp/expenses.csv"),
+         M("Sheets__append_rows", spreadsheet="Expenses 2026")],
+        episodes=2, methods=2, tags=["boundary", "multi", "mcp"]),
+
+    Case(
+        "a-procedure-then-a-dead-end", "programming",
+        "Real work, then an investigation that concludes nothing. One should "
+        "be banked and the other should not — a session-level detector cannot "
+        "do both.",
+        [P("roll out the api hotfix to staging"),
+         B("helm upgrade api charts/api --set image.tag=2.2.1 --wait"),
+         B("kubectl rollout status deploy/api -n staging"),
+         B("./scripts/smoke.sh staging"),
+         P("why is the nightly job slower lately?"),
+         B("git log --since=14.days --oneline"), B("cat .github/workflows/nightly.yml"),
+         B("tail -200 logs/nightly.log")],
+        episodes=1, methods=1, tags=["boundary", "multi", "mixed"]),
+]
+
+
 def by_kind(kind=None):
     return [c for c in CASES if kind is None or c.kind == kind]
