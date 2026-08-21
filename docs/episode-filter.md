@@ -273,3 +273,85 @@ the agent runs from the package root, so `draft` sets that cwd itself. An
 earlier version allowed `Bash(skillpp *)` — a binary that does not exist — and
 would have allowed the agent nothing at all. `shlex` had also split that
 pattern in two at the space inside the parentheses. Both are pinned by tests.
+
+---
+
+## The harder set, and a much worse false-drop rate
+
+The 14-candidate run above was a corpus with almost no real procedures in it, so
+it could only measure precision. The seven-fixture set has known procedures, and
+the result is far worse.
+
+| Fixture | Ground truth | segmented | after sift | |
+| --- | --- | --- | --- | --- |
+| `big` (433 KB) | one procedure | 2 (60–61 steps) | **0** | ✗ dropped it |
+| `incomplete` | nothing | 2 | **0** | ✓ fixed |
+| `two` | two procedures | 4 | **1** | ✗ dropped one |
+| `secrets` | one, redacted | 1 ✓ | **0** | ✗ dropped it |
+| `barren` | nothing | 2 | **0** | ✓ fixed |
+
+It removed the junk in both fixtures that were meant to yield nothing. It also
+**dropped 3 of the 4 real procedures** — a 75% false-drop rate where real
+procedures actually exist, against the 7% measured on a corpus that had almost
+none.
+
+That is the number to quote, not the 7%.
+
+### The cause is untrimmed exploration, not the judgement
+
+`secrets` is the clearest case. Its title states its own recurrence — *"push
+today's metrics to the dashboard **like we did last week**"* — and the method is
+three steps: check the API version, POST the metrics, read them back. Those three
+sit under **six leading greps**, because `segment.py` has no exploration trim.
+
+Tested directly, same model, same entry:
+
+| Input | Verdict |
+| --- | --- |
+| as banked — 6 greps then 3 real steps | **drop** |
+| leading exploration trimmed — 3 steps | **keep** |
+
+So the filter is not misjudging the procedure. It is judging an episode in which
+the procedure is outnumbered two to one by looking around, and answering
+reasonably about what it was shown.
+
+`big` fails the same way from the other end: segmentation over-merged it into two
+60-step blobs, one of them at ×7. A 60-step over-merged blob genuinely is not a
+method, so sift rejected it correctly — and the session's real procedure went
+with it. Correct rejection of a badly-cut episode still loses the work.
+
+### What follows
+
+**A filter is only as good as the episodes it is given.** This is the mirror of
+the finding that motivated the filter in the first place: a partition cannot
+discard, and now — a discard cannot repair a partition. Both stages have to be
+right.
+
+The missing piece is already identified and already written elsewhere:
+`trim_leading_exploration` on `feat/ignore-list-and-drift-tracking`, which is
+that branch's one genuine contribution and the exact thing `segment.py` lacks.
+It should fix `secrets` and `explore-then-fix` together, and it is mechanical
+code rather than judgement.
+
+Until it is ported, **this branch is not better than `feat/pattern-detection`**
+on the evidence available, and the honest comparison is in the next section.
+
+## Comparison with `feat/pattern-detection`: what is and is not measured
+
+| | this branch | `pattern-detection` |
+| --- | --- | --- |
+| Six symmetric scenarios | **5 of 6**, verified here | 5 of 6, **claimed, not verified** |
+| Seven-fixture set | drops 3 of 4 real procedures | claimed to handle them; its own fixtures |
+| Cost per session | free until `draft` | one frontier call per session |
+| Runs unattended | yes | no — someone types `/log-session` |
+| Long sessions | fails: over-merged then dropped | windowing built for exactly this |
+| Loop closed on real work | no | claimed, unverifiable on this machine |
+
+The pattern-detection arm cannot be scored here: every case costs a frontier
+call, and `claude` is not on this machine's PATH. So the one comparable number is
+a tie in which only one side has been checked, and on the harder set this branch
+loses outright.
+
+**Verdict: not better yet.** The architecture is the more promising one — free,
+unattended, and it gets recurrence — but a 75% false-drop rate where procedures
+exist is disqualifying until the trim lands.
