@@ -1715,3 +1715,102 @@ class TestDecisionLog(TempRoot):
         with self.config.decisions_file.open("a") as fh:
             fh.write("{not json\n")
         self.assertEqual(len(decisions.read(self.config)), 1)
+
+
+class TestKeep(TempRoot):
+    """Saving work without ending the session.
+
+    `SessionEnd` is otherwise the only thing that folds, so there was no way to
+    say "that thing I just did is worth keeping" while still working. That is a
+    larger gap than it sounds: recurrence is the automatic route to a candidate
+    and it has never fired on real work.
+    """
+
+    def _work(self, sid="live", cmds=(), prompt="fail over staging"):
+        from skillpp.capture import handle_prompt, handle_tool
+        handle_prompt(self.config, {"session_id": sid, "cwd": "/r",
+                                    "prompt": prompt})
+        for c in cmds:
+            handle_tool(self.config, {"session_id": sid, "cwd": "/r",
+                                      "tool_name": "Bash",
+                                      "tool_input": {"command": c}})
+
+    def test_it_banks_the_work_so_far(self):
+        from skillpp.capture import keep_current
+        self._work(cmds=("./scripts/failover.sh staging", "curl -sI https://staging"))
+        result = keep_current(self.config)
+        self.assertEqual(result.get("status"), "created")
+        self.assertEqual(len(list(Ledger(self.config).all())), 1)
+
+    def test_the_buffer_is_cleared_so_nothing_folds_twice(self):
+        from skillpp.capture import keep_current
+        self._work(cmds=("./scripts/failover.sh staging", "curl -sI https://staging"))
+        keep_current(self.config)
+        self.assertEqual(list(self.config.sessions_dir.glob("*.json")), [])
+
+    def test_what_is_kept_is_marked_as_kept(self):
+        """Provenance matters: this was asked for, not inferred."""
+        from skillpp.capture import keep_current
+        self._work(cmds=("./scripts/failover.sh staging", "curl -sI https://staging"))
+        keep_current(self.config)
+        self.assertEqual([e.source for e in Ledger(self.config).all()], ["kept"])
+
+    def test_an_explicit_keep_overrides_the_guards(self):
+        """A guard exists to stop a detector banking noise, not to overrule a
+        person who has read the work and asked for it."""
+        from skillpp.capture import keep_current
+        # Read-only throughout: at SessionEnd this is discarded as exploration.
+        self._work(cmds=("git log --oneline -5", "git diff", "cat README.md"))
+        self.assertEqual(keep_current(self.config).get("status"), "created")
+
+    def test_no_session_is_reported_not_guessed(self):
+        from skillpp.capture import keep_current
+        self.assertEqual(keep_current(self.config)["status"], "no-session")
+
+    def test_an_empty_buffer_is_not_a_candidate(self):
+        from skillpp.capture import keep_current
+        from skillpp.capture import handle_prompt
+        handle_prompt(self.config, {"session_id": "live", "cwd": "/r",
+                                    "prompt": "thinking about it"})
+        self.assertEqual(keep_current(self.config)["status"], "nothing-yet")
+
+
+class TestReconcile(TempRoot):
+    """Reporting drift, and never acting on it."""
+
+    def _promoted(self, eid, path):
+        from skillpp.ledger import STATUS_PROMOTED
+        entry = Entry(id=eid, signature="s", title=f"skill {eid}",
+                      status=STATUS_PROMOTED, skill_path=str(path))
+        Ledger(self.config).save(entry)
+        return entry
+
+    def test_a_live_skill_is_not_drift(self):
+        from skillpp.lifecycle import reconcile
+        alive = self.root / "SKILL.md"
+        alive.write_text("---\nname: x\n---\n")
+        self._promoted("a", alive)
+        result = reconcile(Ledger(self.config), self.config)
+        self.assertEqual((result["live"], result["missing"]), (1, []))
+
+    def test_a_deleted_skill_is_reported(self):
+        from skillpp.lifecycle import reconcile
+        self._promoted("a", self.root / "gone" / "SKILL.md")
+        result = reconcile(Ledger(self.config), self.config)
+        self.assertEqual(len(result["missing"]), 1)
+        self.assertEqual(result["missing"][0]["id"], "a")
+
+    def test_reporting_never_changes_status(self):
+        """Reopening would second-guess a deletion that was almost certainly
+        deliberate, and re-propose the same workflow on every decline."""
+        from skillpp.ledger import STATUS_PROMOTED
+        from skillpp.lifecycle import reconcile
+        self._promoted("a", self.root / "gone" / "SKILL.md")
+        reconcile(Ledger(self.config), self.config)
+        self.assertEqual(Ledger(self.config).get("a").status, STATUS_PROMOTED)
+
+    def test_a_promotion_with_no_path_recorded_is_drift_too(self):
+        from skillpp.lifecycle import reconcile
+        self._promoted("a", "")
+        result = reconcile(Ledger(self.config), self.config)
+        self.assertEqual(result["missing"][0]["skill_path"], "(never recorded)")

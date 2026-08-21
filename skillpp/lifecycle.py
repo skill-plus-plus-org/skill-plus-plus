@@ -244,3 +244,30 @@ def move_tier(skill: SkillInfo, target_tier: str, skills_dir: Path,
         shutil.rmtree(dest) if dest.is_dir() else dest.unlink()
     shutil.move(str(skill.path.parent), str(dest))
     return dest
+
+
+def reconcile(ledger, config) -> dict:
+    """Report drift between promoted entries and the skills actually on disk.
+
+    **Reports only — never changes status.** A promoted entry whose file has been
+    deleted is a real dead end: it keeps matching future occurrences of the same
+    work while never surfacing for review, so the workflow silently stops being
+    proposed. But reopening it automatically would second-guess a deletion that
+    was almost certainly deliberate, and would re-propose the same thing every
+    time the developer declined. Deciding is theirs.
+    """
+    from .ledger import STATUS_PROMOTED
+    from pathlib import Path as _Path
+
+    missing, live = [], 0
+    for entry in ledger.all():
+        if entry.status != STATUS_PROMOTED:
+            continue
+        path = entry.skill_path
+        if path and _Path(path).expanduser().exists():
+            live += 1
+            continue
+        missing.append({"id": entry.id, "title": entry.title,
+                        "skill_path": path or "(never recorded)",
+                        "occurrences": entry.occurrences})
+    return {"promoted": live + len(missing), "live": live, "missing": missing}

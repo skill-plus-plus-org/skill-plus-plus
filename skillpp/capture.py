@@ -177,7 +177,8 @@ def handle_session_end(config: Config, payload: dict) -> dict:
     return result
 
 
-def fold_session(config: Config, session: dict) -> dict:
+def fold_session(config: Config, session: dict, *, force: bool = False,
+                 source: str = "capture") -> dict:
     """Turn a finished session into ledger entries — one per task.
 
     A session holding several unrelated tasks used to become a single entry
@@ -195,11 +196,16 @@ def fold_session(config: Config, session: dict) -> dict:
     # An episode with no completion marker, in a session that did segment, is a
     # fragment with nothing to show for itself. Recording it would recreate the
     # mega-candidates segmentation exists to remove.
-    foldable = [e for e in episodes if not e.flagged]
+    # `force` is an explicit "save this" from a person, so the guards that exist
+    # to suppress uninteresting captures do not apply. They protect against a
+    # detector banking noise; they should not overrule someone who has read the
+    # work and asked for it. Same rule as dictation.
+    foldable = episodes if force else [e for e in episodes if not e.flagged]
 
     results = []
     for episode in foldable:
-        result = _fold_steps(config, session, episode.steps)
+        result = _fold_steps(config, session, episode.steps,
+                             source=source)
         result["ended_by"] = episode.ended_by
         results.append(result)
 
@@ -214,7 +220,8 @@ def fold_session(config: Config, session: dict) -> dict:
     return summary
 
 
-def _fold_steps(config: Config, session: dict, steps: list[dict]) -> dict:
+def _fold_steps(config: Config, session: dict, steps: list[dict],
+                source: str = "capture") -> dict:
     """Fold one episode's steps into a new or updated ledger entry."""
     cwd = session.get("cwd") or ""
     substantive = [s for s in steps if s.get("tool") not in _NOISE_TOOLS]
@@ -277,9 +284,11 @@ def _fold_steps(config: Config, session: dict, steps: list[dict]) -> dict:
         variants=[substantive],
         deps_mcp=deps_mcp,
         deps_cli=deps_cli,
+        source=source,
     )
     ledger.save(entry)
-    return {"status": "created", "id": entry.id, "occurrences": 1, "ready": False}
+    return {"status": "created", "id": entry.id, "occurrences": 1,
+            "ready": False, "source": source}
 
 
 # -- dictation -------------------------------------------------------------
@@ -437,3 +446,42 @@ def _title_for(intents: list[str], steps: list[dict]) -> str:
             if cmd:
                 return (cmd[:70] + "…") if len(cmd) > 70 else cmd
     return "captured workflow"
+
+
+def keep_current(config: Config, session_id: str | None = None) -> dict:
+    """Fold the in-flight session now, instead of waiting for it to end.
+
+    `SessionEnd` is otherwise the only thing that folds, so without this there
+    is no way to say "that thing I just did is worth keeping" without closing
+    the session. That matters more than it looks: recurrence is the automatic
+    route to a candidate and it has never fired on real work, which leaves an
+    explicit save as the only path from work to skill.
+
+    Guards are bypassed — an explicit save is not noise — and the buffer is
+    cleared afterwards so the rest of the session accumulates fresh rather than
+    being folded twice.
+    """
+    if session_id:
+        path = _session_file(config, session_id)
+        if not path.exists():
+            return {"status": "no-session"}
+    else:
+        newest = sorted(config.sessions_dir.glob("*.json"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)
+        if not newest:
+            return {"status": "no-session"}
+        path = newest[0]
+        session_id = path.stem
+
+    session = _load_session(config, session_id)
+    # `handle_prompt` writes a UserPrompt sentinel into the step stream, so the
+    # raw list is never empty once anything has been said. Count the work.
+    from .segment import is_prompt
+    if not [s for s in session.get("steps", []) if not is_prompt(s)]:
+        return {"status": "nothing-yet"}
+    result = fold_session(config, session, force=True, source="kept")
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    return result

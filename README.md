@@ -389,6 +389,8 @@ worth reading. Neither half is useful alone.
 | `skillpp split <id> --at N` | Split a candidate holding two procedures; the original is kept, not deleted |
 | `skillpp name <id> --title … --description …` | Give a candidate a task-shaped name; written by the agent during `draft` |
 | `skillpp accuracy` | How often the ranker agreed with your own promote/dismiss decisions |
+| `skillpp keep` | Save the work so far as a candidate, without ending the session |
+| `skillpp reconcile` | Report promoted skills whose file is gone; reports only, never decides |
 | `skillpp draft <id> [--apply]` | Have your own agent write a draft `SKILL.md`; never installs it. Dry run without `--apply` |
 | `skillpp show <id>` | Effect summary, evidence, open questions |
 | `skillpp search <words>` | Search the ledger of your own past work |

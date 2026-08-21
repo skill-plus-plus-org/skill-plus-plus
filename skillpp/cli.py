@@ -360,6 +360,54 @@ def cmd_merge(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_keep(args: argparse.Namespace) -> int:
+    """Save the work so far as a candidate, without ending the session."""
+    from .capture import keep_current
+
+    config = Config(args.root)
+    config.ensure_dirs()
+    result = keep_current(config, args.session_id)
+    status = result.get("status")
+    if status == "no-session":
+        print("No session buffer to keep. Hooks record one as you work, so run "
+              "this from inside a Claude Code session.", file=sys.stderr)
+        return 1
+    if status == "nothing-yet":
+        print("Nothing recorded yet in this session.", file=sys.stderr)
+        return 1
+    episodes = result.get("episodes") or [result]
+    kept = [e for e in episodes if e.get("status") in ("created", "merged")]
+    if not kept:
+        print("Nothing substantial enough to keep — a workflow needs at least "
+              f"{config.min_episode_steps} steps.")
+        return 1
+    print(f"kept {len(kept)} candidate(s):")
+    for e in kept:
+        print(f"  {e.get('id')}  seen {e.get('occurrences', 1)}x")
+    print("Name and draft one with: skillpp draft <id> --apply")
+    return 0
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    """Report promoted skills whose file is gone. Reports only."""
+    from .lifecycle import reconcile
+
+    config = Config(args.root)
+    result = reconcile(Ledger(config), config)
+    print(f"promoted    {result['promoted']}   ({result['live']} live)")
+    if not result["missing"]:
+        print("No drift.")
+        return 0
+    print(f"missing     {len(result['missing'])}")
+    for row in result["missing"]:
+        print(f"  {row['id']}  {row['title'][:44]}")
+        print(f"            {row['skill_path']}")
+    print("\nNothing was changed. A promoted entry with no file keeps matching "
+          "future work while never surfacing for review — decide with "
+          "`skillpp reopen <id>` or `skillpp dismiss <id>`.")
+    return 1
+
+
 def cmd_accuracy(args: argparse.Namespace) -> int:
     """How often the ranker agreed with you, on decisions you actually made.
 
@@ -871,6 +919,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--floor", type=float,
                    help="lowest lexical similarity worth a model call")
     p.set_defaults(func=cmd_merge)
+
+    p = sub.add_parser("keep",
+                       help="save the work so far as a candidate, without "
+                            "ending the session")
+    p.add_argument("--session-id", help="which session; defaults to the newest")
+    p.set_defaults(func=cmd_keep)
+
+    p = sub.add_parser("reconcile",
+                       help="report promoted skills whose file is gone")
+    p.set_defaults(func=cmd_reconcile)
 
     p = sub.add_parser("accuracy",
                        help="how often the ranker agreed with your own "
