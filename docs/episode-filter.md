@@ -546,3 +546,45 @@ unresolved judgement to live.
 `big` remains a segmentation problem: two over-merged 60-step blobs. The ×7 one
 ranks as a method on recurrence, so it now reaches review, but it reaches it as
 a 61-step blob.
+
+---
+
+## What installing it found in the first hour
+
+Two failure modes, neither reachable from a fixture, both in the live ledger
+within an hour of the branch going live.
+
+### Automation observed itself
+
+`skillpp draft` spawns an agent session. That session has hooks too, so its own
+poking around was captured and banked — two candidates titled
+`/skillpp-draft 8a494bc02d67`, holding the draft agent's `find`, `ls` and
+`echo ok`. **Using the tool manufactured work for the tool.**
+
+`feat/pattern-detection` hit the same thing at a scale that makes the point
+better: **158 of 174** queue entries were `claude -p` runs it had queued for
+itself. Its cure was pruning entries whose transcript no longer exists, which
+suits a transcript-based design and does nothing for a buffer-based one — a
+nested session here writes a real buffer and folds it like any other.
+
+The cure here is a marker: `draft` sets `SKILLPP_INTERNAL=1` on the agent it
+spawns, and the hook returns before doing anything when it sees it. Set by the
+process doing the spawning, so nothing has to recognise itself.
+
+### A harness envelope became a candidate title
+
+One entry was titled `<task-notification>`. The harness injects envelopes into
+the prompt stream — task notifications, system reminders, command wrappers — and
+`UserPromptSubmit` recorded one as stated intent. A skill's description is the
+only thing read when deciding whether to load it, so a skill named after a
+system message is dead on arrival.
+
+Prompts beginning with a known envelope prefix are now dropped.
+
+### What this says about testing
+
+Both defects survived 122 unit tests, three eval sets and a bakeoff against
+another branch's fixtures. Neither is subtle. They needed the thing to be
+*installed and used*, which is the one thing no harness reproduces — and it is
+the same lesson `feat/pattern-detection` recorded as *"toy fixtures hid three
+separate defects, all of which appeared on the first real session."*

@@ -14,7 +14,7 @@ one, and do not review a second.
 ## 1. Load it
 
 ```bash
-skillpp show <id> --json
+python3 bin/skillpp show <id> --json
 ```
 
 That gives the effect summary, the evidence it came from, declared dependencies,
@@ -23,7 +23,8 @@ and the questions the engine generated.
 ## 2. Write the body
 
 ```bash
-skillpp scaffold <id> --name <skill-name> --description "<one line>" --out <draft-dir>/SKILL.md
+python3 bin/skillpp scaffold <id> --name <skill-name> \
+  --description "<one line>" --out <draft-dir>/SKILL.md
 ```
 
 The scaffold gives structure, dependencies and the verbatim steps. Your job is
@@ -51,7 +52,7 @@ what to check.
 
 ## 4. Stop before installing
 
-**Do not run `skillpp promote`. Do not write into the skills directory.** Leave
+**Do not run `python3 bin/skillpp promote`. Do not write into the skills directory.** Leave
 the draft where the scaffold put it and print the path.
 
 Installing is the developer's decision and this run does not have their
@@ -61,5 +62,18 @@ whole design exists to prevent.
 ## 5. If it should not exist
 
 If reading the evidence convinces you this is not a reusable procedure — one
-particular bug, a session of looking around, work that never finished — say so
-in one line and write nothing. A wrong draft costs more than no draft.
+particular bug, a session of looking around, work that never finished — write
+nothing and print exactly this line, on its own:
+
+```
+SKILLPP-DECLINE: <one short reason>
+```
+
+A wrong draft costs more than no draft.
+
+**That line is the only way a decline is recognised.** Writing no file is not a
+signal on its own: a blocked tool, a missing permission and a considered "there
+is nothing here" all produce no file, and the caller cannot tell them apart. If
+you are stopping for any reason *other* than having judged the work unsuitable —
+you could not read the candidate, a command was denied, anything — do **not**
+print that line. Say what blocked you and stop.

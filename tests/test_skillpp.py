@@ -1023,7 +1023,7 @@ class TestDraftCommand(TempRoot):
         base.update(kw)
         return self.argparse.Namespace(**base)
 
-    def _spy(self, exit_code=0, writes=None):
+    def _spy(self, exit_code=0, writes=None, say=""):
         """Capture argv instead of running an agent."""
         import subprocess
         seen = {}
@@ -1035,7 +1035,8 @@ class TestDraftCommand(TempRoot):
                 path = self.config.root / "drafts" / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("---\nname: x\n---\n", encoding="utf-8")
-            return subprocess.CompletedProcess(argv, exit_code)
+            return subprocess.CompletedProcess(argv, exit_code,
+                                               stdout=say, stderr="")
         real = subprocess.run
         subprocess.run = fake
         self.addCleanup(lambda: setattr(subprocess, "run", real))
@@ -1092,11 +1093,25 @@ class TestDraftCommand(TempRoot):
         self.assertEqual(len(drafted), 1)
         self.assertNotIn("skills", drafted[0].parts[:-2])
 
-    def test_declining_cleanly_is_not_an_error(self):
-        """The prompt tells the agent to write nothing when there is no procedure."""
+    def test_a_stated_decline_is_not_an_error(self):
+        """The prompt tells the agent to say so when there is no procedure."""
         from skillpp.cli import cmd_draft
-        self._spy(writes=[], exit_code=0)
+        self._spy(writes=[], exit_code=0,
+                  say="SKILLPP-DECLINE: one particular bug, not a method\n")
         self.assertEqual(cmd_draft(self._args(apply=True)), 0)
+
+    def test_silence_is_not_a_decline(self):
+        """The defect the first live run exposed.
+
+        A blocked tool, a denied permission and a considered "nothing here" all
+        write no file and can all exit 0. Inferring a judgement from the absence
+        of a file made a blocked agent look like a working filter, so a decline
+        now has to be stated.
+        """
+        from skillpp.cli import cmd_draft
+        self._spy(writes=[], exit_code=0,
+                  say="I could not read the candidate, so I am stopping.\n")
+        self.assertEqual(cmd_draft(self._args(apply=True)), 1)
 
     def test_a_failed_agent_is_not_read_as_a_judgement(self):
         """An unauthenticated CLI exits 1 and writes nothing — same shape as a
@@ -1194,3 +1209,47 @@ class TestLeadingExplorationTrim(unittest.TestCase):
                             self.bash("git commit -am fix")])
         self.assertEqual(len(episodes), 1)
         self.assertEqual(episodes[0].trimmed, 2)
+
+
+class TestCaptureDoesNotObserveItself(TempRoot):
+    """Two failure modes found by installing the branch and using it.
+
+    Neither came from a fixture. Both were in the live ledger within an hour.
+    """
+
+    def test_an_internal_run_is_not_captured(self):
+        """`draft` spawns an agent, whose session was banked as a candidate.
+
+        Two runs produced two junk entries titled `/skillpp-draft <id>`, holding
+        the draft agent's own `find` and `ls`. Automation observing itself is a
+        feedback loop: using the tool manufactures work for the tool.
+        """
+        import os
+        from skillpp.cli import cmd_hook
+        import argparse, io, sys as _sys
+
+        os.environ["SKILLPP_INTERNAL"] = "1"
+        self.addCleanup(lambda: os.environ.pop("SKILLPP_INTERNAL", None))
+        real, _sys.stdin = _sys.stdin, io.StringIO(json.dumps(
+            {"session_id": "auto", "cwd": "/p", "prompt": "invisible"}))
+        self.addCleanup(lambda: setattr(_sys, "stdin", real))
+        cmd_hook(argparse.Namespace(root=self.config.root,
+                                    event="UserPromptSubmit", verbose=False))
+        self.assertFalse((self.config.sessions_dir / "auto.json").exists())
+
+    def test_a_harness_envelope_is_not_stated_intent(self):
+        """A candidate was titled `<task-notification>`.
+
+        The harness injects envelopes into the prompt stream. They are not
+        something a developer typed, and a skill named after one never fires.
+        """
+        from skillpp.capture import handle_prompt
+        handle_prompt(self.config, {"session_id": "e", "cwd": "/p",
+                                    "prompt": "<task-notification>\ndone"})
+        handle_prompt(self.config, {"session_id": "e", "cwd": "/p",
+                                    "prompt": "<system-reminder>ignore me"})
+        handle_prompt(self.config, {"session_id": "e", "cwd": "/p",
+                                    "prompt": "the real request"})
+        session = json.loads(
+            (self.config.sessions_dir / "e.json").read_text())
+        self.assertEqual(session["prompts"], ["the real request"])

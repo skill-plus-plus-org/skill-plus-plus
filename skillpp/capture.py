@@ -92,11 +92,18 @@ def _failed(response) -> bool:
     ))
 
 
+# Envelopes the harness injects into the prompt stream. They are not something
+# a developer typed, and one of them became a candidate titled
+# `<task-notification>`.
+_ENVELOPE_PREFIXES = ("<task-notification", "<system-reminder",
+                      "<local-command", "<command-name")
+
+
 def handle_prompt(config: Config, payload: dict) -> None:
     """UserPromptSubmit — capture stated intent."""
     session_id = str(payload.get("session_id", "unknown"))
     prompt = scrub(str(payload.get("prompt", "")).strip())
-    if not prompt:
+    if not prompt or prompt.startswith(_ENVELOPE_PREFIXES):
         return
     session = _load_session(config, session_id)
     session.setdefault("cwd", payload.get("cwd", ""))

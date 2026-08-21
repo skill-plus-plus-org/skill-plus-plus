@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -35,6 +36,14 @@ def cmd_hook(args: argparse.Namespace) -> int:
     Always exits 0. A capture failure must never disrupt the developer's
     session; errors go to the log instead.
     """
+    # A `draft` run is an agent session like any other, so its own poking
+    # around gets captured and banked as a candidate — measured: two junk
+    # entries titled `/skillpp-draft <id>` after two runs. Automation observing
+    # itself is a feedback loop, and the marker is set by the process that
+    # spawns it.
+    if os.environ.get("SKILLPP_INTERNAL"):
+        return 0
+
     config = Config(args.root)
     try:
         raw = sys.stdin.read()
@@ -113,7 +122,12 @@ def cmd_draft(args: argparse.Namespace) -> int:
         # Default to the package root: the allowed-tools pattern names
         # `python3 bin/skillpp`, which only resolves from there.
         where = args.cwd or Path(__file__).resolve().parent.parent
-        proc = subprocess.run(argv, cwd=where, timeout=args.timeout)
+        # Captured rather than streamed so the decline sentinel can be read out
+        # of it; echoed below so nothing is hidden.
+        env = dict(os.environ, SKILLPP_INTERNAL="1")
+        proc = subprocess.run(argv, cwd=where, timeout=args.timeout,
+                              capture_output=True, text=True, env=env)
+        print((proc.stdout or "") + (proc.stderr or ""), end="")
     except FileNotFoundError:
         print(f"\nNo such agent: {argv[0]}. Set SKILLPP_AGENT to how yours is "
               f"invoked.", file=sys.stderr)
@@ -135,12 +149,22 @@ def cmd_draft(args: argparse.Namespace) -> int:
                   f"in, authenticate it once by running `claude` and then "
                   f"`/login`.", file=sys.stderr)
             return proc.returncode
-        # A clean exit with no file is the prompt working as written: it tells
-        # the agent to write nothing when the evidence says this was one
-        # particular job.
-        print("\nNo draft written — the agent judged there was no reusable "
-              "procedure here.")
-        return 0
+        # A decline has to be *stated*, never inferred from an absent file. A
+        # blocked tool, a denied permission and a considered "nothing here" all
+        # write no file and can all exit 0 — the first live run hit exactly
+        # that, and reporting it as a judgement made a broken agent look like a
+        # working filter.
+        said = (proc.stdout or "") + (proc.stderr or "")
+        for line in said.splitlines():
+            if line.strip().startswith("SKILLPP-DECLINE:"):
+                reason = line.split(":", 1)[1].strip()
+                print(f"\nNo draft — the agent judged there was no reusable "
+                      f"procedure here: {reason}")
+                return 0
+        print("\nInconclusive: no draft, and the agent did not say it was "
+              "declining. Read its output above — it was most likely blocked "
+              "rather than unconvinced.", file=sys.stderr)
+        return 1
     for path in written:
         print(f"\ndrafted {path}")
     print("Read it, then install with: skillpp promote "
