@@ -263,6 +263,19 @@ could not see.
 
 ### Two wiring facts that will bite
 
+**Installing the CLI does not authenticate it.** `npm install -g
+@anthropic-ai/claude-code` puts `claude` on PATH and it still exits 1 with
+`Not logged in` until someone runs it once and authenticates. `draft` cannot do
+that step and should not try.
+
+**A failed agent and a declining agent look identical from outside.** Both write
+no file. The first version of `draft` reported them with one message — "the
+agent judged there was nothing here, or it failed" — which meant an
+unauthenticated CLI read as a considered judgement that the work was not worth
+keeping. The exit code separates them and is now the thing that decides: non-zero
+is a failure on stderr with a non-zero return, zero-with-no-file is a decline.
+Found by running it for real; no fixture would have produced it.
+
 **`claude` is usually not on PATH**, even on a machine where Claude Code is in
 daily use — only a version-pinned binary inside the application bundle. So the
 dry run prints whether the agent resolves before you spend anything, rather than

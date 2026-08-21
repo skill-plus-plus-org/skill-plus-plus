@@ -125,11 +125,22 @@ def cmd_draft(args: argparse.Namespace) -> int:
 
     written = sorted(out_dir.rglob("SKILL.md"))
     if not written:
-        # Not an error: the draft prompt tells the agent to write nothing when
-        # the evidence says this is not a reusable procedure.
-        print("\nNo draft written — the agent judged there was nothing here, "
-              "or it failed. Read its output above.")
-        return proc.returncode
+        # "Declined" and "broke" must not look alike, or an unattended run
+        # reports a dead agent as a considered judgement. The exit code is what
+        # separates them: an unauthenticated CLI exits 1 and writes nothing,
+        # which is indistinguishable from a decline by any other signal.
+        if proc.returncode != 0:
+            print(f"\nThe agent failed (exit {proc.returncode}) and wrote "
+                  f"nothing. Its output is above — if it says it is not logged "
+                  f"in, authenticate it once by running `claude` and then "
+                  f"`/login`.", file=sys.stderr)
+            return proc.returncode
+        # A clean exit with no file is the prompt working as written: it tells
+        # the agent to write nothing when the evidence says this was one
+        # particular job.
+        print("\nNo draft written — the agent judged there was no reusable "
+              "procedure here.")
+        return 0
     for path in written:
         print(f"\ndrafted {path}")
     print("Read it, then install with: skillpp promote "

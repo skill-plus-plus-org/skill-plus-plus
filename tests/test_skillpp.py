@@ -1092,11 +1092,19 @@ class TestDraftCommand(TempRoot):
         self.assertEqual(len(drafted), 1)
         self.assertNotIn("skills", drafted[0].parts[:-2])
 
-    def test_writing_nothing_is_not_an_error(self):
+    def test_declining_cleanly_is_not_an_error(self):
         """The prompt tells the agent to write nothing when there is no procedure."""
         from skillpp.cli import cmd_draft
-        self._spy(writes=[])
+        self._spy(writes=[], exit_code=0)
         self.assertEqual(cmd_draft(self._args(apply=True)), 0)
+
+    def test_a_failed_agent_is_not_read_as_a_judgement(self):
+        """An unauthenticated CLI exits 1 and writes nothing — same shape as a
+        decline, and the opposite meaning. Reporting it as "nothing here" is how
+        an unattended run hides a dead agent."""
+        from skillpp.cli import cmd_draft
+        self._spy(writes=[], exit_code=1)
+        self.assertEqual(cmd_draft(self._args(apply=True)), 1)
 
     def test_a_missing_agent_reports_how_to_fix_it(self):
         import subprocess
