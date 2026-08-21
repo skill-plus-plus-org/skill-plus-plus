@@ -355,3 +355,51 @@ loses outright.
 **Verdict: not better yet.** The architecture is the more promising one — free,
 unattended, and it gets recurrence — but a 75% false-drop rate where procedures
 exist is disqualifying until the trim lands.
+
+---
+
+## The comparison that matters: detection from observation
+
+The section above compares against `feat/pattern-detection` on its own axis —
+reading a finished transcript. That is the wrong axis if the goal is to
+**observe** rather than to read a transcript once, so here is the other one,
+measured rather than argued.
+
+`feat/pattern-detection`'s hook dispatch handles `UserPromptSubmit`,
+`PostToolUse` and `SessionEnd`, and its `SessionEnd` calls the **old
+`fold_session`** — one ledger entry per whole session, no segmentation, inherited
+from `main`. Nothing in its hook path queues or windows anything. All of its
+intelligence is in `/log-session`, which needs a transcript, a frontier call, and
+somebody to type it.
+
+Same harness, same six fixtures, same three-hook event stream, zero frontier
+calls:
+
+| Branch | Detection on the hook path | Score |
+| --- | --- | --- |
+| `feat/ignore-list-and-drift-tracking` | folds live at `Stop`, plus budgets | **2 of 6** |
+| `feat/pattern-detection` | one entry per whole session | **2 of 6** |
+| `segmentation-fixture` | segments at `SessionEnd` | **4 of 6** |
+| **this branch** | segments, then discards one-offs | **5 of 6** |
+
+What pattern-detection's hook path did, on every one of the six: banked exactly
+one entry. So it merged `distinct-tasks`' two tasks into one, banked
+`mid-investigation` where nothing should be banked, left `explore-then-fix` at
+ten untrimmed steps, and recorded `recurs` at ×1 rather than ×2 — the signature
+drift that `segment.py` exists to fix, reproduced.
+
+**This is not a criticism of that branch as designed.** Its hook is deliberately
+vestigial; it was never meant to detect. But it does answer the question directly:
+if the requirement is observation rather than a one-time transcript job, that
+branch does not compete on it, and everything it wins — windowing, long
+transcripts, a closed loop — sits on the axis being set aside. Everything it
+costs — a frontier call per session, a human typing a command, no unattended
+operation — is what the observation path is meant to avoid.
+
+### What still has to land
+
+The 5 of 6 above and the 75% false-drop rate on the seven-fixture set are both
+true, and both are about the same missing piece. `segment.py` has no exploration
+trim, so a real procedure arrives diluted by the greps that found it, and the
+filter — judging what it was shown — says no. Porting
+`trim_leading_exploration` is the next thing, not a better prompt.
