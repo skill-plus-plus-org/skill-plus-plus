@@ -96,7 +96,13 @@ def cmd_draft(args: argparse.Namespace) -> int:
         return 1
 
     out_dir = config.root / "drafts" / (args.name or entry.id)
-    prompt = f"/skillpp-draft {entry.id}"
+    # The directory goes in the prompt as a literal, not as an environment
+    # variable for the agent to expand. A sandboxed Bash call containing `$VAR`
+    # is rejected outright — "Contains expansion" — because an allowed-tools
+    # pattern cannot be checked against a command whose text is not yet known.
+    # SKILLPP_ROOT below still works, because that is read by the Python
+    # process rather than expanded in a shell.
+    prompt = f"/skillpp-draft {entry.id} {out_dir}"
     try:
         template = config.agent_command
         argv = [prompt if part == "{PROMPT}" else part.replace("{PROMPT}", prompt)
@@ -124,9 +130,22 @@ def cmd_draft(args: argparse.Namespace) -> int:
         where = args.cwd or Path(__file__).resolve().parent.parent
         # Captured rather than streamed so the decline sentinel can be read out
         # of it; echoed below so nothing is hidden.
-        env = dict(os.environ, SKILLPP_INTERNAL="1")
+        # The agent runs `python3 bin/skillpp show <id>` with no --root, so
+        # without this it reads the default ledger and cannot find a candidate
+        # that lives anywhere else. Passed as the environment variable Config
+        # already honours rather than asking the prompt to thread a flag.
+        env = dict(os.environ, SKILLPP_INTERNAL="1",
+                   SKILLPP_ROOT=str(config.root),
+                   # Where the draft belongs. The prompt used to say
+                   # `<draft-dir>` with nothing substituting it, so the agent
+                   # invented a path in its own scratchpad and the draft was
+                   # written correctly to somewhere nobody would look.
+                   SKILLPP_DRAFT_DIR=str(out_dir))
         proc = subprocess.run(argv, cwd=where, timeout=args.timeout,
-                              capture_output=True, text=True, env=env)
+                              capture_output=True, text=True, env=env,
+                              # Without this the agent waits on a tty it will
+                              # never get, and stalls before starting.
+                              stdin=subprocess.DEVNULL)
         print((proc.stdout or "") + (proc.stderr or ""), end="")
     except FileNotFoundError:
         print(f"\nNo such agent: {argv[0]}. Set SKILLPP_AGENT to how yours is "
@@ -136,6 +155,12 @@ def cmd_draft(args: argparse.Namespace) -> int:
         print(f"\nThe agent did not finish within {args.timeout}s.",
               file=sys.stderr)
         return 1
+
+    renamed = Ledger(config).get(entry.id)
+    if renamed and (renamed.title != entry.title or renamed.description):
+        print(f"\nnamed      {renamed.title}")
+        if renamed.description:
+            print(f"           {renamed.description}")
 
     written = sorted(out_dir.rglob("SKILL.md"))
     if not written:
@@ -170,6 +195,52 @@ def cmd_draft(args: argparse.Namespace) -> int:
     print("Read it, then install with: skillpp promote "
           f"{entry.id} --skill-path <path>")
     return proc.returncode
+
+
+# A skill's description is the only thing read when deciding whether to load it,
+# and the frontmatter limit is 200 characters. A candidate whose description
+# would not fit is not ready to become one.
+_MAX_DESCRIPTION = 200
+_MAX_TITLE = 80
+
+
+def cmd_name(args: argparse.Namespace) -> int:
+    """Give a candidate a task-shaped name and a description.
+
+    Written by the agent during `skillpp draft`, because this is the half code
+    cannot do. Capture can only reuse a string it observed, so an unnamed
+    candidate carries whatever the developer typed — and a skill named after a
+    greeting never fires, however correct its steps are.
+    """
+    config = Config(args.root)
+    ledger = Ledger(config)
+    entry = ledger.get(args.id)
+    if not entry:
+        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
+        return 1
+    if args.title:
+        if len(args.title) > _MAX_TITLE:
+            print(f"Title is {len(args.title)} characters; keep it under "
+                  f"{_MAX_TITLE}. Name the task, not the session.",
+                  file=sys.stderr)
+            return 1
+        entry.title = args.title.strip()
+    if args.description:
+        if len(args.description) > _MAX_DESCRIPTION:
+            print(f"Description is {len(args.description)} characters; the "
+                  f"frontmatter limit is {_MAX_DESCRIPTION}. A description that "
+                  f"will not fit cannot become a skill.", file=sys.stderr)
+            return 1
+        entry.description = args.description.strip()
+    if not (args.title or args.description):
+        print("Nothing to set. Pass --title and/or --description.",
+              file=sys.stderr)
+        return 1
+    ledger.save(entry)
+    print(f"{entry.id}  {entry.title}")
+    if entry.description:
+        print(f"          {entry.description}")
+    return 0
 
 
 def cmd_merge(args: argparse.Namespace) -> int:
@@ -671,6 +742,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cwd", help="run the agent from here")
     p.add_argument("--timeout", type=int, default=900)
     p.set_defaults(func=cmd_draft)
+
+    p = sub.add_parser("name",
+                       help="give a candidate a task-shaped title and a "
+                            "description of when it applies")
+    p.add_argument("id")
+    p.add_argument("--title", help="what the task is, not what was typed")
+    p.add_argument("--description",
+                   help="one line on when this applies; max 200 chars")
+    p.set_defaults(func=cmd_name)
 
     p = sub.add_parser("merge",
                        help="merge candidates that are the same procedure "

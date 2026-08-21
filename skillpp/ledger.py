@@ -71,6 +71,15 @@ class Entry:
     # An annotation used to order the review queue, never a gate — a local
     # model dropped 4 of 6 real procedures when it was allowed to decide.
     hint: str = ""
+    # A task-shaped name and one line saying when this applies, written by the
+    # agent in `skillpp draft`. Capture can only reuse a string it observed, so
+    # an unnamed candidate is titled with whatever the developer happened to
+    # type — measured against a frontier reader that produced
+    # `draining-app-replicas-to-clear-a-migration-lock` where this branch had
+    # `the staging migration is stuck, get it green`. A description is the only
+    # thing read when deciding whether to load a skill, so the difference is
+    # between a candidate that can fire and one that cannot.
+    description: str = ""
 
     # -- derived ---------------------------------------------------------
     @property
@@ -94,6 +103,8 @@ class Entry:
             f"id: {self.id}",
             f"title: {self.title}",
             f"status: {self.status}",
+            *([f"description: {self.description}"]
+              if self.description else []),
             f"occurrences: {self.occurrences}",
             f"created: {self.created}",
             f"last_seen: {self.last_seen}",

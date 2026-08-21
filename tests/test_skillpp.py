@@ -1073,7 +1073,9 @@ class TestDraftCommand(TempRoot):
         seen = self._spy()
         cmd_draft(self._args(apply=True))
         argv = seen["argv"]
-        self.assertIn("/skillpp-draft cand1", argv)
+        # One argv element carrying id and destination, both literal.
+        prompt = next(a for a in argv if a.startswith("/skillpp-draft"))
+        self.assertIn("cand1", prompt)
         # `skillpp` is not on PATH; the CLI is invoked as `python3 bin/skillpp`,
         # so a pattern naming the bare binary would allow nothing.
         self.assertIn("Bash(python3 bin/skillpp *),Read,Write,Edit", argv)
@@ -1094,6 +1096,22 @@ class TestDraftCommand(TempRoot):
         self.addCleanup(lambda: os.environ.pop("SKILLPP_AGENT", None))
         cmd_draft(self._args(apply=True))
         self.assertEqual(seen["argv"][:2], ["my-agent", "--go"])
+
+    def test_the_agent_is_told_where_to_write(self):
+        """The prompt once said `<draft-dir>` with nothing substituting it, so a
+        good draft was written to the agent's own scratchpad and reported as no
+        draft at all."""
+        from skillpp.cli import cmd_draft
+        seen = self._spy()
+        cmd_draft(self._args(apply=True))
+        # A literal in the prompt, not an environment variable: a sandboxed
+        # Bash call containing `$VAR` is rejected as "Contains expansion".
+        prompt = next(a for a in seen["argv"] if a.startswith("/skillpp-draft"))
+        self.assertTrue(prompt.endswith("drafts/cand1"))
+        self.assertNotIn("$", prompt)
+        # SKILLPP_ROOT stays in the environment; Python reads it directly.
+        self.assertEqual(seen["kw"]["env"]["SKILLPP_ROOT"],
+                         str(self.config.root))
 
     def test_drafting_never_promotes(self):
         from skillpp.cli import cmd_draft
@@ -1426,3 +1444,75 @@ class TestEmbeddingMatch(TempRoot):
         self.assertEqual(cosine([0.0, 0.0], [0.0, 0.0]), 0.0)
         self.assertEqual(cosine([1.0, 2.0], [1.0]), 0.0)
         self.assertAlmostEqual(cosine([1.0, 0.0], [1.0, 0.0]), 1.0)
+
+
+class TestNaming(TempRoot):
+    """Naming is the half capture cannot do.
+
+    A candidate arrives titled with whatever the developer typed, because code
+    can only reuse a string it observed. Measured against a frontier reader:
+    it produced `draining-app-replicas-to-clear-a-migration-lock` where this
+    branch had `the staging migration is stuck, get it green`.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        import argparse
+        self.argparse = argparse
+        Ledger(self.config).save(Entry(
+            id="cand", signature="s",
+            title="the staging migration is stuck, get it green",
+            steps=[{"tool": "Bash", "input": {"command": "npm run migrate"}},
+                   {"tool": "Bash", "input": {"command": "kubectl scale deploy/api --replicas=0"}}]))
+
+    def _args(self, **kw):
+        base = dict(root=self.config.root, id="cand", title=None, description=None)
+        base.update(kw)
+        return self.argparse.Namespace(**base)
+
+    def _get(self):
+        return Ledger(self.config).get("cand")
+
+    def test_a_title_replaces_the_developers_words(self):
+        from skillpp.cli import cmd_name
+        self.assertEqual(cmd_name(self._args(
+            title="drain replicas to clear a migration lock")), 0)
+        self.assertEqual(self._get().title,
+                         "drain replicas to clear a migration lock")
+
+    def test_a_description_is_recorded_and_round_trips(self):
+        from skillpp.cli import cmd_name
+        cmd_name(self._args(description="Use when a migration is blocked by a "
+                                        "lock held by running replicas."))
+        self.assertIn("blocked by a lock", self._get().description)
+
+    def test_a_description_over_the_frontmatter_limit_is_refused(self):
+        """200 characters is the skill frontmatter limit. A description that
+        will not fit cannot become a skill, so refusing here beats discovering
+        it at promotion."""
+        from skillpp.cli import cmd_name
+        self.assertEqual(cmd_name(self._args(description="x" * 201)), 1)
+        self.assertEqual(self._get().description, "")
+
+    def test_a_title_long_enough_to_be_a_session_summary_is_refused(self):
+        from skillpp.cli import cmd_name
+        self.assertEqual(cmd_name(self._args(title="x" * 81)), 1)
+
+    def test_naming_nothing_is_an_error_not_a_silent_pass(self):
+        from skillpp.cli import cmd_name
+        self.assertEqual(cmd_name(self._args()), 1)
+
+    def test_naming_does_not_promote_or_change_status(self):
+        from skillpp.cli import cmd_name
+        from skillpp.ledger import STATUS_CANDIDATE
+        cmd_name(self._args(title="drain replicas first"))
+        entry = self._get()
+        self.assertEqual(entry.status, STATUS_CANDIDATE)
+        self.assertEqual(entry.skill_path, "")
+
+    def test_the_description_reaches_the_written_file(self):
+        """A human reading the ledger entry should see it without --json."""
+        from skillpp.cli import cmd_name
+        cmd_name(self._args(description="Use when a migration is lock-blocked."))
+        text = Ledger(self.config).path_for("cand").read_text()
+        self.assertIn("description: Use when a migration is lock-blocked.", text)

@@ -265,3 +265,62 @@ complementary rather than competing.
 The 17 of 17 segmentation score followed fixing four defects this corpus found,
 so it measures a detector shaped by the corpus. The 14 of 17 methods figure is
 the less-tuned one, and it is where the tie is.
+
+---
+
+## Closing the naming gap
+
+The one difference measured as *not* a tuning gap: this branch titled a candidate
+with whatever the developer typed, because capture can only reuse a string it
+observed. `skillpp draft` now names it, since a frontier reader is already in the
+loop there and naming is the half code cannot do.
+
+`skillpp name <id> --title … --description …` writes both back to the ledger, and
+the draft prompt does it **before** deciding whether to draft at all — a name is
+worth having even on a candidate the agent then declines. The description is
+capped at 200 characters, the skill frontmatter limit, because one that will not
+fit cannot become a skill and refusing here beats discovering it at promotion.
+
+Measured on exactly the case that motivated it:
+
+| | |
+| --- | --- |
+| Before | `the staging migration is stuck, get it green` |
+| After | `draining-app-replicas-to-clear-a-migration-lock` |
+| Description | *When a staging DB migration hangs or fails because the running app holds a lock on the table being migrated* |
+
+It reached the same name `feat/pattern-detection` produced independently, from
+the same reasoning: the reusable knowledge is the workaround, not the incident.
+
+The draft's `## Open questions` is the part worth reading. It recorded that the
+causal mechanism was never confirmed — only that the migration failed with
+replicas up and succeeded at zero — that `--replicas=3` is an observed value
+rather than a known-correct one, that staging is fully down between two steps,
+and that this was seen once in staging. None of them invented.
+
+## Five defects, all found by running it
+
+Nothing below was reachable from a fixture. Every one appeared the first time
+the command was pointed at a live agent, and each was a seam between this code
+and that one.
+
+| Defect | Cause |
+| --- | --- |
+| Agent allowed nothing | prompt said `skillpp show`, tool scope permitted `python3 bin/skillpp` |
+| A blocked agent read as a decline | inferred "nothing here" from an absent file |
+| Candidate not found | `--root` never reached the agent's own `skillpp` calls |
+| Draft written to the wrong place | prompt said `<draft-dir>` and nothing substituted it |
+| Draft could not be written at all | `$SKILLPP_DRAFT_DIR` in a sandboxed Bash call is rejected as "Contains expansion" |
+
+The last is the one worth generalising: **an environment variable is fine for a
+Python process to read and unusable inside a sandboxed shell command**, because
+an allowed-tools pattern cannot be checked against text that is not yet known.
+`SKILLPP_ROOT` works for that reason and the draft directory does not — it is
+passed as a literal argument in the prompt instead.
+
+Two safeguards earned their place along the way. The decline sentinel meant a
+blocked agent was reported as *"most likely blocked rather than unconvinced"*
+instead of a considered judgement, twice, on failures that had not been
+anticipated. And the agent itself refused to fabricate a draft or to route
+around a sandbox restriction every single time — it was the only party in the
+loop behaving correctly.
