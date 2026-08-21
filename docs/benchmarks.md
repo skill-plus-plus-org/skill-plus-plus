@@ -367,3 +367,67 @@ costs a position in a list, not the candidate.
 **The direction worth trying is the opposite one:** let `draft` correct the hint
 when it disagrees with `sift`, rather than making the cheap stage cleverer. The
 expensive stage is the one with the context to be right.
+
+---
+
+## Can a local model find the boundaries? Two framings, measured
+
+The proposal: the hook already appends "this happened" to a session buffer, so
+let a local model read that log and mark where tasks start, end or are abandoned,
+instead of relying on markers and prompt boundaries.
+
+Worth taking seriously — the architecture it assumes is the one this branch
+already has, and `feat/pattern-detection` measured a closely related question
+(`settled.md`, "did the change work?") at 20/21 and 18/21 on a free 7B.
+
+**Framing decided the result, by a wide margin.**
+
+*Per-step binary* — for each step, "does this begin a new task?" — found **zero
+boundaries across three cases.** Its one correct answer was a case with no
+boundary, which a detector hardwired to "no" also gets. It missed a boundary the
+markers see trivially (`git push` closing an episode).
+
+*Positional* — "which step number begins the second task, or `none`?" — **3 of
+5**, including case C, the one shape code cannot split:
+
+| Case | Truth | Got | |
+| --- | --- | --- | --- |
+| release only | none | none | ✓ |
+| release + CI bump | 3 | 3 | ✓ |
+| **rollout + smoke (case C)** | **2** | **2** | ✓ |
+| migration workaround (one procedure) | none | 2 | ✗ |
+| release then unrelated fix | 5 | none | ✗ |
+
+Same lesson as the first Ollama probe on this project: the shape of the question
+matters more than the model behind it.
+
+### Why it is still not wired in
+
+The natural gate is "ask only where code found no marker", since that is where
+code is blind. Traced through the cases, that gate **fixes case C and breaks the
+migration workaround** — both are markerless, so both get asked, and the model
+splits the workaround at its `migrate → scale → migrate → scale` repetition.
+
++1 and −1. And the wrong half is the more valuable one: the workaround is a real
+procedure that currently banks correctly as a single candidate, and reading
+repetition as a boundary would shatter it.
+
+Patching the prompt against that is the obvious next move and is not being
+attempted, because two attempts at exactly that on `reusable.md` an hour earlier
+went 12/15 → 8/15 → 9/15, with a single scoped paragraph destabilising three
+cases it never mentioned.
+
+### The generalisation worth keeping
+
+Across everything measured on this project, a local model answers questions
+**about a span it is handed** and fails at **finding the span**:
+
+| Question | Local model |
+| --- | --- |
+| Is this session worth reading? | works |
+| Did this change land? | 18–21/21 |
+| Is this junk or a method? | ranks usefully |
+| Are these the same procedure? | 0.972 against 0.451 |
+| Where does one task end? | finds it when told one exists; cannot tell whether one does |
+
+The last row is the whole difficulty. A segmenter needs both halves.
