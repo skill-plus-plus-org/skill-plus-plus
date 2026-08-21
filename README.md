@@ -391,6 +391,7 @@ worth reading. Neither half is useful alone.
 | `skillpp accuracy` | How often the ranker agreed with your own promote/dismiss decisions |
 | `skillpp keep` | Save the work so far as a candidate, without ending the session |
 | `skillpp reconcile` | Report promoted skills whose file is gone; reports only, never decides |
+| `skillpp ignored [--threshold N]` | List parked candidates and how often that work happened anyway |
 | `skillpp draft <id> [--apply]` | Have your own agent write a draft `SKILL.md`; never installs it. Dry run without `--apply` |
 | `skillpp show <id>` | Effect summary, evidence, open questions |
 | `skillpp search <words>` | Search the ledger of your own past work |

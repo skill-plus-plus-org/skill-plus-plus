@@ -388,6 +388,41 @@ def cmd_keep(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ignored(args: argparse.Namespace) -> int:
+    """List what has been parked, and what has happened since.
+
+    Parked entries stay matched by recurrence — otherwise the next occurrence
+    rebuilds the same id and quietly undoes the decision. So their counts keep
+    moving, and a count that keeps moving is the one honest signal that a
+    parking may have been wrong.
+
+    Nothing is re-proposed here. A decision is not overturned by a counter; this
+    only reports that the evidence changed.
+    """
+    from .ledger import STATUS_DISMISSED, STATUS_ONE_OFF
+
+    config = Config(args.root)
+    parked = [e for e in Ledger(config).all()
+              if e.status in (STATUS_DISMISSED, STATUS_ONE_OFF)]
+    if not parked:
+        print("Nothing parked.")
+        return 0
+    threshold = args.threshold or config.recurrence_threshold
+    parked.sort(key=lambda e: -e.recurrences_since_parked())
+    print(f"parked      {len(parked)}")
+    for entry in parked:
+        again = entry.recurrences_since_parked()
+        flag = "  ← done again since" if entry.parking_looks_wrong(threshold) else ""
+        print(f"  {entry.status:9} {entry.id}  x{entry.occurrences}"
+              f"  (+{again} since){flag}")
+        print(f"            {entry.title[:56]}")
+    wrong = [e for e in parked if e.parking_looks_wrong(threshold)]
+    if wrong:
+        print(f"\n{len(wrong)} parked {threshold}+ times since. Not a "
+              f"re-proposal — put one back with: skillpp reopen <id>")
+    return 0
+
+
 def cmd_reconcile(args: argparse.Namespace) -> int:
     """Report promoted skills whose file is gone. Reports only."""
     from .lifecycle import reconcile
@@ -526,6 +561,7 @@ def cmd_sift(args: argparse.Namespace) -> int:
     for entry in parkable:
         decisions.record(config, entry, decisions.PARKED, "sift --park")
         entry.status = STATUS_ONE_OFF
+        entry.parked_at_occurrences = entry.occurrences
         ledger.save(entry)
     print(f"\nparked {len(parkable)} on a local model's opinion. Measured at "
           f"roughly 1 in 3 real procedures lost — read them and reopen with: "
@@ -685,6 +721,7 @@ def cmd_dismiss(args: argparse.Namespace) -> int:
         return 1
     decisions.record(config, entry, decisions.DISMISSED, args.note or "")
     entry.status = STATUS_DISMISSED
+    entry.parked_at_occurrences = entry.occurrences
     if args.note:
         entry.notes = args.note
     ledger.save(entry)
@@ -925,6 +962,12 @@ def build_parser() -> argparse.ArgumentParser:
                             "ending the session")
     p.add_argument("--session-id", help="which session; defaults to the newest")
     p.set_defaults(func=cmd_keep)
+
+    p = sub.add_parser("ignored",
+                       help="list parked candidates and what has recurred since")
+    p.add_argument("--threshold", type=int,
+                   help="recurrences since parking before it is flagged")
+    p.set_defaults(func=cmd_ignored)
 
     p = sub.add_parser("reconcile",
                        help="report promoted skills whose file is gone")

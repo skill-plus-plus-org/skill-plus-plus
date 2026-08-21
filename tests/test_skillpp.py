@@ -1814,3 +1814,78 @@ class TestReconcile(TempRoot):
         self._promoted("a", "")
         result = reconcile(Ledger(self.config), self.config)
         self.assertEqual(result["missing"][0]["skill_path"], "(never recorded)")
+
+
+class TestParkingSticks(TempRoot):
+    """A decision must survive the work happening again.
+
+    Ids derive from the signature, so an entry that recurrence refuses to match
+    is rebuilt with the same id on the next occurrence and overwritten — the
+    decision silently undone. Measured before the fix: dismiss, do the work
+    again, and it was a candidate once more.
+    """
+
+    CMDS = ["npm test", "git tag -s v2.4.0 -m rel", "git push --follow-tags"]
+
+    def _session(self, sid):
+        from skillpp.capture import (handle_prompt, handle_session_end,
+                                     handle_tool)
+        handle_prompt(self.config, {"session_id": sid, "cwd": "/r",
+                                    "prompt": "cut the release"})
+        for c in self.CMDS:
+            handle_tool(self.config, {"session_id": sid, "cwd": "/r",
+                                      "tool_name": "Bash",
+                                      "tool_input": {"command": c}})
+        handle_session_end(self.config, {"session_id": sid})
+
+    def _park(self, status="dismissed"):
+        led = Ledger(self.config)
+        entry = next(led.all())
+        entry.status = status
+        entry.parked_at_occurrences = entry.occurrences
+        led.save(entry)
+        return entry.id
+
+    def test_a_dismissal_survives_the_work_happening_again(self):
+        self._session("s1")
+        eid = self._park()
+        self._session("s2")
+        self.assertEqual(Ledger(self.config).get(eid).status, "dismissed")
+
+    def test_a_parked_entry_is_matched_not_rebuilt(self):
+        """One entry, not two — the same signature must not make a second."""
+        self._session("s1")
+        self._park()
+        self._session("s2")
+        self.assertEqual(len(list(Ledger(self.config).all())), 1)
+
+    def test_recurrences_after_parking_are_counted(self):
+        self._session("s1")
+        eid = self._park()
+        self._session("s2")
+        self._session("s3")
+        entry = Ledger(self.config).get(eid)
+        self.assertEqual(entry.recurrences_since_parked(), 2)
+        self.assertTrue(entry.parking_looks_wrong(2))
+
+    def test_a_parked_entry_never_becomes_ready(self):
+        """The count moves; the entry stays out of review. `ready` gates on
+        status, which is what makes matching it safe."""
+        self._session("s1")
+        eid = self._park()
+        for sid in ("s2", "s3", "s4", "s5"):
+            self._session(sid)
+        entry = Ledger(self.config).get(eid)
+        self.assertGreaterEqual(entry.occurrences, 4)
+        self.assertFalse(entry.ready(3))
+
+    def test_an_unparked_entry_reports_no_deviation(self):
+        self._session("s1")
+        self.assertEqual(next(Ledger(self.config).all())
+                         .recurrences_since_parked(), 0)
+
+    def test_a_sift_parking_sticks_the_same_way(self):
+        self._session("s1")
+        eid = self._park(status="one-off")
+        self._session("s2")
+        self.assertEqual(Ledger(self.config).get(eid).status, "one-off")

@@ -86,11 +86,30 @@ class Entry:
     # thing read when deciding whether to load a skill, so the difference is
     # between a candidate that can fire and one that cannot.
     description: str = ""
+    # What `occurrences` stood at when a person parked this. Recurrences past
+    # that point are the only evidence that the parking was wrong, and without
+    # the mark there is nothing to measure from.
+    parked_at_occurrences: int = 0
 
     # -- derived ---------------------------------------------------------
     @property
     def age_days(self) -> float:
         return (datetime.now(timezone.utc) - _parse_ts(self.created)).total_seconds() / 86400
+
+    def recurrences_since_parked(self) -> int:
+        """How often this work happened again after someone said no."""
+        if not self.parked_at_occurrences:
+            return 0
+        return max(0, self.occurrences - self.parked_at_occurrences)
+
+    def parking_looks_wrong(self, threshold: int) -> bool:
+        """Said no, then did it this many times anyway.
+
+        Never re-proposes anything — a decision is not overturned by a counter.
+        It only says the evidence has changed since, which is a different claim
+        and the developer's to act on.
+        """
+        return self.recurrences_since_parked() >= threshold
 
     def ready(self, threshold: int) -> bool:
         if self.status != STATUS_CANDIDATE:

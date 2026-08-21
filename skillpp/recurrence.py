@@ -41,8 +41,15 @@ def find_match(signature: str, entries: list[Entry], threshold: float) -> Entry 
     """Best entry above *threshold*, or None."""
     best: tuple[float, Entry] | None = None
     for entry in entries:
-        if entry.status == "dismissed":
-            continue
+        # Parked entries are matched on purpose, and this is load-bearing.
+        # Ids derive from the signature, so skipping a dismissed entry means the
+        # next occurrence of the same work builds an entry with the same id and
+        # overwrites it — the dismissal silently undone. Measured: dismiss, do
+        # the work again, and it is a candidate once more.
+        #
+        # Matching instead bumps the parked entry's count, `ready()` keeps it out
+        # of review because it gates on status, and the count becomes the signal
+        # that a dismissal may have been wrong.
         score = similarity(signature, entry.signature)
         if score >= threshold and (best is None or score > best[0]):
             best = (score, entry)
