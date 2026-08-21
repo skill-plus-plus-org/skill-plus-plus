@@ -162,15 +162,18 @@ def cmd_reopen(args: argparse.Namespace) -> int:
 
 
 def cmd_sift(args: argparse.Namespace) -> int:
-    """Ask a local model which banked episodes are methods rather than one jobs.
+    """Rank the review queue: what looks repeatable first, doubtful last.
 
-    Dry run unless ``--apply``. The filter is the only step that can discard, so
-    it shows its verdicts before acting on them and parks rather than deletes.
+    This annotates; it does not gate. A local model was measured dropping 4 of 6
+    real procedures when it was allowed to decide, and a wrongly dropped episode
+    is never looked at again — so its answer became a sort key instead of a
+    verdict. `--park` still exists for anyone who wants the old behaviour, and
+    says plainly what it costs.
 
-    Not wired into the SessionEnd hook on purpose: a hook that waits on a model
-    adds that wait to every session and fails when the model is not there.
+    The rules that do hold need no model: an episode performed more than once is
+    never called one-off, whatever the model thinks of its steps.
     """
-    from .episode import is_reusable
+    from .episode import RECURRENCE_FLOOR, rank, rank_key
     from .ledger import STATUS_CANDIDATE, STATUS_ONE_OFF
 
     config = Config(args.root)
@@ -180,50 +183,54 @@ def cmd_sift(args: argparse.Namespace) -> int:
     if args.id:
         entries = [e for e in entries if e.id in set(args.id)]
     if not entries:
-        print("No candidates to sift.")
+        print("No candidates to rank.")
         return 0
 
-    kept, dropped, unsure = [], [], []
+    judged = []
     for entry in entries:
-        verdict, why = is_reusable(entry, model=model, host=config.ollama_url)
-        label = f"{entry.id}  {entry.title[:56]}"
-        if verdict is None:
-            unsure.append((label, why))
-        elif verdict:
-            kept.append((label, why))
-        else:
-            dropped.append((entry, label, why))
+        hint, why = rank(entry, model=model, host=config.ollama_url)
+        entry.hint = hint
+        ledger.save(entry)
+        judged.append((entry, why))
 
-    if kept:
-        print(f"method         {len(kept)}")
-        for label, _why in kept:
-            print(f"                 {label}")
-    if dropped:
-        print(f"one particular job {len(dropped)}")
-        for _entry, label, _why in dropped:
-            print(f"                 {label}")
-    if unsure:
-        # Counted separately and never dropped. Folding these into "method"
-        # would hide a dead model behind a plausible-looking result.
-        print(f"no opinion     {len(unsure)}   (kept)")
-        for label, why in unsure:
-            print(f"                 {label}  — {why}")
+    judged.sort(key=lambda pair: rank_key(pair[0]))
+    label = {"method": "repeatable", "one-off": "probably one-off",
+             "": "no opinion"}
+    for entry, why in judged:
+        print(f"{label[entry.hint]:17} {entry.id}  x{entry.occurrences}  "
+              f"{entry.title[:48]}")
+        print(f"                  {why}")
 
-    if not args.apply:
-        if dropped:
-            print(f"\nDry run. Re-run with --apply to park {len(dropped)}.")
+    counts = {k: sum(1 for e, _ in judged if e.hint == k) for k in label}
+    print(f"\n{counts['method']} repeatable · {counts['one-off']} probably "
+          f"one-off · {counts['']} no opinion")
+    print("Ranking only — nothing was removed. `skillpp review` now lists "
+          "these in this order.")
+
+    if not args.park:
         return 0
-    for entry, label, _why in dropped:
+
+    # Opt-in and lossy, so say so rather than reporting a tidy number.
+    parkable = [e for e, _ in judged
+                if e.hint == "one-off" and e.occurrences < RECURRENCE_FLOOR]
+    if not parkable:
+        print("\nNothing to park.")
+        return 0
+    for entry in parkable:
         entry.status = STATUS_ONE_OFF
         ledger.save(entry)
-    print(f"\nparked {len(dropped)}; reopen one with: skillpp reopen <id>")
+    print(f"\nparked {len(parkable)} on a local model's opinion. Measured at "
+          f"roughly 1 in 3 real procedures lost — read them and reopen with: "
+          f"skillpp reopen <id>")
     return 0
 
 
 def cmd_review(args: argparse.Namespace) -> int:
     config = Config(args.root)
     ledger = Ledger(config)
-    entries = ledger.candidates(ready_only=not args.all)
+    from .episode import rank_key
+    entries = sorted(ledger.candidates(ready_only=not args.all),
+                     key=rank_key)
     if args.json:
         print(json.dumps([{
             "id": e.id, "title": e.title, "occurrences": e.occurrences,
@@ -579,11 +586,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_reopen)
 
     p = sub.add_parser("sift",
-                       help="ask a local model which candidates are methods "
-                            "rather than one-off jobs (needs Ollama)")
+                       help="rank the review queue by how repeatable each "
+                            "candidate looks (needs Ollama)")
     p.add_argument("id", nargs="*", help="only these candidates")
-    p.add_argument("--apply", action="store_true",
-                   help="park the one-off ones instead of only reporting")
+    p.add_argument("--park", action="store_true",
+                   help="also set the one-off ones aside. Lossy: a local model "
+                        "dropped about a third of real procedures in testing")
     p.add_argument("--model", help="local model to ask; defaults to "
                                    "SKILLPP_LOCAL_MODEL")
     p.set_defaults(func=cmd_sift)

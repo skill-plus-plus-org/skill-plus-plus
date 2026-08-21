@@ -903,8 +903,8 @@ class TestEpisodeFilter(TempRoot):
         self.assertEqual([e.status for e in ledger.all()], [STATUS_ONE_OFF])
 
 
-class TestSiftCommand(TempRoot):
-    """Dry run by default, and reversible when applied."""
+class TestSiftRanking(TempRoot):
+    """Ranking, not gating — and the rules that outrank the model."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -914,51 +914,89 @@ class TestSiftCommand(TempRoot):
         ep.ask, self._real = (lambda *a, **k: "no"), ep.ask
         self.addCleanup(lambda: setattr(ep, "ask", self._real))
         self.ledger = Ledger(self.config)
-        self.ledger.save(Entry(
-            id="one", signature="s1", title="find out why the export 500s",
-            intents=["find out why the export 500s"],
-            steps=[{"tool": "Bash", "input": {"command": "grep -rn export src/"}},
-                   {"tool": "Bash", "input": {"command": "git commit -am fix"}}]))
+
+    def _save(self, **kw):
+        base = dict(id="one", signature="s1",
+                    title="find out why the export 500s",
+                    intents=["find out why the export 500s"],
+                    steps=[{"tool": "Bash", "input": {"command": "grep -rn x ."}},
+                           {"tool": "Bash", "input": {"command": "git commit -am f"}}])
+        base.update(kw)
+        entry = Entry(**base)
+        self.ledger.save(entry)
+        return entry
 
     def _args(self, **kw):
-        base = dict(root=self.config.root, id=[], apply=False, model=None)
+        base = dict(root=self.config.root, id=[], park=False, model=None)
         base.update(kw)
         return self.argparse.Namespace(**base)
 
-    def _status(self) -> str:
-        return next(e.status for e in Ledger(self.config).all() if e.id == "one")
+    def _get(self, eid="one"):
+        return next(e for e in Ledger(self.config).all() if e.id == eid)
 
-    def test_a_dry_run_changes_nothing(self):
+    def test_ranking_annotates_without_gating(self):
         from skillpp.cli import cmd_sift
         from skillpp.ledger import STATUS_CANDIDATE
+        self._save()
         cmd_sift(self._args())
-        self.assertEqual(self._status(), STATUS_CANDIDATE)
+        entry = self._get()
+        self.assertEqual(entry.hint, "one-off")
+        self.assertEqual(entry.status, STATUS_CANDIDATE)
 
-    def test_apply_parks_the_entry(self):
+    def test_recurrence_outranks_the_model(self):
+        """Twice is behavioural evidence; the model said no and does not win."""
+        from skillpp.cli import cmd_sift
+        self._save(occurrences=2)
+        cmd_sift(self._args())
+        self.assertEqual(self._get().hint, "method")
+
+    def test_a_recurring_entry_is_never_parked(self):
+        from skillpp.cli import cmd_sift
+        from skillpp.ledger import STATUS_CANDIDATE
+        self._save(occurrences=3)
+        cmd_sift(self._args(park=True))
+        self.assertEqual(self._get().status, STATUS_CANDIDATE)
+
+    def test_parking_is_opt_in(self):
         from skillpp.cli import cmd_sift
         from skillpp.ledger import STATUS_ONE_OFF
-        cmd_sift(self._args(apply=True))
-        self.assertEqual(self._status(), STATUS_ONE_OFF)
+        self._save()
+        cmd_sift(self._args(park=True))
+        self.assertEqual(self._get().status, STATUS_ONE_OFF)
 
-    def test_reopen_puts_it_back(self):
-        from skillpp.cli import cmd_reopen, cmd_sift
-        from skillpp.ledger import STATUS_CANDIDATE
-        cmd_sift(self._args(apply=True))
-        cmd_reopen(self.argparse.Namespace(root=self.config.root, id="one"))
-        self.assertEqual(self._status(), STATUS_CANDIDATE)
-
-    def test_an_unreachable_model_parks_nothing(self):
-        """A dead daemon must not read as "none of this is a procedure"."""
+    def test_an_unreachable_model_leaves_no_hint(self):
         import skillpp.episode as ep
         from skillpp.cli import cmd_sift
-        from skillpp.ledger import STATUS_CANDIDATE
         from skillpp.local import LocalModelUnavailable
 
         def boom(*a, **k):
-            raise LocalModelUnavailable("connection refused")
+            raise LocalModelUnavailable("refused")
         ep.ask = boom
-        cmd_sift(self._args(apply=True))
-        self.assertEqual(self._status(), STATUS_CANDIDATE)
+        self._save()
+        cmd_sift(self._args(park=True))
+        entry = self._get()
+        self.assertEqual(entry.hint, "")
+        self.assertEqual(entry.status, "candidate")
+
+    def test_review_lists_repeatable_first(self):
+        from skillpp.episode import rank_key
+        entries = [Entry(id="c", signature="s", hint="one-off"),
+                   Entry(id="a", signature="s", hint="method"),
+                   Entry(id="b", signature="s", hint="")]
+        self.assertEqual([e.id for e in sorted(entries, key=rank_key)],
+                         ["a", "b", "c"])
+
+    def test_a_hint_survives_a_round_trip(self):
+        self._save(hint="method")
+        self.assertEqual(self._get().hint, "method")
+
+    def test_reopen_still_undoes_a_parking(self):
+        from skillpp.cli import cmd_reopen, cmd_sift
+        from skillpp.ledger import STATUS_CANDIDATE
+        self._save()
+        cmd_sift(self._args(park=True))
+        cmd_reopen(self.argparse.Namespace(root=self.config.root, id="one"))
+        self.assertEqual(self._get().status, STATUS_CANDIDATE)
 
 
 class TestDraftCommand(TempRoot):

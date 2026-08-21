@@ -473,3 +473,63 @@ segmentation are unaffected.
 | recurrence ignored | `match(b)`, `new` | a count check, no model needed |
 | episodes over-merged into 60-step blobs | `big` | segmentation, not the filter |
 | genuine boundary judgement | `retry` | unresolved; may not be resolvable |
+
+---
+
+## Ranking instead of parking
+
+The measured verdict on letting a local model decide: **it is a good junk
+detector and a poor procedure detector.** It dropped 11 of 11 clear junk entries
+correctly and 4 of 6 real procedures along with them. Since a false keep costs a
+line in a list and a false drop is never seen again, its error was entirely in
+the expensive direction, and rephrasing did not help — it was confidently wrong,
+not uncertain, so the fail-safe never fired.
+
+So `sift` no longer decides. It **ranks**: writes a `hint` of `method`,
+`one-off` or empty onto each candidate, and `skillpp review` lists repeatable
+first and doubtful last. Nothing leaves the queue. `--park` still exists, is
+opt-in, and prints what it costs.
+
+**False drops are now structurally impossible in the default path**, which is a
+better guarantee than any accuracy number.
+
+### The rule that outranks the model
+
+    if entry.occurrences >= 2:  ->  "method", without asking
+
+An episode the developer has actually performed twice is behavioural evidence,
+and it beats a model reading the steps. This was not theoretical: `match(b)`
+banked the bug-filing procedure at ×2 — recurrence firing, which the capture
+branch never achieved — and the model discarded it anyway. `big`'s ×7 entry went
+the same way. Both now rank as methods without a model call, which is also
+cheaper.
+
+### All three sets, after the trim and the guard
+
+**Set 1 — six scenarios.** Segmentation **4 of 6 → 5 of 6**: the trim fixed
+`explore-then-fix`, which now banks 2 steps rather than 10. Five of six hints
+are right; `retry` is ranked `one-off` and should not be. Nothing lost.
+
+**Set 2 — seven fixtures.** Was 4 of 6 real procedures dropped. Now **none are
+dropped** and 4 of 6 are ranked `method` — `match(b)` (×2) and `big` (×7) via
+the guard, `secrets` via the trim, one of `two` via the model. The two ranked
+`one-off` in error are still in the queue, just lower. `barren`'s `merge main
+in` is ranked `method` in error, which is the trim's cost: a tidy two-step
+episode reads like a method precisely because the noise is gone.
+
+**Set 3 — real ledger.** All 14 stay, all ranked `one-off`, which matches the
+hand labelling of 11 clear correct plus 1 likely wrong and 2 borderline — and
+the one likely-wrong entry is now merely ranked low rather than parked. Against
+the four human labels: **3 of 4**, both promoted skills ranked `method`. The
+miss is the dismissed entry ranked `method`, still the cheap direction.
+
+### What is left
+
+`retry` and `barren` are both genuine boundary judgements — *this instance*
+versus *this kind of task* — and neither the trim nor the guard touches them.
+They are now ordering errors rather than losses, which is the right place for an
+unresolved judgement to live.
+
+`big` remains a segmentation problem: two over-merged 60-step blobs. The ×7 one
+ranks as a method on recurrence, so it now reaches review, but it reaches it as
+a 61-step blob.

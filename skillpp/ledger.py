@@ -67,6 +67,10 @@ class Entry:
     skill_path: str = ""
     notes: str = ""
     source: str = "capture"  # "capture" | "dictated"
+    # What `sift` thought, if it has run: "method" | "one-off" | "".
+    # An annotation used to order the review queue, never a gate — a local
+    # model dropped 4 of 6 real procedures when it was allowed to decide.
+    hint: str = ""
 
     # -- derived ---------------------------------------------------------
     @property

@@ -82,3 +82,38 @@ def is_reusable(entry, *, model: str = DEFAULT_MODEL, host: str = DEFAULT_HOST
         return None, "no clear answer; keeping"
     return verdict, ("a method worth repeating" if verdict
                      else "one particular job, not a method")
+
+
+# Twice is not an opinion. An episode the developer has actually performed more
+# than once is behavioural evidence that it is a method, and it outranks
+# anything a model reads off the steps — measured: `match(b)` banked the
+# bug-filing procedure at x2 and the model discarded it anyway.
+RECURRENCE_FLOOR = 2
+
+
+def rank(entry, *, model: str = DEFAULT_MODEL, host: str = DEFAULT_HOST
+         ) -> tuple[str, str]:
+    """Order an entry for review: ``"method"``, ``"one-off"`` or ``""``.
+
+    Cheap rules first, and they are not tie-breakers — they are the parts that
+    hold. The model is asked only where no rule applies, and its answer is a
+    hint for sorting rather than a verdict, because it is a good junk detector
+    and a poor procedure detector: 11 of 11 junk entries dropped correctly, and
+    4 of 6 real procedures dropped with them.
+    """
+    if entry.occurrences >= RECURRENCE_FLOOR:
+        return "method", (f"done {entry.occurrences}x — recurrence, "
+                          f"not an opinion")
+    verdict, why = is_reusable(entry, model=model, host=host)
+    if verdict is None:
+        return "", why
+    return ("method" if verdict else "one-off"), why
+
+
+# Review order: what looks repeatable first, what a model doubted last, and
+# anything unjudged in between rather than buried.
+_ORDER = {"method": 0, "": 1, "one-off": 2}
+
+
+def rank_key(entry) -> tuple[int, int]:
+    return (_ORDER.get(entry.hint, 1), -entry.occurrences)
