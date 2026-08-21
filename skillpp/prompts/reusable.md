@@ -14,8 +14,16 @@ fixing it is `no`, however many steps it took.
 
 Answer `yes` only if the steps are a **method**: an ordered way of handling a
 *kind* of task, which someone would follow again next month with different
-details. Filing a defect, cutting a release, rolling out a service, rotating a
-credential, onboarding a repository — the shape stays and the specifics change.
+details. The shape stays and the specifics change:
+
+- cutting a release · rotating a credential · onboarding a repository
+- writing the weekly status update · doing the monthly expenses
+- triaging an inbox · preparing for a recurring meeting · filing a defect
+
+**The domain does not matter and neither does the tooling.** Assembling a report
+from a calendar, a drive and a chat tool is a method exactly as much as tagging
+a release is. A procedure that never touches a terminal is still a procedure —
+do not require shell commands, a repository, or anything technical.
 
 **Finishing is not evidence either way.** A one-off fix ends in a commit just
 like a procedure does, so a successful ending tells you nothing here. Judge only

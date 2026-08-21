@@ -1253,3 +1253,43 @@ class TestCaptureDoesNotObserveItself(TempRoot):
         session = json.loads(
             (self.config.sessions_dir / "e.json").read_text())
         self.assertEqual(session["prompts"], ["the real request"])
+
+
+class TestBenchmarkSegmentation(unittest.TestCase):
+    """The free half of the benchmark, run as a test.
+
+    Segmentation costs nothing and is deterministic, so there is no reason for
+    it to live only in a benchmark anyone has to remember to run. Ranking stays
+    out of the suite because it needs a local model.
+
+    A wrong episode count is the one error nothing downstream recovers: merged
+    episodes hide procedures inside each other, split ones destroy the
+    recurrence count, and an episode that should not exist becomes a candidate
+    titled after whatever question started it.
+    """
+
+    def test_every_case_segments_as_expected(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
+        from benchmarks.run import score
+        from benchmarks.cases import CASES
+
+        result = score(CASES, use_model=False)
+        wrong = [f"{r['name']}: expected {r['expected_episodes']}, "
+                 f"got {r['got_episodes']}"
+                 for r in result["rows"] if not r["segmentation"]]
+        self.assertEqual(wrong, [], "\n" + "\n".join(wrong))
+
+    def test_the_corpus_covers_both_kinds(self):
+        """A programming-only corpus would miss everything MCP-shaped."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
+        from benchmarks.cases import by_kind
+        self.assertGreaterEqual(len(by_kind("programming")), 6)
+        self.assertGreaterEqual(len(by_kind("productivity")), 5)
+
+    def test_the_corpus_has_negative_cases(self):
+        """Without sessions that should bank nothing, a detector that banks
+        everything scores perfectly."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
+        from benchmarks.cases import CASES
+        self.assertGreaterEqual(sum(1 for c in CASES if c.episodes == 0), 2)
+        self.assertGreaterEqual(sum(1 for c in CASES if c.methods == 0), 3)

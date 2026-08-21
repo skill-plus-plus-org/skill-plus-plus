@@ -111,13 +111,28 @@ def is_prompt(step: dict) -> bool:
     return step.get("tool") == PROMPT_TOOL
 
 
+# MCP verbs that only retrieve. A tool call cannot be judged from its name in
+# general, which is why this is a prefix list and not a rule: `search_messages`
+# and `get_event` look, `send_message` and `append_rows` do not. Anything not
+# recognised counts as work, so the failure direction is keeping an episode
+# rather than discarding one.
+_MCP_READ_VERBS = ("search", "list", "get", "read", "fetch", "find", "query",
+                   "describe", "lookup")
+
+
 def is_read_only(step: dict) -> bool:
     """Does *step* only look at things?
 
-    Bash only. A tool call that edits or writes is work by definition, and an
-    MCP call cannot be judged from its name.
+    Bash commands are matched against an anchored vocabulary. MCP calls are
+    matched on the verb in their name, which is a heuristic and is allowed to
+    be: an unrecognised call is treated as work, so a wrong guess keeps an
+    episode rather than throwing one away.
     """
-    if step.get("tool") != "Bash":
+    tool = str(step.get("tool") or "")
+    if tool.startswith("mcp__"):
+        leaf = tool.split("__")[-1].lower()
+        return leaf.startswith(_MCP_READ_VERBS)
+    if tool != "Bash":
         return False
     command = str((step.get("input") or {}).get("command", ""))
     return bool(_READ_ONLY_RE.match(command.strip()))
@@ -228,5 +243,15 @@ def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
         for episode in episodes:
             episode.flagged = (episode.ended_by == "session-end"
                                and not episode.has_marker)
+
+    # An episode whose every substantive step only looked at things contains no
+    # method, however it ended and however long it ran. Without this, a whole
+    # session of reading around banks one candidate titled after the question
+    # that started it — the single-episode case the flagging rule above
+    # deliberately exempts, which is why it needs saying separately.
+    for episode in episodes:
+        work = [s for s in episode.steps if not is_prompt(s)]
+        if work and all(is_read_only(s) for s in work):
+            episode.flagged = True
 
     return episodes
