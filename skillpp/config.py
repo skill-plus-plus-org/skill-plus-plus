@@ -70,6 +70,28 @@ class Config:
             '--allowed-tools "Bash(python3 bin/skillpp *),Read,Write,Edit"')
         self.ollama_url = _str_env("SKILLPP_OLLAMA", "http://127.0.0.1:11434")
         self.local_model = _str_env("SKILLPP_LOCAL_MODEL", "gemma3n:e4b")
+        # Near-miss recurrence. Lexical similarity is robust to arguments,
+        # ordering, extra steps and leading noise — measured at 1.000,
+        # 0.880, 1.000 and (after trimming) 1.000. It fails on one shape:
+        # the same procedure with a step served by a different tool.
+        # `npm test` against `pytest -q` in an otherwise identical
+        # release scores 0.786, just under the 0.85 threshold, which is
+        # the worst place for it to land. An embedding separates that
+        # pair at 0.912 against 0.451 for an unrelated procedure.
+        self.embed_model = _str_env("SKILLPP_EMBED_MODEL", "nomic-embed-text")
+        self.near_miss_floor = _float_env("SKILLPP_NEAR_MISS_FLOOR", 0.70)
+        self.embed_floor = _float_env("SKILLPP_EMBED_FLOOR", 0.80)
+        # Above this, an episode with no completion marker is a slog
+        # rather than a procedure. Not a cap on procedures: a finished
+        # 50-step migration that ends in a marker is one recipe and is
+        # kept however long it ran. This only catches the other shape —
+        # a long stretch that ended because the next request arrived,
+        # which is what a 433 KB session produces nine of. Sized from
+        # the windowing measurements on real sessions: prompt-to-prompt
+        # segments run a median of 290 tokens and p90 of 1,458, so a
+        # procedure is a small number of steps, not sixty.
+        self.max_markerless_steps = _int_env(
+            "SKILLPP_MAX_MARKERLESS_STEPS", 25)
         self.min_episode_steps = _int_env("SKILLPP_MIN_EPISODE_STEPS", 2)
 
     @property

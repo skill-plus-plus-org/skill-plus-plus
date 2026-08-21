@@ -141,3 +141,69 @@ that only looked around is. The old assertion was load-bearing for the two
 Extending the read-only vocabulary along the way — `kubectl top`, `explain`,
 `version`, `docker inspect` — was found by that same test failing for the right
 reason.
+
+---
+
+## Ported from `feat/pattern-detection`
+
+Two things were worth taking, and one of them turned out not to be what it
+looked like.
+
+### Windowing: the principle, not the module
+
+`window.py` splits a *transcript* into pieces small enough for a local model to
+read. Its unit is a developer request — which is already this branch's episode
+boundary — so porting it would have added nothing to segmentation. It also sits
+unwired on that branch, built to feed a local writer that was measured out of
+reach.
+
+What did transfer is its measurement: prompt-to-prompt segments run a median of
+290 tokens and p90 of 1,458, so **a procedure is a small number of steps.**
+
+That diagnosed `big` properly. Segmentation was producing **nine episodes of
+~61 steps**, split only at prompts because no completion marker fired in 500
+steps; lexical matching then merged eight of them into one candidate at ×8. Not
+one defect but two.
+
+`max_markerless_steps` (25) flags a long stretch that has nothing to show for
+itself. Conditioned on the absence of a marker on purpose — *length is not the
+failure, never finishing is*, and a fifty-step migration ending in a commit is
+one recipe. `big` now banks **1 candidate instead of a 61-step blob at ×8**.
+
+### Embeddings: a tie-breaker for one band
+
+Lexical similarity is robust to everything realistic. Measured against a release
+procedure repeated with variation:
+
+| Variation | Lexical |
+| --- | --- |
+| Same procedure, later version | 1.000 |
+| One edit added mid-procedure | 0.897 |
+| One step reordered | 0.880 |
+| Two exploration steps prepended | 1.000 *(after the trim)* |
+| **One step served by a different tool** | **0.786 — misses** |
+| Wrapped in a script the second time | 0.207 *(arguably correct to miss)* |
+
+One shape fails: `npm test` against `pytest -q` in an otherwise identical
+release. They share not one token and land at 0.786 against a 0.85 threshold —
+the worst place for a signal to sit.
+
+`nomic-embed-text` separates that pair at **0.912**, against **0.451** for a
+genuinely different procedure. End to end, two sessions doing that release two
+ways: lexical 0.747, embedding 0.972, merged to one entry at ×2 — which is what
+puts it on the path to a threshold at all.
+
+**It is a tie-breaker, not a replacement.** Only pairs already in the near-miss
+band (0.70–0.85) cost a call, so almost every comparison stays free. And it runs
+from `skillpp merge`, not from a hook: matching happens during `SessionEnd`, and
+a hook that waits on a model adds that wait to every session.
+
+Folding is not symmetrical — the second entry's evidence moves into the first
+and the second is deleted — so an unreachable model merges nothing, and a dry
+run is the default.
+
+One bug worth recording: the first `fold_into` set
+`occurrences = occurrences + 1`, which is the same double-count this project
+corrected once before. Occurrences are the size of the **session union**, never
+a sum, because two sightings inside one session are one occurrence. A test now
+pins both directions.

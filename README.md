@@ -385,6 +385,7 @@ worth reading. Neither half is useful alone.
 | `skillpp review [--all]` | Candidates at or above the recurrence threshold |
 | `skillpp sift [--apply]` | Ask a local model which candidates are methods rather than one-off jobs; parks the rest. Dry run without `--apply`. See [docs/episode-filter.md](docs/episode-filter.md) |
 | `skillpp reopen <id>` | Undo a sift verdict |
+| `skillpp merge [--apply]` | Merge candidates that are the same procedure worded differently, by embedding. Dry run without `--apply` |
 | `skillpp draft <id> [--apply]` | Have your own agent write a draft `SKILL.md`; never installs it. Dry run without `--apply` |
 | `skillpp show <id>` | Effect summary, evidence, open questions |
 | `skillpp search <words>` | Search the ledger of your own past work |

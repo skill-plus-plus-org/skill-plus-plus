@@ -181,7 +181,8 @@ def trim_leading_exploration(steps: list[dict],
     return remaining, cut
 
 
-def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
+def segment(steps: list[dict], min_steps: int = 2,
+            max_markerless: int = 0) -> list[Episode]:
     """Cut *steps* into episodes.
 
     *min_steps* counts steps that are not prompt sentinels — a boundary that
@@ -255,6 +256,21 @@ def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
                 and not episode.has_marker
                 and all(is_read_only(s) for s in episode.steps
                         if not is_prompt(s)))
+
+    # A long stretch with nothing to show for itself. `max_markerless` is off
+    # by default so callers opt in; `fold_session` passes the configured value.
+    #
+    # Deliberately conditioned on the absence of a marker. "Length is not the
+    # failure; never finishing is" — a fifty-step migration ending in a commit
+    # is one recipe. What this catches is the other shape: sixty steps that
+    # ended only because the developer typed the next thing, which is what a
+    # 433 KB session produced nine of, every one of them titled after whatever
+    # was said at the top.
+    if max_markerless:
+        for episode in episodes:
+            work = [s for s in episode.steps if not is_prompt(s)]
+            if len(work) > max_markerless and not episode.has_marker:
+                episode.flagged = True
 
     # An episode whose every substantive step only looked at things contains no
     # method, however it ended and however long it ran. Without this, a whole

@@ -172,6 +172,62 @@ def cmd_draft(args: argparse.Namespace) -> int:
     return proc.returncode
 
 
+def cmd_merge(args: argparse.Namespace) -> int:
+    """Merge candidates that are the same procedure worded differently.
+
+    Only pairs already in the near-miss band are considered — lexical
+    similarity below the merge threshold but above the floor — so almost every
+    comparison stays free and the model is asked where the cheap signal is
+    genuinely ambiguous.
+
+    Dry run unless ``--apply``, because folding is not symmetrical: the second
+    candidate's evidence moves into the first and the second is gone.
+    """
+    from .ledger import STATUS_CANDIDATE
+    from .similar import fold_into, near_misses, same_procedure
+
+    config = Config(args.root)
+    ledger = Ledger(config)
+    entries = [e for e in ledger.all() if e.status == STATUS_CANDIDATE]
+    pairs = near_misses(entries, floor=args.floor or config.near_miss_floor,
+                        ceiling=config.similarity_threshold)
+    if not pairs:
+        print(f"No near-miss pairs between "
+              f"{args.floor or config.near_miss_floor:.2f} and "
+              f"{config.similarity_threshold:.2f}. Nothing a model could add.")
+        return 0
+
+    merges, seen = [], set()
+    for a, b, lex in pairs:
+        if a.id in seen or b.id in seen:
+            continue          # one merge per entry per run, so folds cannot chain
+        verdict, score, why = same_procedure(
+            a, b, model=config.embed_model, host=config.ollama_url,
+            floor=config.embed_floor)
+        mark = {True: "same     ", False: "different", None: "no opinion"}[verdict]
+        print(f"{mark} lexical {lex:.3f} · embedding {score:.3f}")
+        print(f"          {a.id} {a.title[:44]}")
+        print(f"          {b.id} {b.title[:44]}")
+        print(f"          {why}")
+        if verdict:
+            merges.append((a, b))
+            seen.update({a.id, b.id})
+
+    if not merges:
+        print("\nNothing to merge.")
+        return 0
+    if not args.apply:
+        print(f"\nDry run. Re-run with --apply to fold {len(merges)} pair(s).")
+        return 0
+    for keep, drop in merges:
+        fold_into(keep, drop)
+        ledger.save(keep)
+        ledger.delete(drop.id)
+        print(f"\nfolded {drop.id} into {keep.id} — now seen "
+              f"{keep.occurrences}x")
+    return 0
+
+
 def cmd_reopen(args: argparse.Namespace) -> int:
     """Undo a sift verdict.
 
@@ -615,6 +671,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cwd", help="run the agent from here")
     p.add_argument("--timeout", type=int, default=900)
     p.set_defaults(func=cmd_draft)
+
+    p = sub.add_parser("merge",
+                       help="merge candidates that are the same procedure "
+                            "worded differently (needs Ollama)")
+    p.add_argument("--apply", action="store_true",
+                   help="actually fold them; the second entry is absorbed")
+    p.add_argument("--floor", type=float,
+                   help="lowest lexical similarity worth a model call")
+    p.set_defaults(func=cmd_merge)
 
     p = sub.add_parser("reopen", help="undo a sift verdict; put a candidate back")
     p.add_argument("id")

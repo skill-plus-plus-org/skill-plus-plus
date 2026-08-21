@@ -189,7 +189,8 @@ def fold_session(config: Config, session: dict) -> dict:
     episode's result — with an added ``episodes`` key listing every outcome. A
     session that segments into one episode returns exactly what it always did.
     """
-    episodes = segment(session.get("steps", []), config.min_episode_steps)
+    episodes = segment(session.get("steps", []), config.min_episode_steps,
+                       config.max_markerless_steps)
 
     # An episode with no completion marker, in a session that did segment, is a
     # fragment with nothing to show for itself. Recording it would recreate the

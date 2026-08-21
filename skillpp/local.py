@@ -90,3 +90,43 @@ def yes_no(reply: str) -> bool | None:
         if cleaned in ("no", "n", "false"):
             return False
     return None
+
+
+DEFAULT_EMBED_MODEL = "nomic-embed-text"
+
+
+def embed(text: str, *, model: str = DEFAULT_EMBED_MODEL,
+          host: str = DEFAULT_HOST, timeout: float = 60.0) -> list[float]:
+    """Embed *text* with a local embedding model.
+
+    Separate from :func:`ask` because it is a different endpoint and a different
+    kind of question. Embeddings answer "are these the same shape", which is the
+    one thing lexical comparison cannot do — `npm test` and `pytest -q` play the
+    same role in a release and share not one token.
+    """
+    body = json.dumps({"model": model, "prompt": text}).encode("utf-8")
+    request = urllib.request.Request(
+        f"{host.rstrip('/')}/api/embeddings", data=body,
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        raise LocalModelUnavailable(
+            f"could not reach an embedding model at {host}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise LocalModelUnavailable(f"unreadable reply from {host}") from exc
+    vector = payload.get("embedding")
+    if not isinstance(vector, list) or not vector:
+        raise LocalModelUnavailable(f"no embedding in the reply from {host}")
+    return [float(x) for x in vector]
+
+
+def cosine(a: list[float], b: list[float]) -> float:
+    """Cosine similarity, or 0.0 if either side is degenerate."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return 0.0 if na == 0 or nb == 0 else dot / (na * nb)

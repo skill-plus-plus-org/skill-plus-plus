@@ -1312,3 +1312,117 @@ class TestBenchmarkSegmentation(unittest.TestCase):
         from benchmarks.cases import CASES
         self.assertGreaterEqual(sum(1 for c in CASES if c.episodes == 0), 2)
         self.assertGreaterEqual(sum(1 for c in CASES if c.methods == 0), 3)
+
+
+class TestEmbeddingMatch(TempRoot):
+    """The one shape lexical similarity cannot see.
+
+    No model is contacted: `embed` is replaced. What is pinned is the band, the
+    arithmetic and the fail-safe — the embedding's own accuracy is measured
+    separately and cannot be asserted here.
+    """
+
+    def _entry(self, eid, cmds, intent="cut the release", **kw):
+        base = dict(id=eid, signature="", title=intent, intents=[intent],
+                    sessions=[eid],
+                    steps=[{"tool": "Bash", "input": {"command": c}} for c in cmds])
+        base.update(kw)
+        entry = Entry(**base)
+        from skillpp.normalize import signature as sig
+        entry.signature = sig(entry.steps)
+        return entry
+
+    def _vectors(self, mapping):
+        """Point `embed` at canned vectors keyed by a substring of its input."""
+        import skillpp.similar as sim
+
+        def fake(text, **kw):
+            for needle, vector in mapping.items():
+                if needle in text:
+                    return vector
+            return [0.0, 0.0, 1.0]
+        real, sim.embed = sim.embed, fake
+        self.addCleanup(lambda: setattr(sim, "embed", real))
+
+    RELEASE = ["git checkout main", "git pull --ff-only", "npm test",
+               "npm version 2.4.0", "git tag -s v2.4.0 -m rel",
+               "git push --follow-tags"]
+    RELEASE_PYTEST = ["git checkout main", "git pull --ff-only", "pytest -q",
+                      "npm version 2.5.0", "git tag -s v2.5.0 -m rel",
+                      "git push --follow-tags"]
+
+    def test_the_band_holds_only_the_ambiguous_pairs(self):
+        """Identical procedures match lexically and never reach a model."""
+        from skillpp.similar import near_misses
+        a = self._entry("a", self.RELEASE)
+        b = self._entry("b", self.RELEASE)
+        self.assertEqual(near_misses([a, b], floor=0.70, ceiling=0.85), [])
+
+    def test_a_substituted_step_lands_in_the_band(self):
+        from skillpp.similar import near_misses
+        pairs = near_misses([self._entry("a", self.RELEASE),
+                             self._entry("b", self.RELEASE_PYTEST)],
+                            floor=0.70, ceiling=0.85)
+        self.assertEqual(len(pairs), 1)
+
+    def test_a_high_embedding_reads_as_the_same_procedure(self):
+        from skillpp.similar import same_procedure
+        self._vectors({"npm test": [1.0, 0.0, 0.0], "pytest": [0.98, 0.2, 0.0]})
+        verdict, score, _ = same_procedure(
+            self._entry("a", self.RELEASE), self._entry("b", self.RELEASE_PYTEST),
+            model="x", floor=0.80)
+        self.assertIs(verdict, True)
+        self.assertGreater(score, 0.8)
+
+    def test_a_low_embedding_leaves_them_apart(self):
+        from skillpp.similar import same_procedure
+        self._vectors({"npm test": [1.0, 0.0, 0.0], "pytest": [0.0, 1.0, 0.0]})
+        verdict, _, _ = same_procedure(
+            self._entry("a", self.RELEASE), self._entry("b", self.RELEASE_PYTEST),
+            model="x", floor=0.80)
+        self.assertIs(verdict, False)
+
+    def test_an_unreachable_model_never_merges(self):
+        """Folding is irreversible — the second entry's evidence moves and it is
+        gone — so a failed call must leave both alone."""
+        import skillpp.similar as sim
+        from skillpp.local import LocalModelUnavailable
+        from skillpp.similar import same_procedure
+
+        def boom(text, **kw):
+            raise LocalModelUnavailable("refused")
+        real, sim.embed = sim.embed, boom
+        self.addCleanup(lambda: setattr(sim, "embed", real))
+        verdict, _, why = same_procedure(
+            self._entry("a", self.RELEASE), self._entry("b", self.RELEASE_PYTEST),
+            model="x")
+        self.assertIsNone(verdict)
+        self.assertIn("leaving both", why)
+
+    def test_occurrences_count_sessions_not_sightings(self):
+        """The correction this project already had to make once: two sightings
+        inside one session are one occurrence."""
+        from skillpp.similar import fold_into
+        a = self._entry("a", self.RELEASE, sessions=["s1"])
+        b = self._entry("b", self.RELEASE_PYTEST, sessions=["s1"])
+        fold_into(a, b)
+        self.assertEqual(a.occurrences, 1)
+
+        c = self._entry("c", self.RELEASE, sessions=["s1"])
+        d = self._entry("d", self.RELEASE_PYTEST, sessions=["s2"])
+        fold_into(c, d)
+        self.assertEqual(c.occurrences, 2)
+
+    def test_folding_keeps_the_other_body_as_a_variant(self):
+        from skillpp.similar import fold_into
+        a = self._entry("a", self.RELEASE, sessions=["s1"])
+        b = self._entry("b", self.RELEASE_PYTEST, sessions=["s2"])
+        fold_into(a, b)
+        self.assertEqual(len(a.variants), 1)
+
+    def test_cosine_is_safe_on_degenerate_input(self):
+        from skillpp.local import cosine
+        self.assertEqual(cosine([], [1.0]), 0.0)
+        self.assertEqual(cosine([0.0, 0.0], [0.0, 0.0]), 0.0)
+        self.assertEqual(cosine([1.0, 2.0], [1.0]), 0.0)
+        self.assertAlmostEqual(cosine([1.0, 0.0], [1.0, 0.0]), 1.0)
