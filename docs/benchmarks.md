@@ -431,3 +431,33 @@ Across everything measured on this project, a local model answers questions
 | Where does one task end? | finds it when told one exists; cannot tell whether one does |
 
 The last row is the whole difficulty. A segmenter needs both halves.
+
+### Splitting works, and the restraint matters more than the action
+
+`skillpp split`, reached from the draft prompt, closes case C. Three live runs:
+
+| Input | Should split | Did |
+| --- | --- | --- |
+| `migrate → scale → migrate → scale → test` | no — one workaround | **no** ✓ |
+| helm rollout → smoke test | arguably one | **no**, named "Roll out API to staging and verify with smoke test" ✓ |
+| helm rollout → `git log` → write → Gmail draft | **yes, at index 2** | **yes, at index 2** ✓ |
+
+Its reasoning on the third: *"two unrelated procedures glued together by 'and
+then'"*. It drafted the first half as
+`Deploy the API service hotfix via Helm to staging` and left the second as its
+own candidate.
+
+**The first row is the result that matters.** A positional prompt on a local
+model split that same sequence at its repetition; the frontier stage did not.
+That is the argument for putting the judgement where it can afford to be right,
+rather than teaching the cheap stage a rule — which was tried and cost 12/15 →
+9/15 on an unrelated prompt.
+
+The second row is a lesson about the corpus rather than the code. That case was
+written as a two-procedure case while noting out loud that it was arguable, and
+then scored against. Ambiguous ground truth cannot falsify anything; the doubt
+should have been the signal not to score it.
+
+**One loose end by design:** the second half inherits the original title and is
+not named until it gets its own `draft`. It sits in the queue titled after the
+developer's prompt in the meantime.
