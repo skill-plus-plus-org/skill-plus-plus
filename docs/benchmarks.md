@@ -556,3 +556,86 @@ separately rather than blur that into one flattering number.
 is *exactly* those two. A suite that silently tolerates a documented gap cannot
 tell you when the gap closes, and a stale exclusion is how a benchmark quietly
 stops measuring.
+
+---
+
+## The near-miss floor, and moving the check off the hook
+
+The gap above — *"`merge` folds them, run live, not assumed"* — closed one case
+and hid the shape of the problem. `the-same-release-different-runner` scores
+**0.747** lexically, which is inside the `[0.70, 0.85)` band `merge` already
+looks at. It was never evidence that the band was wide enough; it was the one
+case that happened to land inside it.
+
+`the-same-release-two-steps-different` is the same procedure with the test
+runner *and* the fetch swapped. It scores **0.531**. `merge` returns *zero*
+pairs on it — not a wrong verdict, no verdict at all, because the pair never
+reaches an embedding. The embedding separates it at **0.925** when finally
+asked.
+
+That is the shape behind three sightings of one procedure sitting at ×1 each and
+a recurrence threshold none of them reach.
+
+### Why the floor was 0.70, and why that stopped being the right number
+
+The floor is a cost guard, and the cost it guards is not the model — the
+embedding is local, free, and sub-second. It is that `merge` is a command a
+person types and then waits on: a wide band makes a live run long to read.
+
+The check therefore moved somewhere nothing is waiting on it. `SessionEnd`
+records which entry it touched and decides nothing. `SessionStart` spawns a
+detached process that runs the same `near_misses`/`same_procedure` comparison at
+a floor of **0.40** and writes a report. `skillpp near-misses` reads it.
+Folding still needs `--apply`.
+
+`merge` keeps its own 0.70 default, unchanged. Two knobs rather than one
+widened knob: the manual command does not have this problem and should not pay
+for the fix.
+
+### Measured, full corpus, `gemma3n:e4b` + `nomic-embed-text`
+
+| | before | after |
+| --- | --- | --- |
+| segmentation | 20 of 22 | **22 of 23** |
+| ranking | 15 of 18 | **17 of 20** |
+| recurrence | 1 of 2 | **3 of 3** |
+| cases | 22 | 23 |
+
+Two runs, 12s each, same corpus, same models.
+
+**Read the ranking row as a denominator change, not an improvement.** Ranking is
+scored only on cases that segmented correctly. `different-runner` used to fail
+segmentation and was excluded; it now segments right, enters scoring and passes.
+Numerator and denominator both +2. The ranker is untouched by this work and its
+own misses — `meeting-prep`, `three-tasks-one-morning` — are unchanged.
+
+Per-case, exactly two things moved: `different-runner` went from failing all
+three axes to passing all three, and the new case passes all three. **Nothing
+else changed on any axis.** `deploy-then-status-email` remains the one
+segmentation gap, untouched.
+
+### What was deliberately not built
+
+Stated because each was considered and rejected on a reason, not overlooked:
+
+- **No lockfile around the background pass.** It reports and never folds, so two
+  racing passes recompute the same free local answer and the later write wins.
+  Waste, not a wrong result — and a stale-pid reclaim mechanism is real
+  complexity bought for a cosmetic problem.
+- **No atomic write on the report.** `load_near_miss_report` already treats an
+  unparseable file as "no report yet", so a crash mid-write costs one deferred
+  check.
+- **No shortened per-call embed timeout.** Nothing waits on this pass, so a
+  precisely-enforced deadline buys nothing.
+
+The queue drain *does* write atomically. Losing track of what still needs
+checking, silently, is the one failure here with a cost nothing downstream would
+report.
+
+### Fail-safe, measured
+
+One unreachable-host answer stops the whole pass rather than rediscovering the
+same outage once per pair: **0.13s** against a closed port, queue byte-identical,
+ledger untouched. Neither a timeout nor a dead model drains the queue, so a
+partial pass retries the whole backlog instead of dropping the pairs it never
+reached.
