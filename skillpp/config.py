@@ -81,6 +81,26 @@ class Config:
         self.embed_model = _str_env("SKILLPP_EMBED_MODEL", "nomic-embed-text")
         self.near_miss_floor = _float_env("SKILLPP_NEAR_MISS_FLOOR", 0.70)
         self.embed_floor = _float_env("SKILLPP_EMBED_FLOOR", 0.80)
+        # The queued pass casts a far wider net than the floor above, because
+        # 0.70 was chosen when the only thing on the other side of it was a
+        # live command someone had typed and was waiting on. Measured failure:
+        # one procedure done three times scored 0.46-0.50 against itself, so
+        # the pairs that most needed an embedding never reached one. Nothing
+        # waits on the queued pass, and the embedding does the discriminating
+        # (0.912 against 0.451 on the pair that motivated it) — the floor only
+        # has to exclude what is obviously unrelated.
+        #
+        # `near_miss_floor` is deliberately left alone: a person who types
+        # `skillpp merge` wants a short list to read, and widening that would
+        # make every manual run noisy to fix a problem the manual run does not
+        # have.
+        self.queued_near_miss_floor = _float_env(
+            "SKILLPP_QUEUED_NEAR_MISS_FLOOR", 0.40)
+        # Wall-clock budget for one queued pass, checked between pairs. Local
+        # embedding calls are normally sub-second; this is a backstop against a
+        # pathological backlog, not an expected duration.
+        self.background_timeout_seconds = _int_env(
+            "SKILLPP_BACKGROUND_TIMEOUT", 120)
         # Above this, an episode with no completion marker is a slog
         # rather than a procedure. Not a cap on procedures: a finished
         # 50-step migration that ends in a marker is one recipe and is
@@ -106,6 +126,22 @@ class Config:
         what hid three defects until real data arrived.
         """
         return self.root / "decisions.jsonl"
+
+    @property
+    def pending_checks_file(self) -> Path:
+        """Entries a session touched, waiting for a near-miss check.
+
+        Written by `SessionEnd` and by nothing else, one line per fold, with no
+        judgement attached: the check itself happens later, out of the hook. A
+        lost line costs that entry a check, never correctness — `skillpp merge`
+        still reaches the same pairs by hand.
+        """
+        return self.root / "pending_checks.jsonl"
+
+    @property
+    def near_miss_report_file(self) -> Path:
+        """What the last queued pass found, for `skillpp near-misses` to read."""
+        return self.root / "near_miss_report.json"
 
     @property
     def ledger_dir(self) -> Path:

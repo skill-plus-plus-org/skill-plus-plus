@@ -59,6 +59,14 @@ def cmd_hook(args: argparse.Namespace) -> int:
             result = handle_session_end(config, payload)
             if args.verbose:
                 print(json.dumps(result))
+        elif event == "SessionStart":
+            # Spawns and returns. Nothing is printed without -v, which the
+            # installed hook command never passes, so a session start is never
+            # interrupted by output from this.
+            from .similar import maybe_spawn_background_check
+            result = maybe_spawn_background_check(config)
+            if args.verbose:
+                print(json.dumps(result))
         elif args.verbose:
             print(json.dumps({"status": "ignored-event", "event": event}))
     except Exception as exc:  # noqa: BLE001 - deliberate catch-all
@@ -895,6 +903,100 @@ def cmd_bundle(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_background_merge_check(args: argparse.Namespace) -> int:
+    """Run the queued near-miss pass.
+
+    Normally spawned detached by `SessionStart`; runnable by hand to force a
+    check now rather than waiting for the next session. Writes a report and
+    folds nothing — `skillpp near-misses --apply` is what folds.
+    """
+    from .capture import log_error
+    from .similar import run_background_check
+
+    config = Config(args.root)
+    try:
+        result = run_background_check(config, timeout=args.timeout)
+    except Exception as exc:  # noqa: BLE001 - a detached pass must die quietly
+        log_error(config, f"background-merge-check: "
+                          f"{type(exc).__name__}: {exc}")
+        return 0
+    if args.verbose:
+        print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_near_misses(args: argparse.Namespace) -> int:
+    """Show what the queued pass found, and fold it only with --apply.
+
+    Additive to `skillpp merge`, which still recomputes live against its own
+    tighter floor at any time. This reads what the background pass already
+    found with the wider one.
+
+    Every pair is re-checked against the ledger as it stands now: a report is
+    written before anyone reads it, and an entry can be promoted, dismissed or
+    already folded in between.
+    """
+    from .ledger import STATUS_CANDIDATE
+    from .similar import fold_into, load_near_miss_report
+
+    config = Config(args.root)
+    report = load_near_miss_report(config)
+    if report is None:
+        print("No queued check has run yet. One starts on its own the next "
+              "time a session begins, if anything is waiting. To run it now:\n"
+              "  python3 bin/skillpp background-merge-check")
+        return 0
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return 0
+
+    note = ""
+    if report.get("timed_out"):
+        note = " — stopped early on its time budget, rest still queued"
+    elif report.get("model_unreachable"):
+        note = " — the embedding model was unreachable, nothing was decided"
+    print(f"queued check at {report.get('generated_at')}: "
+          f"{report.get('pairs_checked', 0)} of "
+          f"{report.get('pairs_considered', 0)} pair(s) read, floor "
+          f"{report.get('floor')}, embedding floor "
+          f"{report.get('embed_floor')}{note}")
+
+    ledger = Ledger(config)
+    merges, seen = [], set()
+    stale = 0
+    for row in report.get("candidates", []):
+        a, b = ledger.get(row.get("a", "")), ledger.get(row.get("b", ""))
+        if not a or not b or a.status != STATUS_CANDIDATE or \
+                b.status != STATUS_CANDIDATE:
+            stale += 1
+            continue
+        if a.id in seen or b.id in seen:
+            continue          # one merge per entry per run, so folds cannot chain
+        print(f"\nsame      lexical {row.get('lexical', 0):.3f} · "
+              f"embedding {row.get('embedding', 0):.3f}")
+        print(f"          {a.id} {a.title[:44]}")
+        print(f"          {b.id} {b.title[:44]}")
+        merges.append((a, b))
+        seen.update({a.id, b.id})
+
+    if stale:
+        print(f"\n{stale} pair(s) skipped — decided or folded since the check ran.")
+    if not merges:
+        print("\nNothing to merge.")
+        return 0
+    if not args.apply:
+        print(f"\nDry run. Re-run with --apply to fold {len(merges)} pair(s).")
+        return 0
+    for keep, drop in merges:
+        fold_into(keep, drop)
+        ledger.save(keep)
+        ledger.delete(drop.id)
+        print(f"\nfolded {drop.id} into {keep.id} — now seen "
+              f"{keep.occurrences}x")
+    return 0
+
+
 def cmd_install(args: argparse.Namespace) -> int:
     from .install import apply_settings, hook_command, install_command_file, plan_settings
 
@@ -981,6 +1083,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--floor", type=float,
                    help="lowest lexical similarity worth a model call")
     p.set_defaults(func=cmd_merge)
+
+    p = sub.add_parser("background-merge-check",
+                       help="run the queued near-miss pass now (needs Ollama); "
+                            "normally spawned detached by SessionStart")
+    p.add_argument("--timeout", type=float,
+                   help="seconds to spend before stopping and keeping the queue")
+    p.add_argument("-v", "--verbose", action="store_true")
+    p.set_defaults(func=cmd_background_merge_check)
+
+    p = sub.add_parser("near-misses",
+                       help="show what the queued pass found; complements "
+                            "`merge` rather than replacing it")
+    p.add_argument("--apply", action="store_true",
+                   help="actually fold them; the second entry is absorbed")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_near_misses)
 
     p = sub.add_parser("keep",
                        help="save the work so far as a candidate, without "

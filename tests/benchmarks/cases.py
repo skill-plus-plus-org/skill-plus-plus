@@ -316,6 +316,24 @@ CASES += [
         episodes=1, methods=1, occurrences=2, tags=["near-miss", "needs-merge"]),
 
     Case(
+        "the-same-release-two-steps-different", "programming",
+        "The same release where the test runner *and* the fetch differ. Scores "
+        "0.531 lexically — under `merge`'s 0.70 near-miss floor, so the "
+        "embedding that separates it at 0.925 is never asked. This is the shape "
+        "that leaves three sightings of one procedure sitting at x1 each, and "
+        "it is invisible to every band the live command can afford.",
+        [P("cut the 2.4 release"),
+         B("git checkout main"), B("git pull --ff-only"), B("npm test"),
+         B("npm version 2.4.0"), B("git tag -s v2.4.0 -m rel"),
+         B("git push --follow-tags")],
+        follow=[P("cut the 2.5 release"),
+                B("git checkout main"), B("git fetch --all"), B("pytest -q"),
+                B("npm version 2.5.0"), B("git tag -s v2.5.0 -m rel"),
+                B("git push --follow-tags")],
+        episodes=1, methods=1, occurrences=2,
+        tags=["near-miss", "needs-merge", "below-live-floor"]),
+
+    Case(
         "abandoned-then-done-another-way", "programming",
         "A first approach abandoned mid-way, then a different one that worked. "
         "The failed attempt is not a procedure and the session is not empty.",

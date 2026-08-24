@@ -14,7 +14,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-HOOK_EVENTS = ("UserPromptSubmit", "PostToolUse", "SessionEnd")
+# `SessionStart` carries no capture duty. It exists to notice that `SessionEnd`
+# left entries queued for a near-miss check, and to start that check in a
+# detached process — which is what lets the check use an embedding at all, since
+# the one place it could never live is the hook a session is waiting on.
+HOOK_EVENTS = ("UserPromptSubmit", "PostToolUse", "SessionEnd", "SessionStart")
 MARKER = "skillpp hook"
 
 

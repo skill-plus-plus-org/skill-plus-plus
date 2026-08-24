@@ -50,6 +50,31 @@ def log_error(config: Config, message: str) -> None:
         pass
 
 
+def note_pending_check(config: Config, entry_id: str, session_id: str,
+                       reason: str = "") -> None:
+    """Record that this entry was touched, for a near-miss check run later.
+
+    No judgement here, and deliberately so: the whole point of the queue is
+    that `SessionEnd` decides nothing. Whether this entry is the same procedure
+    as an existing one is asked at the start of a later session, by a process
+    nothing is waiting on, which is what lets that check use a floor far below
+    the one a live `skillpp merge` can afford.
+
+    One short append, never raises. Same shape as `decisions.record` for the
+    same reason — a hook that fails loudly is worse than a hook that forgets.
+    """
+    try:
+        config.root.mkdir(parents=True, exist_ok=True)
+        row = {"at": datetime.now(timezone.utc).replace(
+                   microsecond=0).isoformat(),
+               "entry_id": entry_id, "session_id": session_id,
+               "reason": reason}
+        with config.pending_checks_file.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def _session_file(config: Config, session_id: str) -> Path:
     safe = "".join(c for c in session_id if c.isalnum() or c in "-_")[:64] or "unknown"
     return config.sessions_dir / f"{safe}.json"
@@ -207,6 +232,13 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
         result = _fold_steps(config, session, episode.steps,
                              source=source)
         result["ended_by"] = episode.ended_by
+        # Queue every entry this session touched, merged or created alike. A
+        # merged one can still be a near-miss against a *third* entry the
+        # lexical pass never related to either.
+        if result.get("id"):
+            note_pending_check(config, result["id"],
+                               session.get("session_id", ""),
+                               result.get("status", ""))
         results.append(result)
 
     flagged = [e for e in episodes if e.flagged]

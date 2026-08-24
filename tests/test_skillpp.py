@@ -1335,8 +1335,16 @@ class TestBenchmarkSegmentation(unittest.TestCase):
         """
         failing = {r["name"] for r in self._score()["rows"]
                    if not r["segmentation"]}
+        # Both release cases bank two entries where the truth is one, for the
+        # same reason and at two different distances: lexical similarity cannot
+        # see through a swapped tool. `different-runner` lands at 0.786, inside
+        # the band `skillpp merge` already looks at; `two-steps-different`
+        # lands at 0.531, under the floor of every band a live command can
+        # afford, which is why the queued pass exists. Neither is a segmenter
+        # bug — segmentation cut both sessions correctly.
         expected = {"deploy-then-status-email",
-                    "the-same-release-different-runner"}
+                    "the-same-release-different-runner",
+                    "the-same-release-two-steps-different"}
         self.assertEqual(failing, expected)
 
     def test_recurrence_is_measured_at_all(self):
@@ -1360,6 +1368,245 @@ class TestBenchmarkSegmentation(unittest.TestCase):
         from benchmarks.cases import CASES
         self.assertGreaterEqual(sum(1 for c in CASES if c.episodes == 0), 2)
         self.assertGreaterEqual(sum(1 for c in CASES if c.methods == 0), 3)
+
+
+class TestTheQueuedNearMissPass(TempRoot):
+    """The same check as `skillpp merge`, moved off the SessionEnd path.
+
+    No model is contacted and no process is spawned: `embed` and
+    `subprocess.Popen` are both replaced. What is pinned is that SessionEnd
+    decides nothing, that SessionStart never waits, that the wider floor reaches
+    the pairs the live command cannot, and that nothing folds without `--apply`.
+    """
+
+    # 0.531 lexically once parameterised — under `near_miss_floor`, over
+    # `queued_near_miss_floor`. The whole point of the pass in one pair.
+    RELEASE = ["git checkout main", "git pull --ff-only", "npm test",
+               "npm version 2.4.0", "git tag -s v2.4.0 -m rel",
+               "git push --follow-tags"]
+    RELEASE_FAR = ["git checkout main", "git fetch --all", "pytest -q",
+                   "npm version 2.5.0", "git tag -s v2.5.0 -m rel",
+                   "git push --follow-tags"]
+
+    def _bank(self, sid, prompt, cmds):
+        from skillpp.capture import handle_prompt, handle_session_end, handle_tool
+        handle_prompt(self.config, {"session_id": sid, "cwd": "/w",
+                                    "prompt": prompt})
+        for cmd in cmds:
+            handle_tool(self.config, {"session_id": sid, "cwd": "/w",
+                                      "tool_name": "Bash",
+                                      "tool_input": {"command": cmd}})
+        return handle_session_end(self.config, {"session_id": sid})
+
+    def _two_releases(self):
+        self._bank("s1", "cut the 2.4 release", self.RELEASE)
+        self._bank("s2", "cut the 2.5 release", self.RELEASE_FAR)
+        return list(Ledger(self.config).all())
+
+    def _same_shape(self):
+        """Every embedding identical, so cosine is 1.0 for any pair."""
+        import skillpp.similar as sim
+        real, sim.embed = sim.embed, lambda text, **kw: [1.0, 0.0, 0.0]
+        self.addCleanup(lambda: setattr(sim, "embed", real))
+
+    def _no_model(self):
+        import skillpp.similar as sim
+        from skillpp.local import LocalModelUnavailable
+
+        def boom(text, **kw):
+            raise LocalModelUnavailable("no daemon")
+        real, sim.embed = sim.embed, boom
+        self.addCleanup(lambda: setattr(sim, "embed", real))
+
+    def _spy_popen(self):
+        import subprocess
+        calls = []
+
+        class Fake:
+            pid = 4242
+
+            def wait(self, *a, **kw):
+                raise AssertionError("SessionStart waited on the background pass")
+
+            def communicate(self, *a, **kw):
+                raise AssertionError("SessionStart waited on the background pass")
+
+        def fake(argv, **kw):
+            calls.append((argv, kw))
+            return Fake()
+        real, subprocess.Popen = subprocess.Popen, fake
+        self.addCleanup(lambda: setattr(subprocess, "Popen", real))
+        return calls
+
+    # -- SessionEnd decides nothing -------------------------------------------
+
+    def test_session_end_queues_the_entry_and_asks_no_model(self):
+        self._no_model()   # any embedding call here fails the test loudly
+        self._bank("s1", "cut the 2.4 release", self.RELEASE)
+        rows = [json.loads(l) for l in
+                self.config.pending_checks_file.read_text().splitlines() if l.strip()]
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["entry_id"])
+        self.assertEqual(rows[0]["session_id"], "s1")
+
+    def test_every_touched_entry_is_queued_including_a_merged_one(self):
+        """A merged entry can still be a near-miss against a third."""
+        self._bank("s1", "cut the 2.4 release", self.RELEASE)
+        self._bank("s2", "cut the 2.5 release", self.RELEASE)   # merges lexically
+        rows = [json.loads(l) for l in
+                self.config.pending_checks_file.read_text().splitlines() if l.strip()]
+        self.assertEqual(len(rows), 2, "a lexical merge was not queued")
+        self.assertEqual({r["reason"] for r in rows}, {"created", "merged"})
+
+    # -- SessionStart spawns and returns --------------------------------------
+
+    def test_an_empty_queue_spawns_nothing(self):
+        from skillpp.similar import maybe_spawn_background_check
+        calls = self._spy_popen()
+        self.assertEqual(maybe_spawn_background_check(self.config),
+                         {"status": "empty"})
+        self.assertEqual(calls, [])
+
+    def test_a_queued_entry_spawns_one_detached_process_and_does_not_wait(self):
+        from skillpp.similar import maybe_spawn_background_check
+        self._bank("s1", "cut the 2.4 release", self.RELEASE)
+        calls = self._spy_popen()
+        result = maybe_spawn_background_check(self.config)
+        self.assertEqual(result["status"], "spawned")
+        self.assertEqual(len(calls), 1)
+        argv, kw = calls[0]
+        self.assertIn("background-merge-check", argv)
+        self.assertIn(str(self.config.root), argv)
+        self.assertTrue(kw["start_new_session"], "child stayed in the hook's group")
+        # Fake.wait/communicate raise, so reaching here proves neither was called.
+
+    def test_the_session_start_hook_prints_nothing_without_verbose(self):
+        import io
+        self._bank("s1", "cut the 2.4 release", self.RELEASE)
+        self._spy_popen()
+        from skillpp.cli import main
+        out, err = io.StringIO(), io.StringIO()
+        stdin, sys.stdin = sys.stdin, io.StringIO(json.dumps({"session_id": "x"}))
+        real_out, sys.stdout = sys.stdout, out
+        try:
+            code = main(["--root", str(self.config.root), "hook",
+                         "--event", "SessionStart"])
+        finally:
+            sys.stdin, sys.stdout = stdin, real_out
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue(), "", "a session start printed to context")
+
+    # -- the wider floor reaches what the live one cannot ---------------------
+
+    def test_the_live_floor_misses_this_pair_and_the_queued_floor_does_not(self):
+        from skillpp.similar import near_misses
+        entries = self._two_releases()
+        self.assertEqual(len(entries), 2, "these must not merge lexically")
+        live = near_misses(entries, floor=self.config.near_miss_floor,
+                           ceiling=self.config.similarity_threshold)
+        queued = near_misses(entries, floor=self.config.queued_near_miss_floor,
+                             ceiling=self.config.similarity_threshold)
+        self.assertEqual(live, [], "`merge`'s own floor changed")
+        self.assertEqual(len(queued), 1)
+        self.assertLess(queued[0][2], self.config.near_miss_floor)
+
+    def test_the_queued_pass_reports_the_pair_and_drains_the_queue(self):
+        from skillpp.similar import load_near_miss_report, run_background_check
+        self._two_releases()
+        self._same_shape()
+        result = run_background_check(self.config)
+        self.assertEqual(result["found"], 1)
+        self.assertFalse(result["timed_out"])
+        self.assertFalse(result["model_unreachable"])
+        self.assertEqual(load_near_miss_report(self.config)["candidates"][0]["embedding"],
+                         1.0)
+        self.assertEqual(self.config.pending_checks_file.read_text(), "")
+
+    def test_the_queued_pass_folds_nothing_by_itself(self):
+        from skillpp.similar import run_background_check
+        self._two_releases()
+        self._same_shape()
+        run_background_check(self.config)
+        self.assertEqual(len(list(Ledger(self.config).all())), 2,
+                         "the background pass folded without being asked")
+
+    # -- reading it, and the --apply gate ------------------------------------
+
+    def _report_run(self, apply=False):
+        from skillpp.similar import run_background_check
+        self._two_releases()
+        self._same_shape()
+        run_background_check(self.config)
+        from skillpp.cli import main
+        argv = ["--root", str(self.config.root), "near-misses"]
+        if apply:
+            argv.append("--apply")
+        return main(argv)
+
+    def test_reading_the_report_does_not_fold_without_apply(self):
+        self.assertEqual(self._report_run(apply=False), 0)
+        self.assertEqual(len(list(Ledger(self.config).all())), 2)
+
+    def test_apply_folds_and_the_count_is_a_union_not_a_sum(self):
+        self.assertEqual(self._report_run(apply=True), 0)
+        entries = list(Ledger(self.config).all())
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].occurrences, 2)
+        self.assertEqual(len(entries[0].sessions), 2)
+
+    def test_a_pair_decided_since_the_check_ran_is_skipped(self):
+        from skillpp.cli import main
+        from skillpp.ledger import STATUS_DISMISSED
+        from skillpp.similar import run_background_check
+        self._two_releases()
+        self._same_shape()
+        run_background_check(self.config)
+        ledger = Ledger(self.config)
+        victim = list(ledger.all())[0]
+        victim.status = STATUS_DISMISSED
+        ledger.save(victim)
+        self.assertEqual(main(["--root", str(self.config.root),
+                               "near-misses", "--apply"]), 0)
+        self.assertEqual(len(list(Ledger(self.config).all())), 2,
+                         "folded a pair a person had already decided")
+
+    def test_no_report_yet_says_so_rather_than_failing(self):
+        from skillpp.cli import main
+        self.assertEqual(main(["--root", str(self.config.root),
+                               "near-misses"]), 0)
+
+    # -- fail-safe -----------------------------------------------------------
+
+    def test_an_unreachable_model_leaves_the_queue_and_the_ledger_alone(self):
+        from skillpp.similar import run_background_check
+        self._two_releases()
+        before = self.config.pending_checks_file.read_text()
+        self._no_model()
+        result = run_background_check(self.config)
+        self.assertTrue(result["model_unreachable"])
+        self.assertEqual(result["found"], 0)
+        self.assertEqual(self.config.pending_checks_file.read_text(), before,
+                         "a dead model drained the queue")
+        self.assertEqual(len(list(Ledger(self.config).all())), 2)
+
+    def test_a_timeout_keeps_the_whole_backlog(self):
+        from skillpp.similar import run_background_check
+        self._two_releases()
+        before = self.config.pending_checks_file.read_text()
+        self._same_shape()
+        result = run_background_check(self.config, timeout=-1)
+        self.assertTrue(result["timed_out"])
+        self.assertEqual(result["pairs_checked"], 0)
+        self.assertEqual(self.config.pending_checks_file.read_text(), before,
+                         "a partial pass dropped what it never reached")
+
+    def test_a_corrupt_queue_line_is_skipped_not_fatal(self):
+        from skillpp.similar import run_background_check
+        self._two_releases()
+        with self.config.pending_checks_file.open("a") as fh:
+            fh.write("{not json at all\n\n")
+        self._same_shape()
+        self.assertEqual(run_background_check(self.config)["found"], 1)
 
 
 class TestEmbeddingMatch(TempRoot):

@@ -56,7 +56,7 @@ _INPUT_KEY = {"Bash": "command", "Write": "file_path", "Edit": "file_path",
               "Read": "file_path"}
 
 
-def play(case, root: Path, api) -> list:
+def play(case, root: Path, api, *, merge: bool = False) -> list:
     """Drive one case through the real hook handlers and return what was banked."""
     handle_prompt, handle_tool, handle_session_end, Config, Ledger = api
     config = Config(root)
@@ -93,7 +93,46 @@ def play(case, root: Path, api) -> list:
                                             "error": "command failed"}
             handle_tool(config, payload)
         handle_session_end(config, {"session_id": sid + "-2"})
+    if merge:
+        _apply_queued_merges(config)
     return list(Ledger(config).all())
+
+
+def _apply_queued_merges(config) -> None:
+    """Run the queued near-miss pass and fold what it finds.
+
+    Scored with the fold applied on purpose. The real command needs `--apply`
+    and always will — but what a person gets *after* applying is the outcome
+    this corpus is measuring, and a report nobody acts on moves no occurrence
+    count.
+
+    Imported here rather than through `load()` so a branch without a queued
+    pass still scores: `load()`'s contract is three hook handlers and a Ledger,
+    and widening it would make this corpus unable to measure anything else.
+    """
+    try:
+        from skillpp.similar import fold_into, run_background_check, \
+            load_near_miss_report
+        from skillpp.ledger import Ledger, STATUS_CANDIDATE
+    except ImportError:
+        return
+    try:
+        run_background_check(config)
+    except Exception:  # noqa: BLE001 - a benchmark must not die on a dead host
+        return
+    report = load_near_miss_report(config) or {}
+    ledger = Ledger(config)
+    seen = set()
+    for row in report.get("candidates", []):
+        a, b = ledger.get(row.get("a", "")), ledger.get(row.get("b", ""))
+        if not a or not b or a.id in seen or b.id in seen:
+            continue
+        if a.status != STATUS_CANDIDATE or b.status != STATUS_CANDIDATE:
+            continue
+        fold_into(a, b)
+        ledger.save(a)
+        ledger.delete(b.id)
+        seen.update({a.id, b.id})
 
 
 def score(cases, use_model: bool, repo=None) -> dict:
@@ -102,7 +141,7 @@ def score(cases, use_model: bool, repo=None) -> dict:
     rows = []
     for case in cases:
         with tempfile.TemporaryDirectory() as tmp:
-            banked = play(case, Path(tmp) / "skillpp", api)
+            banked = play(case, Path(tmp) / "skillpp", api, merge=use_model)
             seg_ok = len(banked) == case.episodes
             top = max((e.occurrences for e in banked), default=0)
             row = {"name": case.name, "kind": case.kind, "tags": case.tags,
