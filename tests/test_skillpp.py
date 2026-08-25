@@ -1370,6 +1370,63 @@ class TestBenchmarkSegmentation(unittest.TestCase):
         self.assertGreaterEqual(sum(1 for c in CASES if c.methods == 0), 3)
 
 
+class TestOccurrencesCountSessionsInCaptureToo(TempRoot):
+    """The rule `fold_into` states, enforced on the path that actually banks.
+
+    `test_occurrences_count_sessions_not_sightings` pinned this for the merge
+    path and the capture path kept incrementing per fold. Segmentation is where
+    that diverges: one session becomes several episodes, several of them match
+    the same entry, and each bump landed on a counter documented as counting
+    *distinct sessions*. Found on 76 real sessions — 25 of 467 entries claimed
+    more occurrences than sessions, worst x154 against 17.
+    """
+
+    DEPLOY = ["docker build -t api .", "docker push api",
+              "kubectl set image deploy/api api=api", "git commit -am deploy"]
+
+    def _run(self, session_id, rounds=1):
+        from skillpp.capture import (handle_prompt, handle_session_end,
+                                     handle_tool)
+        for n in range(rounds):
+            handle_prompt(self.config, {"session_id": session_id, "cwd": "/w",
+                                        "prompt": f"deploy the api ({n})"})
+            for cmd in self.DEPLOY:
+                handle_tool(self.config, {"session_id": session_id, "cwd": "/w",
+                                          "tool_name": "Bash",
+                                          "tool_input": {"command": cmd}})
+        return handle_session_end(self.config, {"session_id": session_id})
+
+    def test_twice_in_one_session_is_one_occurrence(self):
+        self._run("only-session", rounds=2)
+        for entry in Ledger(self.config).all():
+            self.assertEqual(entry.occurrences, len(entry.sessions))
+            self.assertEqual(entry.occurrences, 1)
+
+    def test_the_threshold_cannot_be_reached_inside_one_session(self):
+        """The whole point of counting sessions rather than sightings."""
+        self._run("only-session", rounds=5)
+        for entry in Ledger(self.config).all():
+            self.assertFalse(entry.ready(self.config.recurrence_threshold),
+                             "one sitting cleared the recurrence threshold")
+
+    def test_the_same_work_in_three_sessions_still_reaches_three(self):
+        """The fix must not cost real recurrence, only the inflated kind."""
+        for sid in ("s1", "s2", "s3"):
+            self._run(sid)
+        top = max(e.occurrences for e in Ledger(self.config).all())
+        self.assertEqual(top, 3)
+
+    def test_occurrences_never_exceed_distinct_sessions(self):
+        """The invariant, stated as an invariant, over a mixed history."""
+        self._run("s1", rounds=3)
+        self._run("s2")
+        self._run("s3", rounds=2)
+        for entry in Ledger(self.config).all():
+            self.assertLessEqual(entry.occurrences, len(entry.sessions),
+                                 f"{entry.title[:40]} claims more occurrences "
+                                 f"than sessions")
+
+
 class TestTheQueuedNearMissPass(TempRoot):
     """The same check as `skillpp merge`, moved off the SessionEnd path.
 
