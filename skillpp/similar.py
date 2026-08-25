@@ -133,6 +133,12 @@ def fold_into(keep, drop) -> None:
 # it was: behind an explicit `--apply` on a command a person runs.
 
 
+# Not one of `decisions._TRUTH`'s labels on purpose. That dict scores a ranker's
+# hint against what a person decided; a fold is neither the ranker's opinion nor
+# a person's, so counting it there would corrupt `skillpp accuracy`.
+AUTO_MERGED = "auto-merged"
+
+
 def maybe_spawn_background_check(config) -> dict:
     """SessionStart's whole job: anything queued? then fire and forget.
 
@@ -205,64 +211,56 @@ def _drain_queue(config) -> None:
         pass
 
 
-def _write_report(config, **fields) -> None:
-    report = {"generated_at": datetime.now(timezone.utc).replace(
-                  microsecond=0).isoformat(),
-              "floor": config.queued_near_miss_floor,
-              "ceiling": config.similarity_threshold,
-              "embed_floor": config.embed_floor,
-              **fields}
-    try:
-        config.root.mkdir(parents=True, exist_ok=True)
-        config.near_miss_report_file.write_text(
-            json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-    except OSError:
-        pass
-
-
-def load_near_miss_report(config) -> dict | None:
-    """The last report, or None if there is not a readable one."""
-    try:
-        return json.loads(
-            config.near_miss_report_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
 def run_background_check(config, *, timeout: float | None = None) -> dict:
-    """Check the queued entries for near-misses and write a report.
+    """Fold the queued entries that are the same procedure.
 
-    Reports; never folds. That asymmetry is why this needs no lock — two of
-    these racing compute the same free local answer twice and the later write
-    wins, which is waste rather than a wrong result.
+    Folds without asking. The gate this used to have was redundant with the one
+    the pipeline already enforces further down: a folded entry is still only a
+    *candidate*, and `fold_into` keeps both sides' intents and variants rather
+    than discarding the loser's evidence. So a wrong fold arrives at
+    `skillpp review` as a candidate whose intents plainly do not belong
+    together, and it still needs an explicit `promote` to become anything. The
+    person is in the loop at the proposal, which is where they were always going
+    to look.
+
+    Every fold is appended to `decisions.jsonl`, which is the only place the
+    dropped entry's identity survives once its file is gone.
 
     Only a clean pass drains the queue. A timeout or an unreachable model leaves
     it exactly as it was, so the next session retries the whole backlog instead
     of dropping the pairs this run never reached.
     """
+    from . import decisions
     from .ledger import Ledger, STATUS_CANDIDATE
 
     queued = _read_queue_ids(config)
     if not queued:
         return {"status": "empty"}
 
-    entries = [e for e in Ledger(config).all() if e.status == STATUS_CANDIDATE]
+    ledger = Ledger(config)
+    entries = [e for e in ledger.all() if e.status == STATUS_CANDIDATE]
     pairs = near_misses(entries, floor=config.queued_near_miss_floor,
                         ceiling=config.similarity_threshold)
     # Only pairs involving something this queue actually named. The rest were
-    # already offered on an earlier pass and declined by whoever read it.
+    # compared on an earlier pass and were not the same procedure then either.
     pairs = [p for p in pairs if p[0].id in queued or p[1].id in queued]
 
     budget = timeout if timeout is not None else config.background_timeout_seconds
     deadline = time.monotonic() + budget
     vectors: dict[str, list[float]] = {}
-    found, checked = [], 0
+    # An entry already folded this pass is gone from the ledger, so a later pair
+    # naming it would fold a stale object over a saved one. Same guard
+    # `cmd_merge` has, for the same reason: folds must not chain.
+    folded: set[str] = set()
+    merged, checked = 0, 0
     timed_out = unreachable = False
 
     for a, b, lex in pairs:
         if time.monotonic() >= deadline:
             timed_out = True
             break
+        if a.id in folded or b.id in folded:
+            continue
         try:
             for entry in (a, b):
                 if entry.id not in vectors:
@@ -277,18 +275,22 @@ def run_background_check(config, *, timeout: float | None = None) -> dict:
             break
         checked += 1
         score = cosine(vectors[a.id], vectors[b.id])
-        if score >= config.embed_floor:
-            found.append({"a": a.id, "a_title": a.title,
-                          "b": b.id, "b_title": b.title,
-                          "lexical": round(lex, 3),
-                          "embedding": round(score, 3),
-                          "why": f"same shape at {score:.3f}"})
+        if score < config.embed_floor:
+            continue
+        fold_into(a, b)
+        ledger.save(a)
+        ledger.delete(b.id)
+        folded.add(b.id)
+        merged += 1
+        # The dropped entry's file is now gone; this line is the only record
+        # that it existed and what it was called.
+        decisions.record(
+            config, a, AUTO_MERGED,
+            note=f"absorbed {b.id} ({b.title[:80]}) — lexical {lex:.3f}, "
+                 f"embedding {score:.3f}")
 
-    _write_report(config, candidates=found, pairs_considered=len(pairs),
-                  pairs_checked=checked, timed_out=timed_out,
-                  model_unreachable=unreachable)
     if not timed_out and not unreachable:
         _drain_queue(config)
     return {"status": "checked", "pairs_considered": len(pairs),
-            "pairs_checked": checked, "found": len(found),
+            "pairs_checked": checked, "merged": merged,
             "timed_out": timed_out, "model_unreachable": unreachable}

@@ -99,40 +99,20 @@ def play(case, root: Path, api, *, merge: bool = False) -> list:
 
 
 def _apply_queued_merges(config) -> None:
-    """Run the queued near-miss pass and fold what it finds.
+    """Run the queued near-miss pass, which folds what it recognises.
 
-    Scored with the fold applied on purpose. The real command needs `--apply`
-    and always will — but what a person gets *after* applying is the outcome
-    this corpus is measuring, and a report nobody acts on moves no occurrence
-    count.
-
-    Imported here rather than through `load()` so a branch without a queued
-    pass still scores: `load()`'s contract is three hook handlers and a Ledger,
-    and widening it would make this corpus unable to measure anything else.
+    Imported here rather than through `load()` so a branch without a queued pass
+    still scores: `load()`'s contract is three hook handlers and a Ledger, and
+    widening it would make this corpus unable to measure anything else.
     """
     try:
-        from skillpp.similar import fold_into, run_background_check, \
-            load_near_miss_report
-        from skillpp.ledger import Ledger, STATUS_CANDIDATE
+        from skillpp.similar import run_background_check
     except ImportError:
         return
     try:
         run_background_check(config)
     except Exception:  # noqa: BLE001 - a benchmark must not die on a dead host
         return
-    report = load_near_miss_report(config) or {}
-    ledger = Ledger(config)
-    seen = set()
-    for row in report.get("candidates", []):
-        a, b = ledger.get(row.get("a", "")), ledger.get(row.get("b", ""))
-        if not a or not b or a.id in seen or b.id in seen:
-            continue
-        if a.status != STATUS_CANDIDATE or b.status != STATUS_CANDIDATE:
-            continue
-        fold_into(a, b)
-        ledger.save(a)
-        ledger.delete(b.id)
-        seen.update({a.id, b.id})
 
 
 def score(cases, use_model: bool, repo=None) -> dict:

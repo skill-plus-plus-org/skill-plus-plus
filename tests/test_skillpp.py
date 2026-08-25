@@ -1510,70 +1510,89 @@ class TestTheQueuedNearMissPass(TempRoot):
         self.assertEqual(len(queued), 1)
         self.assertLess(queued[0][2], self.config.near_miss_floor)
 
-    def test_the_queued_pass_reports_the_pair_and_drains_the_queue(self):
-        from skillpp.similar import load_near_miss_report, run_background_check
+    def test_the_queued_pass_folds_and_drains_the_queue(self):
+        from skillpp.similar import run_background_check
         self._two_releases()
         self._same_shape()
         result = run_background_check(self.config)
-        self.assertEqual(result["found"], 1)
+        self.assertEqual(result["merged"], 1)
         self.assertFalse(result["timed_out"])
         self.assertFalse(result["model_unreachable"])
-        self.assertEqual(load_near_miss_report(self.config)["candidates"][0]["embedding"],
-                         1.0)
         self.assertEqual(self.config.pending_checks_file.read_text(), "")
 
-    def test_the_queued_pass_folds_nothing_by_itself(self):
+    def test_the_queued_pass_folds_by_itself(self):
+        """No second command. The pass that finds it is the pass that folds it."""
         from skillpp.similar import run_background_check
         self._two_releases()
         self._same_shape()
         run_background_check(self.config)
-        self.assertEqual(len(list(Ledger(self.config).all())), 2,
-                         "the background pass folded without being asked")
+        entries = list(Ledger(self.config).all())
+        self.assertEqual(len(entries), 1)
+        # Union, not sum: two sightings in one session are still one occurrence.
+        self.assertEqual(entries[0].occurrences, 2)
+        self.assertEqual(len(entries[0].sessions), 2)
+        # The loser's evidence survives on the winner, which is what makes a
+        # wrong fold visible at review rather than silent.
+        self.assertEqual(len(entries[0].intents), 2)
+
+    def test_an_auto_fold_is_recorded_in_decisions(self):
+        """Once the dropped file is gone, this line is the only record of it."""
+        from skillpp import decisions
+        from skillpp.similar import AUTO_MERGED, run_background_check
+        self._two_releases()
+        dropped = {e.id for e in Ledger(self.config).all()}
+        self._same_shape()
+        run_background_check(self.config)
+        rows = [r for r in decisions.read(self.config)
+                if r["decision"] == AUTO_MERGED]
+        self.assertEqual(len(rows), 1)
+        survivor = list(Ledger(self.config).all())[0].id
+        gone = (dropped - {survivor}).pop()
+        self.assertIn(gone, rows[0]["note"])
+
+    def test_an_auto_fold_does_not_count_as_a_ranker_judgement(self):
+        """`skillpp accuracy` scores hint-against-person. A fold is neither."""
+        from skillpp import decisions
+        from skillpp.similar import run_background_check
+        self._two_releases()
+        self._same_shape()
+        run_background_check(self.config)
+        self.assertEqual(decisions.score(self.config)["scored"], 0)
+
+    def test_one_merge_per_entry_per_pass(self):
+        """Folds must not chain: a folded entry is gone and cannot absorb again."""
+        from skillpp.similar import run_background_check
+        self._bank("s1", "cut the 2.4 release", self.RELEASE)
+        self._bank("s2", "cut the 2.5 release", self.RELEASE_FAR)
+        self._bank("s3", "cut the 2.6 release",
+                   ["git switch main", "git fetch --all", "pytest -q",
+                    "npm version 2.6.0", "git tag -s v2.6.0 -m rel",
+                    "git push --follow-tags"])
+        before = len(list(Ledger(self.config).all()))
+        self.assertGreaterEqual(before, 3, "fixture did not bank three entries")
+        self._same_shape()   # every pair reads as the same procedure
+        result = run_background_check(self.config)
+        after = len(list(Ledger(self.config).all()))
+        self.assertEqual(result["merged"], before - after)
+        self.assertLess(result["merged"], before,
+                        "folded every entry into nothing")
 
     # -- reading it, and the --apply gate ------------------------------------
 
-    def _report_run(self, apply=False):
-        from skillpp.similar import run_background_check
-        self._two_releases()
-        self._same_shape()
-        run_background_check(self.config)
-        from skillpp.cli import main
-        argv = ["--root", str(self.config.root), "near-misses"]
-        if apply:
-            argv.append("--apply")
-        return main(argv)
-
-    def test_reading_the_report_does_not_fold_without_apply(self):
-        self.assertEqual(self._report_run(apply=False), 0)
-        self.assertEqual(len(list(Ledger(self.config).all())), 2)
-
-    def test_apply_folds_and_the_count_is_a_union_not_a_sum(self):
-        self.assertEqual(self._report_run(apply=True), 0)
-        entries = list(Ledger(self.config).all())
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].occurrences, 2)
-        self.assertEqual(len(entries[0].sessions), 2)
-
-    def test_a_pair_decided_since_the_check_ran_is_skipped(self):
-        from skillpp.cli import main
+    def test_an_entry_a_person_decided_is_never_folded(self):
+        """Only candidates are compared, so a dismissal is not undone by a fold."""
         from skillpp.ledger import STATUS_DISMISSED
         from skillpp.similar import run_background_check
         self._two_releases()
-        self._same_shape()
-        run_background_check(self.config)
         ledger = Ledger(self.config)
         victim = list(ledger.all())[0]
         victim.status = STATUS_DISMISSED
         ledger.save(victim)
-        self.assertEqual(main(["--root", str(self.config.root),
-                               "near-misses", "--apply"]), 0)
+        self._same_shape()
+        result = run_background_check(self.config)
+        self.assertEqual(result["merged"], 0)
         self.assertEqual(len(list(Ledger(self.config).all())), 2,
-                         "folded a pair a person had already decided")
-
-    def test_no_report_yet_says_so_rather_than_failing(self):
-        from skillpp.cli import main
-        self.assertEqual(main(["--root", str(self.config.root),
-                               "near-misses"]), 0)
+                         "folded an entry a person had already decided")
 
     # -- fail-safe -----------------------------------------------------------
 
@@ -1584,7 +1603,7 @@ class TestTheQueuedNearMissPass(TempRoot):
         self._no_model()
         result = run_background_check(self.config)
         self.assertTrue(result["model_unreachable"])
-        self.assertEqual(result["found"], 0)
+        self.assertEqual(result["merged"], 0)
         self.assertEqual(self.config.pending_checks_file.read_text(), before,
                          "a dead model drained the queue")
         self.assertEqual(len(list(Ledger(self.config).all())), 2)
@@ -1606,7 +1625,7 @@ class TestTheQueuedNearMissPass(TempRoot):
         with self.config.pending_checks_file.open("a") as fh:
             fh.write("{not json at all\n\n")
         self._same_shape()
-        self.assertEqual(run_background_check(self.config)["found"], 1)
+        self.assertEqual(run_background_check(self.config)["merged"], 1)
 
 
 class TestEmbeddingMatch(TempRoot):

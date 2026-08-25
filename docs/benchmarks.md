@@ -639,3 +639,42 @@ same outage once per pair: **0.13s** against a closed port, queue byte-identical
 ledger untouched. Neither a timeout nor a dead model drains the queue, so a
 partial pass retries the whole backlog instead of dropping the pairs it never
 reached.
+
+### The fold no longer waits to be asked
+
+The queued pass above wrote a report and a person ran `--apply`. That gate was
+redundant with one already further down the pipeline, and removing it cost
+nothing measurable.
+
+`fold_into` keeps **both** entries' intents and variants on the survivor rather
+than discarding the loser's evidence, and a folded entry is still only a
+*candidate* — it has to pass `review`/`show`, which print those intents, and
+then an explicit `promote`. So a wrong fold does not vanish: it arrives at
+review as a candidate whose intents plainly do not belong together. The person
+was always going to look there. Asking them twice bought nothing.
+
+The pass now folds inline, and `decisions.jsonl` records each one with the
+dropped entry's id and title — the only place that identity survives once its
+file is gone. Deliberately *not* one of `decisions._TRUTH`'s labels: that dict
+scores a ranker's hint against a person's verdict, and a fold is neither.
+Verified — `skillpp accuracy` reports nothing after an auto-fold.
+
+The report file and `skillpp near-misses` are deleted rather than repurposed.
+The report had exactly one reader, the command deciding whether to apply it;
+with nothing left to decide there is nothing left to read, and
+`decisions.jsonl` is a better record anyway — every pass, not just the last,
+kept whether or not anyone runs a command.
+
+**The scoreboard is unchanged, which is the point:**
+
+| | `--apply` era | auto-fold |
+| --- | --- | --- |
+| segmentation | 22 of 23 | 22 of 23 |
+| ranking | 17 of 20 | 17 of 20 |
+| recurrence | 3 of 3 | 3 of 3 |
+
+Zero per-case deltas across all three axes. This change moves *when* a fold
+happens, not *which* pairs are recognised, and the corpus confirms it.
+
+Fail-safe re-verified after the change: an unreachable model folds nothing,
+records no decision, leaves the queue byte-identical, and returns in 0.10s.

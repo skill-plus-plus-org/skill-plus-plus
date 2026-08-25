@@ -139,11 +139,6 @@ class Config:
         return self.root / "pending_checks.jsonl"
 
     @property
-    def near_miss_report_file(self) -> Path:
-        """What the last queued pass found, for `skillpp near-misses` to read."""
-        return self.root / "near_miss_report.json"
-
-    @property
     def ledger_dir(self) -> Path:
         return self.root / "ledger"
 
