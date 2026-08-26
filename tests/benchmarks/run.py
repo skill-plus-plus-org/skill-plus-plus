@@ -62,7 +62,7 @@ def play(case, root: Path, api, *, merge: bool = False) -> list:
     config = Config(root)
     config.ensure_dirs()
     sid = case.name
-    for tool, body, failed in case.script:
+    for tool, body, failed, *rest in case.script:
         if tool == "prompt":
             handle_prompt(config, {"session_id": sid, "cwd": "/w", "prompt": body})
             continue
@@ -71,6 +71,8 @@ def play(case, root: Path, api, *, merge: bool = False) -> list:
             payload["tool_input"] = body
         else:
             payload["tool_input"] = {_INPUT_KEY.get(tool, "value"): body}
+            if rest and rest[0]:
+                payload["tool_input"]["description"] = rest[0]
         if failed:
             payload["tool_response"] = {"is_error": True, "error": "command failed"}
         handle_tool(config, payload)
@@ -78,7 +80,7 @@ def play(case, root: Path, api, *, merge: bool = False) -> list:
     if case.follow:
         # A distinct session id, because occurrences count sessions and a
         # replay under the same id would measure nothing.
-        for tool, body, failed in case.follow:
+        for tool, body, failed, *rest in case.follow:
             if tool == "prompt":
                 handle_prompt(config, {"session_id": sid + "-2", "cwd": "/w",
                                        "prompt": body})
@@ -88,6 +90,8 @@ def play(case, root: Path, api, *, merge: bool = False) -> list:
                 payload["tool_input"] = body
             else:
                 payload["tool_input"] = {_INPUT_KEY.get(tool, "value"): body}
+                if rest and rest[0]:
+                    payload["tool_input"]["description"] = rest[0]
             if failed:
                 payload["tool_response"] = {"is_error": True,
                                             "error": "command failed"}

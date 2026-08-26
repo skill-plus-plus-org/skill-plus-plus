@@ -48,18 +48,29 @@ def _num_ctx(prompt: str) -> int:
 
 
 def ask(model: str, prompt: str, *, host: str = DEFAULT_HOST,
-        timeout: float = 120.0) -> str:
+        timeout: float = 120.0, think: bool | None = None) -> str:
     """Put *prompt* to *model* and return its reply.
 
     Temperature is zero: this is a classifier, and a classifier that answers
     differently on a rerun cannot be scored.
+
+    *think* asks a reasoning-capable model to reason before answering. It is
+    sent only when set, because Ollama rejects it outright on models without
+    the capability — and most of the ones installed here lack it, so a default
+    of ``True`` would break every existing caller — and Ollama turns thinking
+    *on* by default for a model that supports it, so leaving this unset is not
+    the same as leaving it off. Measured on `qwen3.5:9b`: 113.8s unset against
+    0.5s with it off, for the same one-word question.
     """
-    body = json.dumps({
+    payload = {
         "model": model,
         "prompt": prompt,
         "stream": False,
         "options": {"temperature": 0, "num_ctx": _num_ctx(prompt)},
-    }).encode("utf-8")
+    }
+    if think is not None:
+        payload["think"] = think
+    body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         f"{host.rstrip('/')}/api/generate", data=body,
         headers={"Content-Type": "application/json"})

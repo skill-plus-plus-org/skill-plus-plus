@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .config import Config
 from .ledger import Entry, describe_step
-from .signals import Question, detect, effects
+from .signals import Question, detect, effects, recurring_steps
 
 
 def render_proposal(entry: Entry, config: Config) -> str:
@@ -31,7 +31,13 @@ def render_proposal(entry: Entry, config: Config) -> str:
     lines.append("WHAT IT WILL DO")
     if eff["commands"]:
         for cmd in eff["commands"][:12]:
+            # The command stays the thing being approved; the agent's own note,
+            # where it left one, goes underneath so a screenful of shell can be
+            # read at a glance.
             lines.append(f"  run      {cmd}")
+            note = eff.get("describes", {}).get(cmd)
+            if note:
+                lines.append(f"           ↳ {note}")
         if len(eff["commands"]) > 12:
             lines.append(f"           … and {len(eff['commands']) - 12} more")
     for target in eff["writes"][:8]:
@@ -140,6 +146,23 @@ def _answered_kinds(answers: dict[str, str]) -> set[str]:
     return closed
 
 
+def _cli_of(entry, steps: list[dict]) -> list[str]:
+    """Dependencies of the steps actually written into the skill.
+
+    `entry.deps_cli` accumulates across every occurrence, so after
+    `recurring_steps` trims an episode it can still name programs from steps
+    that are no longer in the skill. Narrow it to what the kept steps use — but
+    only when something was trimmed, and only when the narrowing finds
+    anything: `deps_cli` also holds programs a path-invoked script needs, which
+    cannot be re-derived from the command text.
+    """
+    from .capture import _cli_dependencies
+    if len(steps) == len(entry.steps):
+        return list(entry.deps_cli)
+    narrowed = sorted(set(entry.deps_cli) & _cli_dependencies(steps))
+    return narrowed or list(entry.deps_cli)
+
+
 def scaffold_skill(
     entry: Entry,
     name: str,
@@ -154,7 +177,11 @@ def scaffold_skill(
     review time, editing this scaffold.
     """
     answers = answers or {}
-    eff = effects(entry.steps)
+    # The steps that happened every time, not the ones that happened once.
+    # Where an entry has only been seen once there is nothing to compare and
+    # this is the whole episode.
+    steps = recurring_steps(entry)
+    eff = effects(steps)
     dictated = getattr(entry, "source", "capture") == "dictated"
     desc = description or f"{entry.title}. Use when repeating this workflow."
     # A dictated entry's title is the raw description, which makes a poor
@@ -170,7 +197,7 @@ def scaffold_skill(
         f'  provenance: "ledger:{entry.id}"',
         f'  tier: "{tier}"',
         f"  occurrences: {entry.occurrences}",
-        f"  requires_cli: {_yaml_list(entry.deps_cli)}",
+        f"  requires_cli: {_yaml_list(_cli_of(entry, steps))}",
         f"  requires_mcp: {_yaml_list(entry.deps_mcp)}",
         "---",
         "",
@@ -196,7 +223,7 @@ def scaffold_skill(
         ]
 
     lines += ["## Steps", ""]
-    for n, step in enumerate(entry.steps, 1):
+    for n, step in enumerate(steps, 1):
         lines.append(f"{n}. {describe_step(step)}")
     lines.append("")
 

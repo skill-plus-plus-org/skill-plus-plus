@@ -39,6 +39,39 @@ _KEEP_INPUT = {
 # boundary, never a step of the workflow itself.
 _NOISE_TOOLS = {"Read", "Glob", "Grep", "TodoWrite", "Task", "WebFetch", "WebSearch",
                 PROMPT_TOOL}
+# How far ahead to look for the write a `Read` fed. Read-then-edit is usually
+# adjacent; a couple of steps of slack covers a read, a check, then the edit.
+_READ_FEEDS_WINDOW = 3
+
+
+def _substantive(steps: list[dict]) -> list[dict]:
+    """The steps that are the work, keeping a `Read` that fed a write.
+
+    `_NOISE_TOOLS` drops every `Read` as pure exploration. Measured over 621
+    real `Read` calls, that is backwards: 38.5% are immediately followed by a
+    write to the *same file* and only 18.2% sit inside a run of reads. So the
+    rule discards twice as many procedure inputs as exploration — and the step
+    it discards is the one that says which file the procedure operates on.
+
+    Read-then-edit stays. A read that leads nowhere still goes, which is the
+    case the original rule was written for.
+    """
+    keep: list[dict] = []
+    for index, step in enumerate(steps):
+        tool = step.get("tool")
+        if tool not in _NOISE_TOOLS:
+            keep.append(step)
+            continue
+        if tool != "Read":
+            continue
+        path = (step.get("input") or {}).get("file_path")
+        if not path:
+            continue
+        ahead = steps[index + 1:index + 1 + _READ_FEEDS_WINDOW]
+        if any(s.get("tool") in ("Edit", "Write", "NotebookEdit")
+               and (s.get("input") or {}).get("file_path") == path for s in ahead):
+            keep.append(step)
+    return keep
 
 
 def log_error(config: Config, message: str) -> None:
@@ -120,8 +153,12 @@ def _failed(response) -> bool:
 # Envelopes the harness injects into the prompt stream. They are not something
 # a developer typed, and one of them became a candidate titled
 # `<task-notification>`.
+# `<command-message>` and `<!-- attach` were missing, and both reached the
+# ledger: a real replay produced candidates titled
+# `<command-message>caveman:caveman</command-message>` and `<!-- attach -->`.
 _ENVELOPE_PREFIXES = ("<task-notification", "<system-reminder",
-                      "<local-command", "<command-name")
+                      "<local-command", "<command-name", "<command-message",
+                      "<!-- attach")
 
 
 def handle_prompt(config: Config, payload: dict) -> None:
@@ -191,6 +228,7 @@ def handle_session_end(config: Config, payload: dict) -> dict:
     path = _session_file(config, session_id)
     if not path.exists():
         return {"status": "no-session"}
+
     session = _load_session(config, session_id)
     try:
         result = fold_session(config, session)
@@ -256,7 +294,7 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
                 source: str = "capture") -> dict:
     """Fold one episode's steps into a new or updated ledger entry."""
     cwd = session.get("cwd") or ""
-    substantive = [s for s in steps if s.get("tool") not in _NOISE_TOOLS]
+    substantive = _substantive(steps)
     if len(substantive) < 2:
         return {"status": "too-thin", "steps": len(substantive)}
 
@@ -464,6 +502,18 @@ def _intents_for(session: dict, steps: list[dict]) -> list[str]:
 def _cli_dependencies(steps: list[dict]) -> set[str]:
     """Programs the workflow shells out to — declared deps (README 5)."""
     common = {"cd", "ls", "echo", "cat", "true", "false", "export", "source"}
+    # Shell grammar, not programs. A real skill declared `requires_cli: ["\\",
+    # "do", "done", "for", "grep"]` — it was telling the reader to install `do`
+    # and `done`, because a `for f in *.md; do …; done` loop splits on `;` into
+    # chunks whose first token is a keyword. Anything a shell would parse as
+    # syntax cannot be a PATH dependency.
+    # A loop or conditional *header* contains no program at all — `for f in
+    # *.md` names a variable and a glob — so the whole chunk goes. A keyword
+    # that merely precedes a command does not: `do npm test` still depends on
+    # npm, so those are stepped past instead.
+    headers = {"for", "while", "until", "if", "elif", "case", "select"}
+    keywords = {"do", "done", "then", "else", "fi", "esac", "in", "function",
+                "time", "coproc", "!", "{", "}", "[[", "]]", "\\"}
     found: set[str] = set()
     for step in steps:
         if step.get("tool") != "Bash":
@@ -473,7 +523,17 @@ def _cli_dependencies(steps: list[dict]) -> set[str]:
             tokens = chunk.strip().split()
             if not tokens:
                 continue
-            program = tokens[0]
+            # Step past leading shell grammar rather than discarding the
+            # chunk: `do npm test` would otherwise lose `npm` along with `do`.
+            index = 0
+            while index < len(tokens) and (tokens[index] in keywords
+                                           or not tokens[index].strip("\\")):
+                index += 1
+            if index < len(tokens) and tokens[index] in headers:
+                continue
+            if index >= len(tokens):
+                continue
+            program = tokens[index]
             if "=" in program or program.startswith(("$", "(")):
                 continue
             if "/" in program:

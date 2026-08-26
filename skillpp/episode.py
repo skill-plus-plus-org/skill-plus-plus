@@ -19,37 +19,57 @@ from __future__ import annotations
 
 from .local import (DEFAULT_HOST, DEFAULT_MODEL, LocalModelUnavailable,
                     PROMPTS, ask, yes_no)
+from .normalize import strip_scaffolding
 
-# Long enough to show what a step did, short enough that thirty of them still
-# fit a small context. Heredoc bodies and minified payloads are what make a
-# single step run to kilobytes.
-_MAX_STEP_CHARS = 200
+# No per-step character cap. There was one, at 200, and it guillotined exactly
+# the steps that carry the most meaning: a `python3 - <<PY` heredoc renders as
+# its first line and an ellipsis, which tells a reader nothing. Measured over
+# 2988 real episodes, uncapped rendering peaks at ~8.2k tokens against the
+# 16384 ceiling `local.ask` sizes to — no episode overflows. `_MAX_STEPS` is
+# what bounds the prompt, and it stays.
 _MAX_STEPS = 40
 
 
 def render_step(step: dict) -> str:
-    """One readable line for *step* — raw, not fingerprinted.
+    """One readable step — raw, not fingerprinted.
 
     Deliberately not ``normalize_command``: that reduces
     ``python3 -m unittest discover`` to ``python3``, and a model reading it then
     says, correctly, that nothing here ran any tests.
+
+    A Bash step renders as two lines when the agent supplied a ``description``,
+    with the description first. That ordering is the point rather than a
+    cosmetic choice: ``sift`` asks whether a sequence is a *method* or one
+    particular job, and a shell command states mechanism while the description
+    states purpose. 87% of captured Bash calls carry one — written by the agent
+    at call time, already scrubbed on the way in, and until now read by nothing.
     """
     tool = str(step.get("tool") or "?")
     payload = step.get("input") or {}
     mark = "!" if step.get("failed") else "$"
     if tool == "Bash":
-        body = str(payload.get("command", "")).replace("\n", " ⏎ ")
-    elif tool in ("Edit", "Write", "NotebookEdit"):
+        # Scaffolding out. Measured: realistic commands cost sift 16 points of
+        # recall, and showing the description alone put all of it back — so the
+        # noise is what costs, not the command. Stripping keeps something to
+        # audit where description-only would leave a claim and nothing else.
+        body = " ".join(strip_scaffolding(str(payload.get("command", ""))).split())
+        note = " ".join(str(payload.get("description") or "").split())
+        if note:
+            return f"{mark} {note}\n        {body}"
+        return f"{mark} {body}"
+    if tool in ("Edit", "Write", "NotebookEdit"):
         body = f"{tool} {payload.get('file_path', '')}"
     elif tool == "UserPrompt":
-        return f"> {str(payload.get('prompt', ''))[:_MAX_STEP_CHARS]}"
+        # `handle_prompt` writes "text"; this read "prompt" and so rendered
+        # empty. Dead today — UserPrompt is in `_NOISE_TOOLS` and never reaches
+        # `entry.steps` — but it would have failed silently the moment it was
+        # not, so both keys are accepted.
+        text = payload.get("text") or payload.get("prompt") or ""
+        return "> " + " ".join(str(text).split())
     else:
         args = ", ".join(f"{k}={v}" for k, v in list(payload.items())[:2])
         body = f"{tool}({args})"
-    body = " ".join(body.split())
-    if len(body) > _MAX_STEP_CHARS:
-        body = body[:_MAX_STEP_CHARS - 1] + "…"
-    return f"{mark} {body}"
+    return f"{mark} {' '.join(body.split())}"
 
 
 def render(entry) -> tuple[str, str]:

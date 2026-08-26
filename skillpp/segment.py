@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 import re
 
-from .normalize import normalize_command
+from .normalize import normalize_command, normalize_links
 
 # What ends a task.
 #
@@ -74,7 +74,6 @@ ARTIFACT_TOOLS = frozenset({"SendUserFile"})
 # interleaving of prompts and steps survives to here.
 PROMPT_TOOL = "UserPrompt"
 
-
 @dataclass
 class Episode:
     """One task's worth of steps, cut out of a session."""
@@ -103,9 +102,13 @@ def is_marker(step: dict) -> bool:
     if tool != "Bash":
         return False
     command = str((step.get("input") or {}).get("command", ""))
-    # normalize_command already reduces "git commit -m 'whatever'" to
-    # "git commit", so this is a set lookup rather than a pile of regexes.
-    return normalize_command(command) in COMPLETION_MARKERS
+    # Every link of the chain, not just the head. `normalize_command` keeps the
+    # head because a signature must not move when someone prefixes a `cd` — but
+    # the finishing verb is usually last, so reading the head called
+    # `cd repo && git add -A && git commit` a `cd`. Measured on one real
+    # session: 17 commits, 0 markers, and every boundary fell through to "the
+    # developer typed something new".
+    return any(link in COMPLETION_MARKERS for link in normalize_links(command))
 
 
 def is_prompt(step: dict) -> bool:
@@ -133,6 +136,14 @@ def is_read_only(step: dict) -> bool:
     if tool.startswith("mcp__"):
         leaf = tool.split("__")[-1].lower()
         return leaf.startswith(_MCP_READ_VERBS)
+    # The tools whose whole purpose is looking. Their absence here meant the
+    # flagging rule below — "every substantive step only looked at things" —
+    # could never fire on an episode containing a `Read`, which is most of them.
+    # `reading-around` passed only because the trimmer happened to cut one step
+    # and push it under the too-thin gate, not because anything recognised it as
+    # pure exploration.
+    if tool in ("Read", "Glob", "Grep", "WebFetch", "WebSearch"):
+        return True
     if tool != "Bash":
         return False
     command = str((step.get("input") or {}).get("command", ""))
@@ -158,7 +169,27 @@ def trim_leading_exploration(steps: list[dict],
     Prompt sentinels are never cut. They carry the stated intent an episode is
     titled from, and dropping them would leave the episode named after a
     command.
+
+    **An MCP retrieval is never cut either.** The argument above is a
+    programming argument: greps that *located* a bug are not the fix. It does
+    not transfer to work done through tools, where fetching the material is
+    step one of the method rather than the search that found it — "pull the
+    docs, build the agenda, share it" is a procedure whose first two steps are
+    reads. Trimming them left `meeting-prep` as two steps out of five, and the
+    model called it one particular job, correctly, on what it was shown.
+
+    Narrow on purpose: this changes what the *trimmer* considers droppable and
+    leaves `is_read_only` alone. The flagging rules downstream use it to spot an
+    episode that only ever looked at things, and an all-MCP-reads episode is
+    exactly that — teaching `is_read_only` to ignore MCP made `reading-around`
+    bank a candidate it should have discarded.
     """
+
+    def trimmable(step: dict) -> bool:
+        if str(step.get("tool") or "").startswith("mcp__"):
+            return False
+        return is_read_only(step)
+
     prefix: list[dict] = []
     index = cut = 0
     while index < len(steps):
@@ -167,7 +198,7 @@ def trim_leading_exploration(steps: list[dict],
             prefix.append(step)
             index += 1
             continue
-        if is_read_only(step):
+        if trimmable(step):
             cut += 1
             index += 1
             continue
@@ -220,8 +251,8 @@ def segment(steps: list[dict], min_steps: int = 2,
     for step in steps:
         if is_prompt(step):
             # A new stated goal ends the preceding work, but only if there was
-            # enough of it. Mid-task prompts ("continue", "fix that") are
-            # common and must not shred an episode.
+            # enough of it. Mid-task prompts ("continue", "fix that") are common
+            # and must not shred an episode.
             if substantive_count(current) >= min_steps:
                 close("prompt")
             # The sentinel belongs to the episode it opens, so the title can

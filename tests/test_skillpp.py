@@ -74,6 +74,45 @@ class TestSanitize(unittest.TestCase):
         sha = "a" * 40
         self.assertEqual(scrub(f"git checkout {sha}"), f"git checkout {sha}")
 
+    def test_an_ssh_remote_is_not_an_email_address(self):
+        """`git@github.com` names nobody — it is the same string for every user
+        alive. Redacting it destroyed the clone step of every onboarding trace."""
+        for cmd in ("git clone git@github.com:acme/api.git",
+                    "ssh git@gitlab.internal:team/repo.git",
+                    "git remote add origin git@bitbucket.org:team/svc.git"):
+            self.assertEqual(scrub(cmd), cmd)
+
+    def test_a_real_address_is_still_redacted(self):
+        self.assertIn("[REDACTED:email]", scrub("contact me at dev@example.com"))
+        self.assertNotIn("jane.doe", scrub("email: jane.doe@acme.co, cc ops@acme.co"))
+
+    def test_a_long_path_is_not_mistaken_for_a_secret(self):
+        """`/` is in the token alphabet for base64's sake, so any path past 40
+        chars scored as high-entropy. A real entry read
+        `cat ${HOME}/.[REDACTED:high-entropy].md`, with the path destroyed."""
+        path = "/Users/dev/.claude/projects/-Users-dev-ai-projects-skill-plus/notes.md"
+        self.assertEqual(scrub(f"cat {path}"), f"cat {path}")
+
+    def test_a_long_descriptive_filename_is_not_a_secret(self):
+        """Found by looking at document work rather than the command-heavy
+        sessions this heuristic was tuned against. The first guard only split
+        on `/`, so a long hyphenated filename still scored as high-entropy."""
+        for name in ("2026-02-19-article-draft-guarantees-in-code-v3.md",
+                     "Reference2-heading-density-vs-word-count-analysis.md",
+                     "/tmp/2026-02-19-article-draft-guarantees-in-code-v3.md"):
+            self.assertEqual(scrub(name), name)
+
+    def test_a_blob_with_separators_in_it_is_still_a_secret(self):
+        """Segment *length* is not the discriminator — a base64 blob splits into
+        short pieces too. Its pieces do not look like words."""
+        blob = "OObjTXEYQHXlFd4PJUMsX7f3/OTb2ysM791a7dgirmuKjqhrdV9Xhl8yW7M"
+        self.assertIn("[REDACTED:high-entropy]", scrub(f"TOKEN {blob}"))
+
+    def test_a_base64_blob_containing_a_slash_is_still_caught(self):
+        """The path guard must not open a hole: judge the longest segment."""
+        blob = "aGVsbG8/d29ybGQrc2VjcmV0LzEyMzQ1Njc4OTBhYmNkZWZnaGlqa2xtbg=="
+        self.assertIn("[REDACTED:high-entropy]", scrub(f"SECRET {blob}"))
+
     def test_scrubbing_is_stable_for_signatures(self):
         a = scrub("deploy --token=" + "A1b2" * 12)
         b = scrub("deploy --token=" + "Z9y8" * 12)
@@ -92,6 +131,37 @@ class TestNormalize(unittest.TestCase):
         a = signature([bash("pytest -k auth"), bash("git push")])
         b = signature([bash("pytest -k billing"), bash("git push")])
         self.assertEqual(a, b)
+
+    def test_normalize_links_reads_every_link_of_a_chain(self):
+        from skillpp.normalize import normalize_links
+        self.assertEqual(normalize_links("cd /repo && git add -A && git commit -m x"),
+                         ["cd", "git add", "git commit"])
+        self.assertEqual(normalize_links(""), [])
+
+    def test_the_chain_fix_does_not_move_normalize_command(self):
+        """`step_shape` calls it, so any drift here moves every signature."""
+        self.assertEqual(normalize_command("cd /repo && git commit -m x"), "cd")
+        self.assertEqual(normalize_command("git commit -m 'x'"), "git commit")
+        self.assertEqual(normalize_command("npm run test -- --watch"), "npm run")
+
+    def test_a_description_does_not_change_the_signature(self):
+        """The guard on rendering.
+
+        `signature` is the entry id and the recurrence match key, and it is
+        built to be maximally stable. A `description` is the opposite: free
+        text the agent rewrites every run — the same `./assemble.sh` was
+        described "Assemble after tone pass" once and "Assemble and measure
+        section 6" the next time. If that reached `step_shape`, two runs of one
+        procedure would fingerprint differently and never reach the threshold.
+        """
+        plain = [bash("pytest -k auth"), bash("git push")]
+        described = [
+            {"tool": "Bash", "input": {"command": "pytest -k auth",
+                                       "description": "Assemble after tone pass"},
+             "failed": False},
+            {"tool": "Bash", "input": {"command": "git push",
+                                       "description": "Ship it"}, "failed": False}]
+        self.assertEqual(signature(plain), signature(described))
 
     def test_consecutive_duplicates_collapse(self):
         self.assertEqual(
@@ -224,6 +294,27 @@ class TestSignals(unittest.TestCase):
             bash("npm run lint"), bash("npm run test")])
         self.assertEqual(detect(entry), [])
 
+    def test_effects_carry_descriptions_without_reshaping_commands(self):
+        """Additive: every other key keeps its type, so scaffold_skill is safe."""
+        eff = effects([
+            {"tool": "Bash", "input": {"command": "rm -rf build",
+                                       "description": "Clear the stale build"}},
+            bash("npm test")])
+        self.assertEqual(eff["describes"]["rm -rf build"], "Clear the stale build")
+        self.assertNotIn("npm test", eff["describes"])
+        self.assertIsInstance(eff["commands"], list)
+        self.assertIn("rm -rf build", eff["destructive"])
+
+    def test_effects_keep_the_first_description_for_a_repeated_command(self):
+        """Must agree with the deduped command list, which keeps the first."""
+        eff = effects([
+            {"tool": "Bash", "input": {"command": "./assemble.sh",
+                                       "description": "Assemble after tone pass"}},
+            {"tool": "Bash", "input": {"command": "./assemble.sh",
+                                       "description": "Assemble and measure"}}])
+        self.assertEqual(eff["commands"], ["./assemble.sh"])
+        self.assertEqual(eff["describes"]["./assemble.sh"], "Assemble after tone pass")
+
     def test_effects_flag_destructive_and_writes(self):
         eff = effects([bash("rm -rf build"), bash("echo hi > out.txt"),
                        {"tool": "Write", "input": {"file_path": "src/a.py"}}])
@@ -306,6 +397,26 @@ class TestCapture(TempRoot):
         entry = list(Ledger(self.config).all())[0]
         self.assertIn("npm", entry.deps_cli)
         self.assertNotIn("deploy.sh", entry.deps_cli)
+
+
+class TestEnvelopePrefixes(TempRoot):
+    """Both of these reached the ledger as candidate titles in a real replay."""
+
+    def _prompts(self, text):
+        handle_prompt(self.config, {"session_id": "s", "prompt": text})
+        from skillpp.capture import _load_session
+        return _load_session(self.config, "s")["prompts"]
+
+    def test_command_message_is_not_a_prompt(self):
+        self.assertEqual(
+            self._prompts("<command-message>caveman:caveman</command-message>"), [])
+
+    def test_attach_marker_is_not_a_prompt(self):
+        self.assertEqual(self._prompts("<!-- attach -->"), [])
+
+    def test_real_work_still_lands(self):
+        self.assertEqual(self._prompts("fix the staging migration"),
+                         ["fix the staging migration"])
 
 
 class TestDictation(TempRoot):
@@ -440,6 +551,47 @@ class TestScaffold(unittest.TestCase):
         self.assertEqual(fm["metadata"]["requires_cli"], ["gh"])
         self.assertEqual(fm["metadata"]["tier"], "provisional")
         self.assertIn("provenance", fm["metadata"])
+
+    def test_the_skill_keeps_only_what_recurred(self):
+        """An episode is one occurrence wrapped in that day's particulars. On a
+        real entry seen 11x the method was 3 steps and the episode held 14."""
+        from skillpp.signals import recurring_steps
+        core = [bash("./review.sh"), bash("./assemble.sh --force"),
+                bash("wc -w sections/*.md")]
+        entry = Entry(id="abc", signature="s", title="article loop",
+                      occurrences=3, steps=core + [bash("mv 11-close.md 12-close.md")],
+                      variants=[core + [bash("mv 11-close.md 12-close.md")],
+                                core + [bash("git commit -am wip")],
+                                core])
+        kept = recurring_steps(entry)
+        self.assertEqual([s["input"]["command"] for s in kept],
+                         [s["input"]["command"] for s in core])
+        self.assertNotIn("mv 11-close.md", scaffold_skill(entry, "x", "y"))
+
+    def test_one_occurrence_keeps_every_step(self):
+        """Nothing to compare, so nothing is evidence of being incidental."""
+        from skillpp.signals import recurring_steps
+        steps = [bash("npm ci"), bash("npm test")]
+        entry = Entry(id="abc", signature="s", steps=steps, variants=[steps])
+        self.assertEqual(len(recurring_steps(entry)), 2)
+
+    def test_a_disagreeing_set_of_variants_keeps_the_episode(self):
+        """An empty intersection means the occurrences agree on nothing, and
+        the honest answer is the whole episode rather than a stub."""
+        from skillpp.signals import recurring_steps
+        entry = Entry(id="abc", signature="s",
+                      steps=[bash("npm ci"), bash("npm test")],
+                      variants=[[bash("npm ci")], [bash("cargo build")]])
+        self.assertEqual(len(recurring_steps(entry)), 2)
+
+    def test_shell_keywords_are_not_dependencies(self):
+        """A real skill declared `requires_cli: ["\\", "do", "done", "for"]`."""
+        from skillpp.capture import _cli_dependencies
+        deps = _cli_dependencies([bash(
+            'cd s && for f in *.md; do printf x; wc -w < "$f"; done')])
+        self.assertEqual(deps, {"printf", "wc"})
+        self.assertEqual(_cli_dependencies([bash("for x in 1; do npm test; done")]),
+                         {"npm"})
 
     def test_unanswered_questions_become_known_gaps(self):
         entry = Entry(id="abc", signature="s", title="deploy",
@@ -706,6 +858,321 @@ class TestSegmentBoundaries(unittest.TestCase):
         self.assertTrue(episodes[0].flagged)
 
 
+def _lb(command, failed=False):
+    return {"tool": "Bash", "input": {"command": command}, "failed": failed}
+
+
+def _pr(text):
+    return {"tool": "UserPrompt", "input": {"text": text}, "failed": False}
+
+
+class TestEpisodeSampler(unittest.TestCase):
+    """The instrument that measures the pipeline, not the pipeline."""
+
+    def _mod(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
+        import boundaries
+        return boundaries
+
+    def test_the_age_filter_excludes_recent_transcripts(self):
+        """Fourteen of the fifteen transcripts every threshold was tuned
+        against are under two weeks old, so the gap is what keeps the yardstick
+        away from the material that shaped it."""
+        import os, time
+        b = self._mod()
+        pool = b.eligible_transcripts(older_than_days=14)
+        cutoff = time.time() - 14 * 86400
+        for t in pool:
+            self.assertLess(os.path.getmtime(t["path"]), cutoff, t["tag"])
+
+    def test_sessions_are_split_on_bash_share_not_mcp_share(self):
+        """MCP share files the Stitch design sessions as command-heavy — they
+        sit at 8% — which would rebuild the dev-heavy sample this avoids."""
+        b = self._mod()
+        self.assertEqual(b.COMMAND_LEANING_AT, 0.55)
+        for t in b.eligible_transcripts(older_than_days=14):
+            expected = "command" if t["bash_share"] >= 0.55 else "document"
+            self.assertEqual(t["kind"], expected, t["tag"])
+
+    def test_a_draft_is_never_a_verdict(self):
+        b = self._mod()
+        labels = b.draft_labels({"steps": [bash("npm ci"), bash("npm test")],
+                                 "evidence": "Committed as 0728ac0, tree clean."})
+        self.assertIsNone(labels["one_task"]["verdict"])
+        self.assertIsNone(labels["method"]["verdict"])
+        self.assertIn(labels["confidence"], ("high", "low"))
+
+    def test_scoring_refuses_a_batch_of_unadjudicated_drafts(self):
+        """Scoring a draft would be scoring my own guess and calling it truth."""
+        import json, tempfile
+        b = self._mod()
+        path = Path(tempfile.mkdtemp()) / "batch.json"
+        path.write_text(json.dumps({"episodes": [
+            {"id": "x-1", "split": "tuning", "steps": ["$ npm ci"], "evidence": "",
+             "labels": {"one_task": {"draft": True, "verdict": None},
+                        "method": {"draft": True, "verdict": None},
+                        "confidence": "low", "why": ""}}]}))
+        with self.assertRaises(SystemExit) as caught:
+            b.load_batch(str(path))
+        self.assertIn("draft", str(caught.exception))
+
+    def test_an_adjudicated_batch_loads(self):
+        import json, tempfile
+        b = self._mod()
+        path = Path(tempfile.mkdtemp()) / "batch.json"
+        path.write_text(json.dumps({"episodes": [
+            {"id": "x-1", "split": "tuning", "steps": ["$ npm ci"], "evidence": "",
+             "labels": {"one_task": {"draft": True, "verdict": True},
+                        "method": {"draft": True, "verdict": False},
+                        "confidence": "high", "why": ""}}]}))
+        self.assertEqual(len(b.load_batch(str(path))["episodes"]), 1)
+
+
+class TestReadThatFeedsAWrite(unittest.TestCase):
+    """`_NOISE_TOOLS` dropped every `Read`. Measured over 621 real ones, 38.5%
+    are immediately followed by a write to the same file and only 18.2% sit in
+    a run of reads — so the rule discarded twice as much procedure input as
+    exploration, and the step it discarded named the file being operated on."""
+
+    def _keep(self, steps):
+        from skillpp.capture import _substantive
+        return [s["tool"] for s in _substantive(steps)]
+
+    def _read(self, path):
+        return {"tool": "Read", "input": {"file_path": path}, "failed": False}
+
+    def _edit(self, path):
+        return {"tool": "Edit", "input": {"file_path": path}, "failed": False}
+
+    def test_a_read_that_feeds_an_edit_of_the_same_file_survives(self):
+        self.assertEqual(self._keep([self._read("/a.py"), self._edit("/a.py")]),
+                         ["Read", "Edit"])
+
+    def test_a_read_of_a_different_file_is_still_dropped(self):
+        self.assertEqual(self._keep([self._read("/a.py"), self._edit("/b.py")]),
+                         ["Edit"])
+
+    def test_a_run_of_reads_is_still_dropped(self):
+        self.assertEqual(
+            self._keep([self._read("/a.py"), self._read("/b.py"), bash("npm test")]),
+            ["Bash"])
+
+    def test_the_other_noise_tools_are_untouched(self):
+        for tool in ("Grep", "Glob", "TodoWrite", "Task", "WebFetch", "WebSearch"):
+            self.assertEqual(
+                self._keep([{"tool": tool, "input": {}, "failed": False},
+                            bash("npm test")]), ["Bash"], tool)
+
+    def test_a_read_with_no_path_is_dropped(self):
+        self.assertEqual(self._keep([{"tool": "Read", "input": {}, "failed": False},
+                                     bash("npm test")]), ["Bash"])
+
+
+class TestReadsAndRetrievals(unittest.TestCase):
+    """What counts as looking, and what the trimmer is allowed to drop."""
+
+    def test_the_read_tools_are_read_only(self):
+        """Their absence meant the pure-exploration flag could never fire on an
+        episode containing a `Read` — which is most of them."""
+        from skillpp.segment import is_read_only
+        for tool in ("Read", "Glob", "Grep", "WebFetch", "WebSearch"):
+            self.assertTrue(is_read_only({"tool": tool, "input": {}}), tool)
+        self.assertFalse(is_read_only({"tool": "Write", "input": {}}))
+        self.assertFalse(is_read_only({"tool": "Edit", "input": {}}))
+
+    def test_an_mcp_retrieval_still_counts_as_looking(self):
+        """`is_read_only` is unchanged for MCP: the flagging rule needs it."""
+        from skillpp.segment import is_read_only
+        self.assertTrue(is_read_only({"tool": "mcp__Drive__search_files", "input": {}}))
+        self.assertFalse(is_read_only({"tool": "mcp__Slack__post_message", "input": {}}))
+
+    def test_the_trimmer_keeps_a_leading_mcp_retrieval(self):
+        """Fetching the material is step one of the method, not the search that
+        found it. Trimming left `meeting-prep` as two steps of five."""
+        from skillpp.segment import trim_leading_exploration
+        steps = [{"tool": "mcp__Calendar__get_event", "input": {}, "failed": False},
+                 {"tool": "mcp__Drive__search_files", "input": {}, "failed": False},
+                 {"tool": "Write", "input": {"file_path": "/tmp/a.md"}, "failed": False},
+                 {"tool": "mcp__Slack__post_message", "input": {}, "failed": False}]
+        kept, cut = trim_leading_exploration(steps, 2)
+        self.assertEqual(cut, 0)
+        self.assertEqual(len(kept), 4)
+
+    def test_the_trimmer_still_drops_leading_greps(self):
+        from skillpp.segment import trim_leading_exploration
+        steps = [bash("grep -rn export src/"), bash("grep -rn timeout src/"),
+                 {"tool": "Edit", "input": {"file_path": "/a.py"}, "failed": False},
+                 bash("pytest")]
+        kept, cut = trim_leading_exploration(steps, 2)
+        self.assertEqual(cut, 2)
+        self.assertEqual([s["tool"] for s in kept], ["Edit", "Bash"])
+
+    def test_an_all_looking_episode_is_still_flagged(self):
+        """`reading-around`: two searches and two reads, and nothing else."""
+        from skillpp.segment import segment
+        steps = [{"tool": "UserPrompt", "input": {"text": "catch me up"}, "failed": False},
+                 {"tool": "mcp__Drive__search_files", "input": {}, "failed": False},
+                 {"tool": "Read", "input": {"file_path": "/tmp/a.md"}, "failed": False},
+                 {"tool": "Read", "input": {"file_path": "/tmp/b.md"}, "failed": False},
+                 {"tool": "mcp__Slack__search_messages", "input": {}, "failed": False}]
+        self.assertTrue(segment(steps, 2, 25)[0].flagged)
+
+
+class TestStripScaffolding(unittest.TestCase):
+    """Inputs here are real commands, sampled from transcripts.
+
+    Deliberately not taken from the benchmark corpus: the strip rules were
+    calibrated against 4,853 real Bash calls, and testing them against fixtures
+    written by the same hand that wrote the rules measures nothing.
+    """
+
+    def _strip(self, cmd):
+        from skillpp.normalize import strip_scaffolding
+        return strip_scaffolding(cmd)
+
+    def test_leading_cd_and_ampersands(self):
+        self.assertEqual(
+            self._strip("cd /Users/dev/ai_projects/skill-plus-plus && sed -n '1,40p' skillpp/cli.py"),
+            "sed -n '1,40p' skillpp/cli.py")
+
+    def test_bare_cd_on_its_own_line(self):
+        """17% of real commands, and the newline hides it from the `&&` form."""
+        self.assertEqual(self._strip("cd /repo\ngit status --short"),
+                         "git status --short")
+
+    def test_echo_markers_and_pagers_and_redirects(self):
+        self.assertEqual(
+            self._strip('python3 -m unittest discover -s tests -q 2>&1 | tail -3'),
+            "python3 -m unittest discover -s tests -q")
+        self.assertEqual(self._strip('echo "=== hooks ===" ; grep -n hook cli.py'),
+                         "grep -n hook cli.py")
+
+    def test_leading_variable_and_dev_null_and_or_true(self):
+        self.assertEqual(self._strip('S=/tmp/cc.txt; grep -oE "agent" "$S" | sort -u | head -6'),
+                         'grep -oE "agent" "$S" | sort -u')
+        self.assertEqual(self._strip("./examples/demo.sh >/dev/null 2>&1"),
+                         "./examples/demo.sh")
+        self.assertEqual(self._strip("npm ci || true"), "npm ci")
+
+    def test_a_clean_command_is_untouched(self):
+        for cmd in ("kubectl scale deploy/api --replicas=0 -n staging",
+                    "git commit -am 'fix: guard empty cart'",
+                    "pytest tests/test_auth.py"):
+            self.assertEqual(self._strip(cmd), cmd)
+
+    def test_a_command_that_is_all_scaffolding_survives(self):
+        """Better to show noise than to show nothing."""
+        self.assertTrue(self._strip('cd /repo && echo "hi"'))
+
+    def test_stripping_never_reaches_a_signature(self):
+        """The guard. Stripping *would* move fingerprints — `cd /r && npm test`
+        shapes as `bash:cd` raw and `bash:npm test` stripped — so `step_shape`
+        must keep reading the raw command and this must stay rendering-only."""
+        from skillpp.normalize import signature, strip_scaffolding
+        raw = [bash("cd /r && npm test 2>&1 | tail -5"), bash("cd /r && git commit -m x")]
+        stripped = [bash(strip_scaffolding(s["input"]["command"])) for s in raw]
+        self.assertEqual(signature(raw), "bash:cd")
+        self.assertNotEqual(signature(raw), signature(stripped))
+
+    def test_describe_step_still_emits_a_runnable_command(self):
+        """`render_step` feeds a model; `describe_step` writes the SKILL.md a
+        person runs. A stripped command there would not work."""
+        from skillpp.ledger import describe_step
+        step = {"tool": "Bash", "failed": False,
+                "input": {"command": "cd /repo && npm ci 2>&1 | tail -25",
+                          "description": "Install pinned dependencies"}}
+        self.assertIn("cd /repo", describe_step(step))
+        self.assertIn("tail -25", describe_step(step))
+
+    def test_render_step_shows_the_stripped_command(self):
+        from skillpp.episode import render_step
+        step = {"tool": "Bash", "failed": False,
+                "input": {"command": 'echo "=== npm ===" \ncd /Users/dev/acme && npm ci 2>&1 | tail -25',
+                          "description": "Install pinned dependencies"}}
+        out = render_step(step)
+        self.assertIn("Install pinned dependencies", out)
+        self.assertIn("npm ci", out)
+        self.assertNotIn("tail -25", out)
+        self.assertNotIn("=== npm ===", out)
+
+
+class TestCorpusRealism(unittest.TestCase):
+    """The benchmark corpus must keep the shape of real work.
+
+    Measured over 15 real transcripts: 92% of Bash commands are chained, 52%
+    are multiline, 19% carry a heredoc, median length 275 chars. The corpus was
+    at 2% / 0% / 0% / 22 — which is why it scored 95% recall while the same
+    pipeline showed no discrimination at all on real sessions, and why it could
+    not see that `is_read_only` misses every chained read.
+
+    Floors rather than exact targets, so the corpus can grow without this
+    becoming noise. Free: no model, no fixtures.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
+        from cases import CASES
+        cls.cmds = [row[1] for c in CASES
+                    for script in (c.script, c.follow or [])
+                    for row in script if row[0] == "Bash"]
+
+    def _share(self, predicate):
+        return sum(1 for c in self.cmds if predicate(c)) / len(self.cmds)
+
+    def test_commands_are_chained_like_real_ones(self):
+        share = self._share(lambda c: "&&" in c or ";" in c or "|" in c)
+        self.assertGreaterEqual(share, 0.85, f"only {share:.0%} chained; real is 92%")
+
+    def test_commands_are_multiline_like_real_ones(self):
+        share = self._share(lambda c: "\n" in c)
+        self.assertGreaterEqual(share, 0.40, f"only {share:.0%} multiline; real is 52%")
+
+    def test_some_commands_carry_a_heredoc(self):
+        """Floor well under the real 19% on purpose.
+
+        A heredoc *is* the command in 95% of real cases, so only commands that
+        genuinely read one get one — here that is `git commit -F-` and `psql`.
+        This corpus is git/npm/kubectl where real work is python3-heavy, and an
+        earlier pass that forced the real rate did it by bolting an unrelated
+        file-inspecting heredoc onto whatever command was already there. That
+        made `git clone` arrive trailed by 250 characters of unrelated Python
+        and cost a benchmark case. Inflating the number is worse than missing it.
+        """
+        share = self._share(lambda c: "<<" in c)
+        self.assertGreaterEqual(share, 0.04, f"only {share:.0%} heredoc")
+
+    def test_commands_are_long_like_real_ones(self):
+        """Also under the real 275. Real commands are long because their paths
+        and pipelines are long; padding these to match would be measuring the
+        padding."""
+        median = sorted(len(c) for c in self.cmds)[len(self.cmds) // 2]
+        self.assertGreaterEqual(median, 100, f"median {median} chars; real is 275")
+
+
+class TestChainedMarkers(unittest.TestCase):
+    """17 real commits produced 0 markers, because only the head was read."""
+
+    def test_a_chained_commit_is_a_marker(self):
+        from skillpp.segment import is_marker
+        self.assertTrue(is_marker(_lb("cd /repo && git add -A && git commit -m x")))
+
+    def test_a_heredoc_commit_is_a_marker(self):
+        from skillpp.segment import is_marker
+        self.assertTrue(is_marker(_lb(
+            "git add -A backend/ && git commit -q -F- <<'EOF' && git log --oneline -1")))
+
+    def test_a_failed_chained_commit_is_not_a_marker(self):
+        """A commit a pre-commit hook rejected means the task is still running."""
+        from skillpp.segment import is_marker
+        self.assertFalse(is_marker(
+            _lb("cd /repo && git commit -m x", failed=True)))
+
+    def test_a_chain_of_reads_is_not_a_marker(self):
+        from skillpp.segment import is_marker
+        self.assertFalse(is_marker(_lb("cd /repo && ls -la && cat README.md")))
+
+
 class TestSegmentBeforeAfter(TempRoot):
     """The regression this exists to prevent, measured both ways.
 
@@ -901,10 +1368,43 @@ class TestEpisodeFilter(TempRoot):
             {"tool": "Bash", "input": {"command": "npm test"},
              "failed": True}).startswith("!"))
 
-    def test_render_truncates_a_giant_step(self):
+    def test_render_no_longer_truncates_a_giant_step(self):
+        """The cap used to guillotine heredocs, which is where the meaning is."""
         from skillpp.episode import render_step
         line = render_step({"tool": "Bash", "input": {"command": "x" * 5000}})
-        self.assertLess(len(line), 260)
+        self.assertIn("x" * 5000, line)
+        self.assertNotIn("…", line)
+
+    def test_render_collapses_whitespace_in_a_multiline_command(self):
+        from skillpp.episode import render_step
+        line = render_step({"tool": "Bash",
+                            "input": {"command": "python3 - <<PY\nimport os\nPY"}})
+        self.assertIn("python3 - <<PY import os PY", line)
+        self.assertNotIn("\n", line)
+
+    def test_render_leads_with_the_agents_description(self):
+        """87% of captured Bash calls carry one; it is the purpose signal."""
+        from skillpp.episode import render_step
+        line = render_step({"tool": "Bash", "input": {
+            "command": "uvx --from mcpdoc mcpdoc --help",
+            "description": "Test if mcpdoc installs via uvx"}})
+        first, second = line.split("\n")
+        self.assertEqual(first, "$ Test if mcpdoc installs via uvx")
+        self.assertIn("uvx --from mcpdoc", second)
+
+    def test_render_omits_the_description_cleanly_when_absent(self):
+        """6.8% of episodes have none. No placeholder, no stray blank line."""
+        from skillpp.episode import render_step
+        line = render_step({"tool": "Bash", "input": {"command": "npm test"}})
+        self.assertEqual(line, "$ npm test")
+
+    def test_render_marks_a_failed_step_that_has_a_description(self):
+        """The `!` must survive the two-line path, or failure goes invisible."""
+        from skillpp.episode import render_step
+        line = render_step({"tool": "Bash", "failed": True, "input": {
+            "command": "kubectl scale deploy/api --replicas=0",
+            "description": "Drain replicas holding the lock"}})
+        self.assertTrue(line.startswith("! Drain replicas"))
 
     def test_a_parked_entry_is_not_ready_and_not_a_candidate(self):
         """Why a new status rather than a flag: `ready` already gates on it."""
@@ -1311,6 +1811,16 @@ class TestBenchmarkSegmentation(unittest.TestCase):
     # the segmenter shows up as a test that needs updating.
     DOWNSTREAM = {"needs-split", "needs-merge"}
 
+    # Cases the corpus fails because a *pipeline* rule is broken, not because
+    # the ground truth is wrong. Both appeared the moment the corpus commands
+    # were given the shape real ones have: `is_read_only` is anchored at the
+    # start of a command, so `cd /repo && grep …` does not match it and pure
+    # exploration stops being recognised as exploration. At the real 92%
+    # chaining rate that rule is effectively dead. Deliberately left broken here
+    # so the fix, when it lands, is attributable to the fix.
+    CHAINED_READS = {"investigation-that-goes-nowhere",
+                     "a-procedure-then-a-dead-end"}
+
     def _score(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
         from benchmarks.run import score
@@ -1323,7 +1833,8 @@ class TestBenchmarkSegmentation(unittest.TestCase):
                  f"got {r['got_episodes']}"
                  for r in self._score()["rows"]
                  if not r["segmentation"]
-                 and not self.DOWNSTREAM & set(r["tags"])]
+                 and not self.DOWNSTREAM & set(r["tags"])
+                 and r["name"] not in self.CHAINED_READS]
         self.assertEqual(wrong, [], "\n" + "\n".join(wrong))
 
     def test_the_known_gaps_are_still_exactly_the_known_gaps(self):
@@ -1342,9 +1853,13 @@ class TestBenchmarkSegmentation(unittest.TestCase):
         # lands at 0.531, under the floor of every band a live command can
         # afford, which is why the queued pass exists. Neither is a segmenter
         # bug — segmentation cut both sessions correctly.
+        #
+        # The other two are the `is_read_only` chaining bug described on
+        # `CHAINED_READS` — a pipeline defect the corpus could not see until its
+        # commands were shaped like real ones.
         expected = {"deploy-then-status-email",
                     "the-same-release-different-runner",
-                    "the-same-release-two-steps-different"}
+                    "the-same-release-two-steps-different"} | self.CHAINED_READS
         self.assertEqual(failing, expected)
 
     def test_recurrence_is_measured_at_all(self):

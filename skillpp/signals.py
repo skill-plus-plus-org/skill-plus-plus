@@ -154,6 +154,34 @@ def _off_trace_ending(steps: list[dict]) -> list[Question]:
     )]
 
 
+def recurring_steps(entry) -> list[dict]:
+    """The steps that happened *every* time, in order.
+
+    An episode is one occurrence of a procedure wrapped in that day's
+    particulars. Observed on a real entry seen 11 times: the method was three
+    steps — harvest the review markers, re-assemble, check word counts against
+    budget — and the recorded episode held fourteen, the other eleven being one
+    session's renames and edits.
+
+    Recurrence is what separates them, and it is already paid for: `variants`
+    holds up to four occurrences precisely so they can be compared, and
+    `_conditional_steps` below already computes the intersection in order to
+    ask about what falls outside it. This returns the inside.
+
+    Fewer than two variants means nothing to compare, so everything is kept —
+    a single occurrence has no evidence about which of its steps are incidental.
+    """
+    variants = getattr(entry, "variants", None) or []
+    if len(variants) < 2:
+        return list(entry.steps)
+    common = set.intersection(*({step_shape(s) for s in v} for v in variants))
+    kept = [s for s in entry.steps if step_shape(s) in common]
+    # Never reduce to nothing, and never to something too thin to be a
+    # procedure: an empty intersection means the occurrences disagree more than
+    # they agree, and the honest answer there is to show the whole episode.
+    return kept if len(kept) >= 2 else list(entry.steps)
+
+
 def _conditional_steps(entry) -> list[Question]:
     """A step present in some runs but not others: conditional, or incidental?"""
     variants = getattr(entry, "variants", None) or []
@@ -304,17 +332,22 @@ def _first_match(pattern: re.Pattern[str], text: str) -> str:
     return "…" + text[start:m.end() + 30].strip() + "…"
 
 
-def effects(steps: list[dict]) -> dict[str, list[str]]:
+def effects(steps: list[dict]) -> dict:
     """What the skill will *do* — the review surface (README 3.4).
 
     Effects, not purpose: a purpose summary can be accurate while the steps
-    underneath are wrong.
+    underneath are wrong. That is why the command itself is what this returns
+    and what the proposal prints. ``describes`` sits beside it rather than
+    replacing it — the agent's own note makes a wall of shell legible, but it
+    is annotation, and a reader approving a destructive step must still be
+    approving the command.
     """
     commands: list[str] = []
     writes: list[str] = []
     destructive: list[str] = []
     network: list[str] = []
     mcp: list[str] = []
+    describes: dict[str, str] = {}
 
     for step in steps:
         tool = step.get("tool", "")
@@ -323,6 +356,12 @@ def effects(steps: list[dict]) -> dict[str, list[str]]:
             cmd = str(payload.get("command", "")).strip()
             if cmd:
                 commands.append(cmd)
+                note = " ".join(str(payload.get("description") or "").split())
+                # First one wins, so this agrees with the deduped command list
+                # below: the same command run twice can be described two ways,
+                # and the review surface should not appear to contradict itself.
+                if note:
+                    describes.setdefault(cmd, note)
                 if DESTRUCTIVE.search(cmd):
                     destructive.append(cmd)
                 if NETWORK.search(cmd) or MUTATING.search(cmd):
@@ -343,4 +382,8 @@ def effects(steps: list[dict]) -> dict[str, list[str]]:
         "destructive": dedup(destructive),
         "network": dedup(network),
         "mcp": dedup(mcp),
+        # Added alongside rather than folded into `commands`, which stays a
+        # plain list of strings. Every other key keeps its type, so the
+        # destructive-operations block and `scaffold_skill` are untouched.
+        "describes": describes,
     }

@@ -65,6 +65,11 @@ def normalize_command(command: str) -> str:
         return ""
     # Only fingerprint the first command of a pipeline/chain.
     head = re.split(r"[|;&]{1,2}", command.strip())[0].strip()
+    return _normalize_segment(head)
+
+
+def _normalize_segment(head: str) -> str:
+    """``normalize_command`` for one already-isolated link of a chain."""
     tokens = head.split()
 
     index = 0
@@ -85,6 +90,93 @@ def normalize_command(command: str) -> str:
             break  # a path or value, not a subcommand
         return f"{program} {token}"
     return program
+
+
+# Chains are split on the shell's sequencing characters *and* on newlines, so a
+# multi-line script body is reached too. Deliberately crude: a heredoc body can
+# contain an `&` and produce a link that is not a command at all. That costs
+# nothing, because the only consumer tests membership in a nine-verb set —
+# a nonsense link simply matches nothing.
+_LINK_SPLIT_RE = re.compile(r"[|;&\n]{1,2}")
+
+
+def normalize_links(command: str) -> list[str]:
+    """Every link of a chain, each normalised as ``normalize_command`` would.
+
+    ``normalize_command`` keeps only the head, which is right for fingerprinting
+    — a signature must not change because someone prefixed a ``cd``. It is wrong
+    for asking "did this command do X", because the interesting verb is usually
+    last: ``cd repo && git add -A && git commit`` is a commit, and reading the
+    head calls it a ``cd``. Measured on one real session, that mistake hid 17
+    commits out of 17.
+
+    Separate function rather than a flag on ``normalize_command`` so the
+    fingerprinting path cannot be altered by accident.
+    """
+    if not command:
+        return []
+    out: list[str] = []
+    for chunk in _LINK_SPLIT_RE.split(command.strip()):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        shape = _normalize_segment(chunk)
+        if shape:
+            out.append(shape)
+    return out
+
+
+# Scaffolding a developer's agent wraps around the command that matters.
+# Calibrated against 4,853 real Bash calls, not against the benchmark corpus —
+# the first draft of this list was written from fixtures I had authored myself,
+# which measures nothing. Shares in the real corpus, in order below: 33%, 17%,
+# 48%, 32%/43%, 17%, 16%, 8%.
+_SCAF_VAR = re.compile(r"^\s*[A-Za-z_][A-Za-z0-9_]*=\S+\s*;\s*")
+_SCAF_CD = re.compile(r"^\s*cd\s+\S+\s*(?:&&|;)\s*")
+# `cd` alone on its own line — 17% of real commands, and invisible to the
+# form above because the split has already consumed the newline.
+_SCAF_CD_ONLY = re.compile(r"^\s*cd\s+\S+\s*$")
+_SCAF_ECHO = re.compile(r"""echo\s+(?:"[^"]*"|'[^']*')\s*""")
+_SCAF_REDIR = re.compile(r"\s*(?:2>&1|>\s*/dev/null(?:\s+2>&1)?)\s*")
+_SCAF_PAGER = re.compile(r"\s*\|\s*(?:head|tail)(?:\s+-n)?(?:\s+-?\d+)?\s*")
+_SCAF_ORTRUE = re.compile(r"\s*\|\|\s*(?:true|echo\s+(?:\S+|\"[^\"]*\"))\s*")
+
+
+def strip_scaffolding(command: str) -> str:
+    """The command without the plumbing a developer's agent wraps it in.
+
+    **Rendering only.** Nothing that feeds a fingerprint may call this: a
+    signature has to be stable, and this is a lossy convenience for a reader.
+    ``step_shape`` below deliberately keeps using the raw text.
+
+    The motivation is measured. Giving the benchmark corpus the shape of real
+    commands dropped sift recall from 95% to 79%; hiding the command entirely
+    and showing only the agent's own description put it back to 95%. So the
+    noise is what costs, not the command — and the answer is to remove the
+    noise rather than the command, which would leave nothing to audit.
+
+    Conservative on purpose: it removes seven known forms and leaves anything
+    unrecognised alone. An over-eager stripper that ate a real argument would
+    be worse than the scaffolding it removed, because the result still looks
+    like a plausible command.
+    """
+    if not command:
+        return command
+    parts = []
+    for line in command.split("\n"):
+        if _SCAF_CD_ONLY.match(line):
+            continue
+        line = _SCAF_VAR.sub("", line)
+        line = _SCAF_CD.sub("", line)
+        line = _SCAF_ORTRUE.sub(" ", line)
+        line = _SCAF_PAGER.sub(" ", line)
+        line = _SCAF_REDIR.sub(" ", line)
+        line = _SCAF_ECHO.sub("", line)
+        line = re.sub(r"^\s*(?:&&|;|\|)\s*|\s*(?:&&|;|\|)\s*$", "", line)
+        line = line.strip(" ;&|")
+        if line:
+            parts.append(line)
+    return " ".join(" ".join(parts).split()) or command.strip()
 
 
 def step_shape(step: dict) -> str:

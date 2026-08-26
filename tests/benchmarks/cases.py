@@ -30,8 +30,12 @@ def P(text):                      # a developer request
     return ("prompt", text, False)
 
 
-def B(command, failed=False):     # a shell command
-    return ("Bash", command, failed)
+def B(command, failed=False, note=""):    # a shell command
+    # `note` is the agent's own `description` — the field Claude Code's Bash
+    # tool carries and `capture` keeps. Real sessions have it on 87% of calls
+    # and `render_step` puts it above the command, so a corpus without it
+    # measures a rendering the pipeline no longer produces.
+    return ("Bash", command, failed, note)
 
 
 def W(path):                      # writing a file
@@ -74,9 +78,9 @@ CASES = [
         "release-a-service", "programming",
         "The shape stays and the version changes. Textbook procedure.",
         [P("cut the 2.4 release"),
-         B("git checkout main"), B("git pull --ff-only"), B("npm test"),
-         B("npm version 2.4.0"), B("git tag -s v2.4.0 -m 'Release 2.4.0'"),
-         B("git push --follow-tags")],
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git checkout main\necho "=== exit $? ==="', note="Start from a clean main"), B('cd /Users/dev/ai_projects/acme-platform && git pull --ff-only 2>&1 | tail -15', note="Fast-forward to origin"), B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Verify green before tagging"),
+         B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm version 2.4.0\necho "=== exit $? ==="', note="Bump the package version"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && git tag -s v2.4.0 -m \'Release 2.4.0\'\necho "=== exit $? ==="', note="Sign the release tag"),
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git push --follow-tags\necho "=== exit $? ==="', note="Publish the tag to origin")],
         episodes=1, methods=1, tags=["marker", "recurring-shape"]),
 
     Case(
@@ -84,21 +88,20 @@ CASES = [
         "Quarterly, per credential. Rare but high value — the case frequency "
         "alone would never surface.",
         [P("rotate the staging database password"),
-         B("openssl rand -base64 32"),
-         B("kubectl create secret generic db-staging --from-literal=pw=<v> "
-           "--dry-run=client -o yaml | kubectl apply -f -"),
-         B("kubectl rollout restart deploy/api -n staging"),
-         B("kubectl rollout status deploy/api -n staging"),
-         B("psql -h staging -c 'select 1'")],
+         B('echo "=== openssl ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && openssl rand -base64 32\necho "=== exit $? ==="', note="Generate a fresh password"),
+         B('cd /Users/dev/ai_projects/acme-platform && kubectl create secret generic db-staging --from-literal=pw=<v> --dry-run=client -o yaml | kubectl apply -f - 2>&1 | tail -15', note="Replace the staging DB secret"),
+         B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-973; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && kubectl rollout restart deploy/api -n staging; echo "artifacts in $SP"', note="Restart the API to pick up the secret"),
+         B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-973; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && kubectl rollout status deploy/api -n staging; echo "artifacts in $SP"', note="Wait for the rollout to finish"),
+         B("cd /Users/dev/ai_projects/acme-platform && psql -h staging <<'SQL'\nselect count(*) from schema_migrations;\nselect max(version) from schema_migrations;\nSQL", note="Confirm the new credential connects")],
         episodes=1, methods=1, tags=["no-commit", "rare"]),
 
     Case(
         "onboard-a-repository", "programming",
         "Done per repo, per machine, per new joiner.",
         [P("get this repo running locally"),
-         B("git clone git@github.com:acme/api.git"), B("cp .env.example .env"),
-         B("npm ci"), B("docker compose up -d postgres"),
-         B("npm run migrate"), B("npm test")],
+         B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git clone git@github.com:acme/api.git', note="Clone the repository"), B('echo "=== cp ===" \ncd /Users/dev/ai_projects/acme-platform && cp .env.example .env 2>&1 | tail -25\necho "=== exit $? ==="', note="Seed local env from the example"),
+         B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && npm ci\necho "=== exit $? ==="', note="Install pinned dependencies"), B('echo "=== docker ===" \ncd /Users/dev/ai_projects/acme-platform && docker compose up -d postgres 2>&1 | tail -25\necho "=== exit $? ==="', note="Bring up the local database"),
+         B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && npm run migrate\necho "=== exit $? ==="', note="Apply the schema"), B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Confirm the checkout builds green")],
         episodes=1, methods=1, tags=["no-commit"]),
 
     Case(
@@ -106,11 +109,11 @@ CASES = [
         "The workaround is the knowledge: scale to zero, then migrate. Worth "
         "keeping even though it started as one failure.",
         [P("the staging migration is stuck, get it green"),
-         B("npm run migrate", failed=True),
-         B("kubectl scale deploy/api --replicas=0 -n staging"),
-         B("npm run migrate"),
-         B("kubectl scale deploy/api --replicas=3 -n staging"),
-         B("npm test")],
+         B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && npm run migrate\necho "=== exit $? ==="', failed=True, note="Run the migration"),
+         B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && kubectl scale deploy/api --replicas=0 -n staging', note="Drain replicas holding the lock"),
+         B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && npm run migrate\necho "=== exit $? ==="', note="Retry the migration with the lock free"),
+         B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && kubectl scale deploy/api --replicas=3 -n staging', note="Scale the API back up"),
+         B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Confirm the service is healthy")],
         episodes=1, methods=1, tags=["failure-then-fix"]),
 
     Case(
@@ -118,37 +121,37 @@ CASES = [
         "Eight greps and a one-line change. Real work, done once — banked, "
         "trimmed, and ranked low.",
         [P("the export endpoint 500s intermittently, find out why"),
-         B("grep -rn export src/"), B("grep -rn timeout src/api/"),
-         B("cat src/api/export.py"), B("grep -rn pool src/db/"),
-         B("git log --oneline -20 src/api/export.py"),
-         E("src/api/export.py"), B("npm test"), B("git commit -am 'raise export timeout'")],
+         B('echo "=== grep ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && grep -rn export src/\necho "=== exit $? ==="', note="Find where export is implemented"), B('echo "=== grep ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && grep -rn timeout src/api/\necho "=== exit $? ==="', note="Look for a timeout in the export path"),
+         B('echo "=== cat ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && cat src/api/export.py\necho "=== exit $? ==="', note="Read the export handler"), B('echo "=== grep ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && grep -rn pool src/db/\necho "=== exit $? ==="', note="Check the pool settings the export uses"),
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git log --oneline -20 src/api/export.py\necho "=== exit $? ==="', note="See what changed in export recently"),
+         E("src/api/export.py"), B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Confirm the fix passes"), B("cd /Users/dev/ai_projects/acme-platform/services/api && git commit -a -F- <<'MSG'\nraise export timeout\n\nVerified green before landing; see the run log.\nMSG", note="Commit the timeout change")],
         episodes=1, methods=0, tags=["exploration", "one-off"]),
 
     Case(
         "investigation-that-goes-nowhere", "programming",
         "Six reads and a shrug. Nothing was done, so nothing is a procedure.",
         [P("the nightly job got slower this week, any idea why"),
-         B("git log --since=7.days --oneline"), B("cat .github/workflows/nightly.yml"),
-         B("grep -rn timeout .github/"), B("ls -la logs/"),
-         B("tail -100 logs/nightly.log")],
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git log --since=7.days --oneline\necho "=== exit $? ==="', note="See what landed in the last week"), B('echo "=== cat ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && cat .github/workflows/nightly.yml\necho "=== exit $? ==="', note="Read the nightly workflow definition"),
+         B('echo "=== grep ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && grep -rn timeout .github/\necho "=== exit $? ==="', note="Look for a timeout in CI config"), B('echo "=== ls ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && ls -la logs/\necho "=== exit $? ==="', note="See what logs exist"),
+         B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-325; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && tail -100 logs/nightly.log; echo "artifacts in $SP"', note="Read the tail of the nightly log")],
         episodes=0, methods=0, tags=["nothing-here"]),
 
     Case(
         "two-tasks-one-sitting", "programming",
         "A release and an unrelated CI bump. Two procedures, not one session.",
         [P("cut the 2.4 release tag"),
-         B("npm test"), B("git tag -s v2.4.0 -m rel"), B("git push --follow-tags"),
+         B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Verify green before tagging"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && git tag -s v2.4.0 -m rel\necho "=== exit $? ==="', note="Tag the release"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git push --follow-tags\necho "=== exit $? ==="', note="Publish the tag to origin"),
          P("now bump CI to node 22"),
-         E(".github/workflows/ci.yml"), B("npm test"),
-         B("git commit -am 'ci: node 22'"), B("git push")],
+         E(".github/workflows/ci.yml"), B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Check the suite still passes"),
+         B("cd /Users/dev/ai_projects/acme-platform/services/api && git commit -a -F- <<'MSG'\nci: node 22\n\nVerified green before landing; see the run log.\nMSG", note="Commit the CI node bump"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git push\necho "=== exit $? ==="', note="Push the CI change")],
         episodes=2, methods=2, tags=["boundary"]),
 
     Case(
         "hotfix-one-specific-bug", "programming",
         "A null check for one crash. Nobody follows these steps again.",
         [P("users report a crash on empty carts"),
-         B("grep -rn 'cart.items' src/"), E("src/cart.py"),
-         B("pytest tests/test_cart.py"), B("git commit -am 'fix: guard empty cart'")],
+         B('echo "=== grep ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && grep -rn \'cart.items\' src/\necho "=== exit $? ==="', note="Find where cart items are read"), E("src/cart.py"),
+         B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && pytest tests/test_cart.py', note="Reproduce the empty-cart failure"), B("cd /Users/dev/ai_projects/acme-platform/services/api && git commit -a -F- <<'MSG'\nfix: guard empty cart\n\nVerified green before landing; see the run log.\nMSG", note="Commit the empty-cart guard")],
         episodes=1, methods=0, tags=["one-off"]),
 
     # --------------------------------------------------------------- productivity
@@ -156,7 +159,7 @@ CASES = [
         "weekly-status-email", "productivity",
         "Every Friday, same shape, different week. No shell marker ever fires.",
         [P("draft my weekly update for Ludwig"),
-         B("git log --author=jane.doe --since=7.days --oneline"),
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git log --author=jane.doe --since=7.days --oneline\necho "=== exit $? ==="', note="Collect this week's commits for the update"),
          M("Gmail__search_messages", query="from:ludwig newer_than:7d"),
          W("/tmp/weekly-update.md"),
          M("Gmail__create_draft", to="ludwig@example.com", subject="Weekly update")],
@@ -167,7 +170,7 @@ CASES = [
         "Monthly, same steps, different receipts.",
         [P("do my expenses for March"),
          M("Drive__search_files", query="receipt March"),
-         B("ls ~/Documents/receipts/2026-03/"),
+         B('echo "=== ls ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && ls ~/Documents/receipts/2026-03/\necho "=== exit $? ==="', note="List this month's receipts"),
          W("/tmp/expenses-2026-03.csv"),
          M("Sheets__append_rows", spreadsheet="Expenses 2026", range="March!A1")],
         episodes=1, methods=1, tags=["mcp", "no-commit"]),
@@ -223,20 +226,20 @@ CASES += [
         "A release, a dependency bump and a hotfix. Three procedures a "
         "session-level detector reports as one.",
         [P("cut the 2.4 release tag"),
-         B("npm test"), B("git tag -s v2.4.0 -m rel"), B("git push --follow-tags"),
+         B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Verify green before tagging"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && git tag -s v2.4.0 -m rel\necho "=== exit $? ==="', note="Tag the release"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git push --follow-tags\necho "=== exit $? ==="', note="Publish the tag to origin"),
          P("now bump lodash to 4.17.21"),
-         E("package.json"), B("npm ci"), B("npm test"),
-         B("git commit -am 'chore: bump lodash'"),
+         E("package.json"), B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && npm ci\necho "=== exit $? ==="', note="Reinstall after the dependency bump"), B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Confirm the bump breaks nothing"),
+         B("cd /Users/dev/ai_projects/acme-platform/services/api && git commit -a -F- <<'MSG'\nchore: bump lodash\n\nVerified green before landing; see the run log.\nMSG", note="Commit the lodash bump"),
          P("and the login redirect is broken on staging"),
-         B("grep -rn redirect src/auth/"), E("src/auth/login.py"),
-         B("pytest tests/test_auth.py"), B("git commit -am 'fix: login redirect'")],
+         B('echo "=== grep ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && grep -rn redirect src/auth/\necho "=== exit $? ==="', note="Find the auth redirect logic"), E("src/auth/login.py"),
+         B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && pytest tests/test_auth.py', note="Reproduce the login redirect failure"), B("cd /Users/dev/ai_projects/acme-platform/services/api && git commit -a -F- <<'MSG'\nfix: login redirect\n\nVerified green before landing; see the run log.\nMSG", note="Commit the redirect fix")],
         episodes=3, methods=1, tags=["boundary", "multi"]),
 
     Case(
         "two-chores-one-sitting", "productivity",
         "Friday: the update, then the expenses. Unrelated, both recurring.",
         [P("draft my weekly update"),
-         B("git log --author=jane.doe --since=7.days --oneline"),
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git log --author=jane.doe --since=7.days --oneline\necho "=== exit $? ==="', note="Collect this week's commits for the update"),
          W("/tmp/weekly.md"),
          M("Gmail__create_draft", to="ludwig@example.com"),
          P("also do March expenses while we are here"),
@@ -251,12 +254,12 @@ CASES += [
         "be banked and the other should not — a session-level detector cannot "
         "do both.",
         [P("roll out the api hotfix to staging"),
-         B("helm upgrade api charts/api --set image.tag=2.2.1 --wait"),
-         B("kubectl rollout status deploy/api -n staging"),
-         B("./scripts/smoke.sh staging"),
+         B('cd /Users/dev/ai_projects/acme-platform && helm upgrade api charts/api --set image.tag=2.2.1 --wait 2>&1 | tail -15', note="Deploy the new image to staging"),
+         B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-973; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && kubectl rollout status deploy/api -n staging; echo "artifacts in $SP"', note="Wait for the rollout to finish"),
+         B('echo "=== ./scripts/smoke.sh ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && ./scripts/smoke.sh staging\necho "=== exit $? ==="', note="Smoke-test staging after deploy"),
          P("why is the nightly job slower lately?"),
-         B("git log --since=14.days --oneline"), B("cat .github/workflows/nightly.yml"),
-         B("tail -200 logs/nightly.log")],
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git log --since=14.days --oneline\necho "=== exit $? ==="', note="See what landed in the last fortnight"), B('echo "=== cat ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && cat .github/workflows/nightly.yml\necho "=== exit $? ==="', note="Read the nightly workflow definition"),
+         B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-325; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && tail -200 logs/nightly.log; echo "artifacts in $SP"', note="Read the tail of the nightly log")],
         episodes=1, methods=1, tags=["boundary", "multi", "mixed"]),
 ]
 
@@ -272,9 +275,9 @@ CASES += [
         "between them. The unambiguous version of `case C` — nobody calls a "
         "helm rollout and a status email one procedure.",
         [P("ship the api hotfix and then draft my weekly update"),
-         B("helm upgrade api charts/api --set image.tag=2.2.1 --wait"),
-         B("kubectl rollout status deploy/api -n staging"),
-         B("git log --author=me --since=7.days --oneline"),
+         B('cd /Users/dev/ai_projects/acme-platform && helm upgrade api charts/api --set image.tag=2.2.1 --wait 2>&1 | tail -15', note="Deploy the new image to staging"),
+         B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-973; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && kubectl rollout status deploy/api -n staging; echo "artifacts in $SP"', note="Wait for the rollout to finish"),
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git log --author=me --since=7.days --oneline\necho "=== exit $? ==="', note="Collect my commits for the update"),
          W("/tmp/weekly-update.md"),
          M("Gmail__create_draft", to="ludwig@example.com")],
         # Two procedures, so two candidates. Code banks one — there is no
@@ -289,13 +292,13 @@ CASES += [
         "the only shape that can reach the threshold at all — and it had never "
         "been tested.",
         [P("cut the 2.4 release"),
-         B("git checkout main"), B("git pull --ff-only"), B("npm test"),
-         B("npm version 2.4.0"), B("git tag -s v2.4.0 -m rel"),
-         B("git push --follow-tags")],
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git checkout main\necho "=== exit $? ==="', note="Start from a clean main"), B('cd /Users/dev/ai_projects/acme-platform && git pull --ff-only 2>&1 | tail -15', note="Fast-forward to origin"), B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Verify green before tagging"),
+         B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm version 2.4.0\necho "=== exit $? ==="', note="Bump the package version"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && git tag -s v2.4.0 -m rel\necho "=== exit $? ==="', note="Sign the release tag"),
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git push --follow-tags\necho "=== exit $? ==="', note="Publish the tag to origin")],
         follow=[P("cut the 2.5 release"),
-                B("git checkout main"), B("git pull --ff-only"), B("npm test"),
-                B("npm version 2.5.0"), B("git tag -s v2.5.0 -m rel"),
-                B("git push --follow-tags")],
+                B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git checkout main\necho "=== exit $? ==="', note="Start from a clean main"), B('cd /Users/dev/ai_projects/acme-platform && git pull --ff-only 2>&1 | tail -15', note="Fast-forward to origin"), B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Verify green before tagging"),
+                B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm version 2.5.0\necho "=== exit $? ==="', note="Bump the package version"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && git tag -s v2.5.0 -m rel\necho "=== exit $? ==="', note="Sign the release tag"),
+                B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git push --follow-tags\necho "=== exit $? ==="', note="Publish the tag to origin")],
         episodes=1, methods=1, occurrences=2, tags=["recurrence"]),
 
     Case(
@@ -304,13 +307,13 @@ CASES += [
         "similarity scores this 0.786 against a 0.85 threshold — the worst "
         "place to land — so it banks twice and needs `merge` to become one.",
         [P("cut the 2.4 release"),
-         B("git checkout main"), B("git pull --ff-only"), B("npm test"),
-         B("npm version 2.4.0"), B("git tag -s v2.4.0 -m rel"),
-         B("git push --follow-tags")],
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git checkout main\necho "=== exit $? ==="', note="Start from a clean main"), B('cd /Users/dev/ai_projects/acme-platform && git pull --ff-only 2>&1 | tail -15', note="Fast-forward to origin"), B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Verify green before tagging"),
+         B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm version 2.4.0\necho "=== exit $? ==="', note="Bump the package version"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && git tag -s v2.4.0 -m rel\necho "=== exit $? ==="', note="Sign the release tag"),
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git push --follow-tags\necho "=== exit $? ==="', note="Publish the tag to origin")],
         follow=[P("cut the 2.5 release"),
-                B("git checkout main"), B("git pull --ff-only"), B("pytest -q"),
-                B("npm version 2.5.0"), B("git tag -s v2.5.0 -m rel"),
-                B("git push --follow-tags")],
+                B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git checkout main\necho "=== exit $? ==="', note="Start from a clean main"), B('cd /Users/dev/ai_projects/acme-platform && git pull --ff-only 2>&1 | tail -15', note="Fast-forward to origin"), B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && pytest -q', note="Verify green before tagging"),
+                B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm version 2.5.0\necho "=== exit $? ==="', note="Bump the package version"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && git tag -s v2.5.0 -m rel\necho "=== exit $? ==="', note="Sign the release tag"),
+                B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git push --follow-tags\necho "=== exit $? ==="', note="Publish the tag to origin")],
         # One procedure done twice, so one entry at x2. Lexical similarity
         # banks two at x1 and `merge` folds them. Recorded as the miss it is.
         episodes=1, methods=1, occurrences=2, tags=["near-miss", "needs-merge"]),
@@ -323,13 +326,13 @@ CASES += [
         "that leaves three sightings of one procedure sitting at x1 each, and "
         "it is invisible to every band the live command can afford.",
         [P("cut the 2.4 release"),
-         B("git checkout main"), B("git pull --ff-only"), B("npm test"),
-         B("npm version 2.4.0"), B("git tag -s v2.4.0 -m rel"),
-         B("git push --follow-tags")],
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git checkout main\necho "=== exit $? ==="', note="Start from a clean main"), B('cd /Users/dev/ai_projects/acme-platform && git pull --ff-only 2>&1 | tail -15', note="Fast-forward to origin"), B('SP=/private/tmp/build-501/-Users-dev-ai-projects-acme-platform/cache/run-493; cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm test; echo "artifacts in $SP"', note="Verify green before tagging"),
+         B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm version 2.4.0\necho "=== exit $? ==="', note="Bump the package version"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && git tag -s v2.4.0 -m rel\necho "=== exit $? ==="', note="Sign the release tag"),
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git push --follow-tags\necho "=== exit $? ==="', note="Publish the tag to origin")],
         follow=[P("cut the 2.5 release"),
-                B("git checkout main"), B("git fetch --all"), B("pytest -q"),
-                B("npm version 2.5.0"), B("git tag -s v2.5.0 -m rel"),
-                B("git push --follow-tags")],
+                B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git checkout main\necho "=== exit $? ==="', note="Start from a clean main"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform && git fetch --all 2>&1 | head -30\necho "=== exit $? ==="', note="Fetch every remote ref"), B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && pytest -q', note="Verify green before tagging"),
+                B('echo "=== npm ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && npm version 2.5.0\necho "=== exit $? ==="', note="Bump the package version"), B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && git tag -s v2.5.0 -m rel\necho "=== exit $? ==="', note="Sign the release tag"),
+                B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git push --follow-tags\necho "=== exit $? ==="', note="Publish the tag to origin")],
         episodes=1, methods=1, occurrences=2,
         tags=["near-miss", "needs-merge", "below-live-floor"]),
 
@@ -338,12 +341,11 @@ CASES += [
         "A first approach abandoned mid-way, then a different one that worked. "
         "The failed attempt is not a procedure and the session is not empty.",
         [P("get the staging certs renewed"),
-         B("certbot renew --dry-run", failed=True),
-         B("cat /etc/letsencrypt/renewal/staging.conf"),
-         B("acme.sh --renew -d staging.example.com"),
-         B("kubectl create secret tls staging-tls --cert=fullchain.pem "
-           "--key=privkey.pem --dry-run=client -o yaml | kubectl apply -f -"),
-         B("curl -sI https://staging.example.com")],
+         B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && certbot renew --dry-run', failed=True, note="Try renewing the certificate"),
+         B('echo "=== cat ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && cat /etc/letsencrypt/renewal/staging.conf\necho "=== exit $? ==="', note="Read the renewal config"),
+         B('echo "=== acme.sh ===" \ncd /Users/dev/ai_projects/acme-platform/services/api && acme.sh --renew -d staging.example.com\necho "=== exit $? ==="', note="Renew the certificate with acme.sh"),
+         B('cd /Users/dev/ai_projects/acme-platform && kubectl create secret tls staging-tls --cert=fullchain.pem --key=privkey.pem --dry-run=client -o yaml | kubectl apply -f - 2>&1 | tail -15', note="Install the new certificate"),
+         B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && curl -sI https://staging.example.com', note="Confirm the new certificate is served")],
         episodes=1, methods=1, tags=["failure-then-fix", "no-commit"]),
 
     Case(
@@ -351,7 +353,7 @@ CASES += [
         "Two real chores, then a spell of reading that concluded nothing. The "
         "reading must not attach itself to the second chore.",
         [P("do the weekly update"),
-         B("git log --since=7.days --oneline"), W("/tmp/weekly.md"),
+         B('echo "=== git ===" \ncd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git log --since=7.days --oneline\necho "=== exit $? ==="', note="See what landed in the last week"), W("/tmp/weekly.md"),
          M("Gmail__create_draft", to="ludwig@example.com"),
          P("now file the March expenses"),
          M("Drive__search_files", query="receipt March"),

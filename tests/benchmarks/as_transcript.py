@@ -51,7 +51,7 @@ def render(case, out: Path) -> Path:
                      "timestamp": stamp(),
                      "message": {"role": "user", "content": [block]}})
 
-    for tool, body, failed in case.script:
+    for tool, body, failed, *rest in case.script:
         if tool == "prompt":
             user(body)
             continue
