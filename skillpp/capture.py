@@ -495,8 +495,29 @@ def _intents_for(session: dict, steps: list[dict]) -> list[str]:
     else:
         own = trailing
     if own:
-        return own[:5]
-    return list(session.get("prompts", []))[:5]
+        return _within_budget(own)
+    return _within_budget(list(session.get("prompts", [])))
+
+
+# A count is the wrong bound. Five prompts is below what an ordinary directed
+# task takes: the session this was measured on ran seven turns, and the one the
+# cap dropped was "check the docstring — confirm TOPICS is still the single
+# source of truth", which is the verification step the procedure exists to
+# perform. Budget by characters instead, so a task keeps its shape while a
+# runaway session still cannot bloat an entry.
+_INTENT_BUDGET_CHARS = 2000
+
+
+def _within_budget(prompts: list[str]) -> list[str]:
+    """As many stated intents as fit the budget, in order, never fewer than one."""
+    out: list[str] = []
+    spent = 0
+    for text in prompts:
+        if out and spent + len(text) > _INTENT_BUDGET_CHARS:
+            break
+        out.append(text)
+        spent += len(text)
+    return out
 
 
 def _cli_dependencies(steps: list[dict]) -> set[str]:
@@ -545,7 +566,60 @@ def _cli_dependencies(steps: list[dict]) -> set[str]:
     return found
 
 
+# `git commit -m "…"`, `-m '…'`, and the heredoc form an agent writing a long
+# message uses. Narrow on purpose: an unrecognised form falls through to the
+# prompt rather than being guessed at.
+# `git -C <path> commit` and `git -c user.email=… commit` are commits: the
+# subject must be found past git's global options, not only immediately after
+# `git`. A real session committed this way and the entry was titled from a
+# prompt instead.
+#
+# Only the first line of the message is taken, and deliberately without
+# matching the heredoc's closing delimiter: `max_field_chars` truncates a long
+# commit body at 2000 characters, so the terminator is often not there to
+# match. The subject always is.
+_COMMIT_HEREDOC_RE = re.compile(
+    r"\bgit\b[^\n]*?\bcommit\b[^\n]*<<-?['\"]?\w+['\"]?\r?\n([^\n]+)")
+_COMMIT_INLINE_RE = re.compile(
+    r"""\bgit\b[^\n]*?\bcommit\b[^\n]*?-m\s+(["'])([^\n]+?)\1""")
+# Conventional Commits: `test(eval): ` is provenance, not a task name.
+_CONVENTIONAL_RE = re.compile(r"\A[a-z]+(?:\([^)]*\))?!?:\s*")
+
+
+def _subject_of(steps: list[dict]) -> str:
+    """The last commit's subject line, if a commit is what ended this episode.
+
+    A commit message is written after the work and says what it accomplished;
+    the opening prompt is written before and says what was wrong. On the
+    session this was measured against, the prompt gave the entry the title
+    "Looks good — commit" while the commit said "add walkthrough-card case for
+    Desk Booking". The second is the name of a procedure; the first is not.
+    """
+    for step in reversed(steps):
+        if step.get("tool") != "Bash" or step.get("failed"):
+            continue
+        command = str((step.get("input") or {}).get("command", ""))
+        # Not `"git commit" in command`: global options sit between the two
+        # words, and `git -C <path> commit` is how an agent commits without
+        # cd-ing first. The regexes below already allow for it.
+        if "commit" not in command:
+            continue
+        match = _COMMIT_HEREDOC_RE.search(command)
+        body = match.group(1) if match else ""
+        if not body:
+            match = _COMMIT_INLINE_RE.search(command)
+            body = match.group(2) if match else ""
+        body = body.strip()
+        if not body:
+            continue
+        return _CONVENTIONAL_RE.sub("", body).strip()
+    return ""
+
+
 def _title_for(intents: list[str], steps: list[dict]) -> str:
+    subject = _subject_of(steps)
+    if subject:
+        return (subject[:70] + "…") if len(subject) > 70 else subject
     if intents:
         first = intents[0].strip().splitlines()[0]
         return (first[:70] + "…") if len(first) > 70 else first

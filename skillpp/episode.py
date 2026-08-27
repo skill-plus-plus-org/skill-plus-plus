@@ -74,7 +74,14 @@ def render_step(step: dict) -> str:
 
 def render(entry) -> tuple[str, str]:
     """An entry's stated intent and its steps, as the prompt wants them."""
-    ask_text = "\n    ".join(entry.intents[:3]) or entry.title or "(not recorded)"
+    # Every stated intent, not the first three. The cap predated an episode
+    # holding a whole task: on a real seven-turn session it handed the model
+    # "did you call MCP for this?" — a question about the agent's own behaviour
+    # — while dropping "check the docstring, confirm TOPICS is still the single
+    # source of truth", the verification step the procedure exists to perform.
+    # `_intents_for` already bounds this by characters; capping again here only
+    # loses the end of the task, which is where verification lives.
+    ask_text = "\n    ".join(entry.intents) or entry.title or "(not recorded)"
     lines = [render_step(s) for s in entry.steps[:_MAX_STEPS]]
     if len(entry.steps) > _MAX_STEPS:
         lines.append(f"… and {len(entry.steps) - _MAX_STEPS} more steps")

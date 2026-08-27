@@ -231,14 +231,23 @@ def run_background_check(config, *, timeout: float | None = None) -> dict:
     of dropping the pairs this run never reached.
     """
     from . import decisions
-    from .ledger import Ledger, STATUS_CANDIDATE
+    from .ledger import Ledger, STATUS_CANDIDATE, STATUS_COVERED, STATUS_PROMOTED
 
     queued = _read_queue_ids(config)
     if not queued:
         return {"status": "empty"}
 
     ledger = Ledger(config)
-    entries = [e for e in ledger.all() if e.status == STATUS_CANDIDATE]
+    # Promoted skills are compared against, not just candidates. Leaving them
+    # out meant a skill became invisible the moment it was promoted: capture's
+    # `find_match` does see it, but decides lexically at 0.85, and measured over
+    # 5,995 real pairs nothing reaches 0.85 at all — the highest is 0.814. So a
+    # promoted skill could never match again by either route, its occurrence
+    # count froze at promotion, and every later run of the same work opened a
+    # fresh candidate. `lifecycle.reconcile` still documents the opposite
+    # ("it keeps matching future occurrences of the same work"); it does not.
+    entries = [e for e in ledger.all()
+               if e.status in (STATUS_CANDIDATE, STATUS_PROMOTED)]
     pairs = near_misses(entries, floor=config.queued_near_miss_floor,
                         ceiling=config.similarity_threshold)
     # Only pairs involving something this queue actually named. The rest were
@@ -277,6 +286,36 @@ def run_background_check(config, *, timeout: float | None = None) -> dict:
         score = cosine(vectors[a.id], vectors[b.id])
         if score < config.embed_floor:
             continue
+
+        # A promoted skill is never folded away, and never absorbs a candidate
+        # by deletion. The skill already exists; what this match means is that
+        # it was used again. So reinforce it — the count is the evidence it is
+        # still live — and mark the candidate as covered rather than proposing
+        # work a skill already does.
+        skill = (a if a.status == STATUS_PROMOTED else
+                 b if b.status == STATUS_PROMOTED else None)
+        if skill is not None:
+            other = b if skill is a else a
+            if other.status == STATUS_PROMOTED:
+                continue  # two skills: not ours to reconcile
+            for sid in other.sessions:
+                if sid not in skill.sessions:
+                    skill.sessions.append(sid)
+            skill.occurrences = max(len(skill.sessions), skill.occurrences)
+            skill.last_seen = other.last_seen or skill.last_seen
+            other.status = STATUS_COVERED
+            other.notes = (f"covered by promoted skill {skill.id} "
+                           f"(embedding {score:.3f})\n" + (other.notes or "")).strip()
+            ledger.save(skill)
+            ledger.save(other)
+            folded.add(other.id)
+            merged += 1
+            decisions.record(
+                config, skill, AUTO_MERGED,
+                note=f"used again — {other.id} ({other.title[:60]}) is covered "
+                     f"by this skill; lexical {lex:.3f}, embedding {score:.3f}")
+            continue
+
         fold_into(a, b)
         ledger.save(a)
         ledger.delete(b.id)

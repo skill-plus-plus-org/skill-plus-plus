@@ -61,7 +61,13 @@ _READ_ONLY_RE = re.compile(
     r"(?i)\A(?:sudo\s+)?(?:grep|rg|ag|ack|cat|bat|head|tail|less|more|ls|ll|tree|"
     r"find|fd|wc|file|stat|du|df|ps|top|which|whereis|pwd|env|printenv|date|"
     r"man|type|echo|jq|column|sort|uniq|diff|cmp|"
-    r"git\s+(?:log|show|status|diff|blame|branch|remote|config)|"
+    # `git -C <path> status` is as read-only as `git status`. Anchoring
+    # straight on the subcommand missed 76 such calls in real transcripts and
+    # counted every one as work. Same cause as the marker bug fixed in
+    # `normalize._skip_pre_subcommand_flags`.
+    r"git\s+(?:(?:-C|-c|--git-dir|--work-tree|--namespace)\s+\S+\s+|"
+    r"(?:--no-pager|--bare|--literal-pathspecs)\s+)*"
+    r"(?:log|show|status|diff|blame|branch|remote|config)|"
     r"kubectl\s+(?:get|describe|logs|top|explain|version)|"
     r"docker\s+(?:ps|images|logs|inspect)|"
     r"terraform\s+(?:plan|show)|npm\s+(?:ls|view)|pip\s+(?:show|list))\b")
@@ -142,7 +148,12 @@ def is_read_only(step: dict) -> bool:
     # `reading-around` passed only because the trimmer happened to cut one step
     # and push it under the too-thin gate, not because anything recognised it as
     # pure exploration.
-    if tool in ("Read", "Glob", "Grep", "WebFetch", "WebSearch"):
+    # `ToolSearch` loads a tool's schema and `AskUserQuestion` asks the
+    # developer something. Both are lookups. Their absence made the episode
+    # that fetched the framework docs register as work that had produced
+    # something, which kept it from folding into the commit it belonged to.
+    if tool in ("Read", "Glob", "Grep", "WebFetch", "WebSearch",
+                "ToolSearch", "AskUserQuestion"):
         return True
     if tool != "Bash":
         return False
@@ -212,6 +223,50 @@ def trim_leading_exploration(steps: list[dict],
     return remaining, cut
 
 
+def _absorb_before_commit(episodes: list[Episode]) -> list[Episode]:
+    """Fold markerless episodes into the commit that closed their work.
+
+    A prompt arriving mid-task closes an episode on the strength of a step
+    count, and a step count measures that work *happened*, not that a goal
+    *ended*. Any instruction taking more than one tool call satisfies it.
+
+    Measured on a real six-turn session — fetch the framework docs, add a test
+    case, regenerate the generated file, verify a decision record, commit — the
+    prompt rule cut five times and banked five fragments plus the commit, none
+    of them the procedure. One fragment was the documentation lookup on its
+    own, severed from the work it exists to inform.
+
+    The evidence those cuts lacked is the commit, and it does not exist until
+    afterwards, so this is a pass over the finished list rather than a rule
+    inside the loop.
+
+    Deliberately not "the episode produced nothing" — the doc lookup and the
+    decision-record check produce no file and are the two steps a person would
+    follow this procedure again *for*. The test is whether the episode ever
+    concluded on its own, which is what a marker means.
+
+    KNOWN COST, accepted deliberately: a task that completes without committing
+    — a deploy ending in `./scripts/deploy.sh` — is absorbed into whatever
+    commits next. `tests/fixtures/messy_session.py` s2 is exactly that shape and
+    its deploy count drops from 3 to 2. That fixture is hand-authored and its
+    real-world frequency is unmeasured; the session this rule was built from is
+    real. Revisit when a real session shows the deploy shape.
+    """
+    out: list[Episode] = []
+    pending: list[Episode] = []
+    for episode in episodes:
+        if episode.has_marker:
+            episode.steps = [s for p in pending for s in p.steps] + episode.steps
+            out.append(episode)
+            pending = []
+        else:
+            pending.append(episode)
+    # Work after the last commit keeps its own boundary. An investigation that
+    # trailed off is not part of the commit that preceded it.
+    out.extend(pending)
+    return out
+
+
 def segment(steps: list[dict], min_steps: int = 2,
             max_markerless: int = 0) -> list[Episode]:
     """Cut *steps* into episodes.
@@ -267,6 +322,14 @@ def segment(steps: list[dict], min_steps: int = 2,
 
     if substantive_count(current) > 0:
         episodes.append(current)
+
+    # Before trimming, not after: `trim_leading_exploration` only cuts a
+    # *leading* run, so running it on the fragments first treats every mid-task
+    # prompt as the start of a task. On the session this was written for that
+    # discarded eleven steps of real work — the greps that worked out the file
+    # format, the `git diff` before committing — while keeping sixteen steps of
+    # opening exploration, because trimming those whole would have left nothing.
+    episodes = _absorb_before_commit(episodes)
 
     for episode in episodes:
         episode.steps, episode.trimmed = trim_leading_exploration(

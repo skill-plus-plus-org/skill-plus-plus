@@ -68,9 +68,47 @@ def normalize_command(command: str) -> str:
     return _normalize_segment(head)
 
 
+# Options a program takes *before* its subcommand rather than after it, with
+# how many argument tokens each consumes. The "stop at the first flag" rule
+# below is what keeps `pytest -k auth` and `pytest -k billing` fingerprinting
+# alike, and it is right for flags that follow a subcommand — but `-C <path>`
+# precedes one, so reading it as the end of the command called
+# `git -C /repo commit` a bare `git`.
+#
+# Measured on 2,639 real git calls: 90 use this form. It hid two completion
+# markers — a session that committed looked like it never had — and 76
+# read-only `status`/`log`/`diff` calls that then counted as work.
+#
+# Deliberately a small per-program table rather than a general rule: knowing
+# which flags take a value is program-specific, and guessing wrong here would
+# move fingerprints everywhere.
+_PRE_SUBCOMMAND_FLAGS = {
+    "git": {"-C": 1, "-c": 1, "--git-dir": 1, "--work-tree": 1,
+            "--namespace": 1, "--no-pager": 0, "--no-replace-objects": 0,
+            "--bare": 0, "--literal-pathspecs": 0},
+}
+
+
+def _skip_pre_subcommand_flags(program: str, rest: list[str]) -> int:
+    """How many tokens of *rest* are global options preceding the subcommand."""
+    table = _PRE_SUBCOMMAND_FLAGS.get(program)
+    if not table:
+        return 0
+    skipped = 0
+    while skipped < len(rest):
+        token = rest[skipped]
+        name, _, inline = token.partition("=")
+        takes = table.get(name)
+        if takes is None:
+            break
+        # `--git-dir=/x` carries its value; `--git-dir /x` needs the next token.
+        skipped += 1 if inline or not takes else 1 + takes
+    return skipped
+
+
 def _normalize_segment(head: str) -> str:
     """``normalize_command`` for one already-isolated link of a chain."""
-    tokens = head.split()
+    tokens = head.split()  # noqa: D401 — see _skip_pre_subcommand_flags below
 
     index = 0
     while index < len(tokens) and _ENV_ASSIGN_RE.match(tokens[index]):
@@ -82,6 +120,8 @@ def _normalize_segment(head: str) -> str:
     program = raw_program.rsplit("/", 1)[-1]
     if "/" in raw_program or program.endswith(_SCRIPT_SUFFIXES):
         return program
+
+    index += _skip_pre_subcommand_flags(program, tokens[index + 1:])
 
     for token in tokens[index + 1:]:
         if _FLAG_RE.match(token):

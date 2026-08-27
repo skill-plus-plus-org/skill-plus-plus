@@ -36,6 +36,11 @@ STATUS_ONE_OFF = "one-off"
 # one candidate covering two procedures. Splitting is the expensive stage
 # correcting the cheap one.
 STATUS_SPLIT = "split"
+# Work an already-promoted skill covers. Not a proposal — the skill exists and
+# was reinforced — but kept rather than deleted, because it is the evidence
+# that the skill is still being used and the only record of the session that
+# used it. Out of the review queue; `ready()` gates on status.
+STATUS_COVERED = "covered"
 
 
 def _now() -> str:
