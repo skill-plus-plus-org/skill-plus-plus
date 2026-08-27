@@ -154,6 +154,39 @@ CASES = [
          B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && pytest tests/test_cart.py', note="Reproduce the empty-cart failure"), B("cd /Users/dev/ai_projects/acme-platform/services/api && git commit -a -F- <<'MSG'\nfix: guard empty cart\n\nVerified green before landing; see the run log.\nMSG", note="Commit the empty-cart guard")],
         episodes=1, methods=0, tags=["one-off"]),
 
+    Case(
+        "framework-eval-with-adr-check", "programming",
+        "A hybrid shape not otherwise in this corpus: an MCP doc fetch opens "
+        "the work instead of trailing it, and the marker at the end is still "
+        "a plain `git commit`. `trim_leading_exploration` is written to never "
+        "cut an MCP retrieval regardless of position, specifically so a "
+        "fetch-then-build procedure like this one is not mistaken for "
+        "exploration and stripped off the front. `follow` uses a different "
+        "ADK function and a different eval file so recurrence has to survive "
+        "on shape, not on repeated literals.",
+        [P("add a Google ADK eval for the retry-policy tool call"),
+         M("adk-docs__fetch_docs", url="https://google.github.io/adk-docs/evaluate/"),
+         W("/Users/dev/ai_projects/acme-platform/backend/acme_agent/evals/retry_policy.evalset.json"),
+         R("/Users/dev/ai_projects/acme-platform/backend/acme_agent/docs/evals.md"),
+         E("/Users/dev/ai_projects/acme-platform/backend/acme_agent/docs/evals.md"),
+         B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && pytest tests/test_adr_retry_policy.py',
+           note="Confirm the ADR's claim still holds against the new eval"),
+         B("cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git commit -a -F- <<'MSG'\n"
+           "feat: add retry-policy eval\n\nDocs and ADR verified against the framework; see the run log.\nMSG",
+           note="Commit the new eval")],
+        follow=[P("add a Google ADK eval for the circuit-breaker tool call"),
+                M("adk-docs__fetch_docs", url="https://google.github.io/adk-docs/evaluate/"),
+                W("/Users/dev/ai_projects/acme-platform/backend/acme_agent/evals/circuit_breaker.evalset.json"),
+                R("/Users/dev/ai_projects/acme-platform/backend/acme_agent/docs/evals.md"),
+                E("/Users/dev/ai_projects/acme-platform/backend/acme_agent/docs/evals.md"),
+                B('cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && pytest tests/test_adr_circuit_breaker.py',
+                  note="Confirm the ADR's claim still holds against the new eval"),
+                B("cd /Users/dev/ai_projects/acme-platform/backend/acme_agent && git commit -a -F- <<'MSG'\n"
+                  "feat: add circuit-breaker eval\n\nDocs and ADR verified against the framework; see the run log.\nMSG",
+                  note="Commit the new eval")],
+        episodes=1, methods=1, occurrences=2,
+        tags=["mcp", "marker", "hybrid", "recurrence"]),
+
     # --------------------------------------------------------------- productivity
     Case(
         "weekly-status-email", "productivity",
