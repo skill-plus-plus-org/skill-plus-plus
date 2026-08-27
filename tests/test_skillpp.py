@@ -3110,3 +3110,49 @@ class TestPromotedSkillsStayMatchable(TempRoot):
         self.assertEqual(covered.status, STATUS_COVERED)
         self.assertNotIn("bbbb", [c.id for c in led.candidates()],
                          "work a skill already does is not a proposal")
+
+
+class TestThreeRealRunsRecur(TempRoot):
+    """Three real sessions of one procedure, replayed into one ledger.
+
+    The first thing in this project to reach the recurrence threshold from real
+    work rather than a fixture. Each session added the same kind of eval case to
+    the same repository against a different topic — desk booking, timesheet
+    timesheet, absence — so what they share is the method and what they do not
+    is that day's particulars.
+
+    Deliberately not run against a model: `run_background_check` needs an
+    embedding, so this pins the deterministic half — that all three fold, that
+    the queued pass has pairs to consider, and that nothing regresses the
+    segmentation those three depend on.
+    """
+
+    def _sessions(self):
+        path = Path(__file__).resolve().parent / "fixtures" / "sessions"
+        for f in sorted(path.glob("*.json")):
+            yield json.loads(f.read_text(encoding="utf-8"))
+
+    def test_each_run_folds_to_one_bankable_entry(self):
+        """A fragmented run cannot recur: three shapes never match each other."""
+        for doc in self._sessions():
+            with self.subTest(doc["tag"]):
+                result = fold_session(self.config, {
+                    "session_id": doc["tag"], "cwd": "/w", "prompts": [],
+                    "steps": doc["steps"]})
+                banked = [e for e in result.get("episodes", [])
+                          if e.get("status") in ("created", "matched")]
+                self.assertGreaterEqual(len(banked), 1, doc["name"])
+
+    def test_the_three_runs_are_near_misses_of_each_other(self):
+        """They do not match lexically — 0.583 on the pair measured — which is
+        why the embedding pass exists. What this pins is that they land inside
+        its band rather than below it, where nothing would ever look at them."""
+        from skillpp.similar import near_misses
+        for doc in self._sessions():
+            fold_session(self.config, {"session_id": doc["tag"], "cwd": "/w",
+                                       "prompts": [], "steps": doc["steps"]})
+        entries = list(Ledger(self.config).all())
+        self.assertGreaterEqual(len(entries), 3, "each run banks its own entry")
+        pairs = near_misses(entries, floor=self.config.queued_near_miss_floor,
+                            ceiling=self.config.similarity_threshold)
+        self.assertTrue(pairs, "the three runs must reach the embedding at all")
