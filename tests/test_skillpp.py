@@ -483,6 +483,52 @@ class TestCapture(TempRoot):
         self.assertEqual(len(entries), 1)
         self.assertIn("roll back the bad migration", entries[0].intents)
 
+    def test_a_captured_read_keeps_the_path_the_write_rule_needs(self):
+        """End to end, because the two halves lived apart and never met.
+
+        `_substantive`'s read-feeds-a-write rule compares a `Read`'s
+        `file_path` against a following write's. `_KEEP_INPUT` did not keep the
+        field, so in production that comparison was always against `None` and
+        the rule could not fire once — while `tests/benchmarks/boundaries.py`
+        added the path when replaying a transcript, so every fixture built from
+        one exercised a rule the pipeline never ran. Measured on a real session:
+        four reads captured, none kept; the same session from its transcript,
+        three kept.
+
+        Asserting on the signature rather than on `_KEEP_INPUT` keeps this
+        honest — it fails if either half regresses.
+        """
+        handle_prompt(self.config, {"session_id": "rw", "cwd": "/p",
+                                    "prompt": "fix the auth bug"})
+        script = [("Bash", {"command": "npm test"}),
+                  ("Read", {"file_path": "/p/auth.py"}),
+                  ("Edit", {"file_path": "/p/auth.py"}),
+                  ("Bash", {"command": "git commit -m fix"})]
+        for tool, payload in script:
+            handle_tool(self.config, {"session_id": "rw", "cwd": "/p",
+                                      "tool_name": tool, "tool_input": payload,
+                                      "tool_response": {"exit_code": 0}})
+        handle_session_end(self.config, {"session_id": "rw"})
+        entry = list(Ledger(self.config).all())[0]
+        self.assertIn("read", entry.signature.split(" | "))
+
+    def test_a_captured_read_that_leads_nowhere_is_still_dropped(self):
+        """The other half of the rule. Keeping the path must not keep the
+        exploration the rule exists to discard."""
+        handle_prompt(self.config, {"session_id": "ro", "cwd": "/p",
+                                    "prompt": "fix the auth bug"})
+        script = [("Bash", {"command": "npm test"}),
+                  ("Read", {"file_path": "/p/somewhere_else.py"}),
+                  ("Edit", {"file_path": "/p/auth.py"}),
+                  ("Bash", {"command": "git commit -m fix"})]
+        for tool, payload in script:
+            handle_tool(self.config, {"session_id": "ro", "cwd": "/p",
+                                      "tool_name": tool, "tool_input": payload,
+                                      "tool_response": {"exit_code": 0}})
+        handle_session_end(self.config, {"session_id": "ro"})
+        entry = list(Ledger(self.config).all())[0]
+        self.assertNotIn("read", entry.signature.split(" | "))
+
     def test_session_buffer_is_deleted_after_fold(self):
         for cmd in ("npm ci", "npm test"):
             handle_tool(self.config, {"session_id": "s3", "tool_name": "Bash",

@@ -28,14 +28,27 @@ from .sanitize import scrub, scrub_obj
 from .segment import PROMPT_TOOL, segment
 
 # Tool inputs worth keeping. Anything else is recorded by name only.
+#
+# `Read`'s path is kept because `_substantive` below needs it: read-then-edit is
+# how a procedure names the file it operates on, and the rule that keeps those
+# reads compares the read's `file_path` against the write's. Without the field
+# that comparison is against `None`, so the rule could never fire — measured on
+# a real session, four `Read` steps captured and none kept, while the same
+# session replayed from its transcript kept three.
+#
+# It was left out deliberately once, on the grounds that a `Read` is exploration
+# and exploration should not reach a signature. That holds for a read that leads
+# nowhere, and `_substantive` already drops those. It does not hold for the read
+# that fed the edit.
 _KEEP_INPUT = {
     "Bash": ("command", "description"),
     "Write": ("file_path",),
     "Edit": ("file_path",),
     "NotebookEdit": ("file_path",),
+    "Read": ("file_path",),
 }
 # Pure exploration: recorded, but never the reason a workflow is proposed.
-# `UserPrompt` is the segmentation sentinel written by handle_prompt — a task
+# UserPrompt is the segmentation sentinel written by handle_prompt — a task
 # boundary, never a step of the workflow itself.
 _NOISE_TOOLS = {"Read", "Glob", "Grep", "TodoWrite", "Task", "WebFetch", "WebSearch",
                 PROMPT_TOOL}

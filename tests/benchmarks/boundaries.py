@@ -67,9 +67,12 @@ COMMAND_LEANING_AT = 0.55
 # What `capture._KEEP_INPUT` keeps, so a replay sees exactly what a hook would.
 KEEP = {"Bash": ("command", "description"), "Write": ("file_path",),
         "Edit": ("file_path",), "NotebookEdit": ("file_path",),
-        # `capture._KEEP_INPUT` does not keep this, and should not — but a
-        # narration that renders `Read()` with no path is unreadable to the
-        # person being asked to judge the process.
+        # Matches `capture._KEEP_INPUT`. It did not, once: this table added the
+        # path so a narration would not render `Read()` with nothing in it, and
+        # asserted capture should not keep it. That divergence quietly made
+        # every fixture built here unfaithful to what capture stores, and the
+        # one rule that reads the field — `_substantive`'s read-feeds-a-write —
+        # fired in fixtures and never in production. Keep the two tables equal.
         "Read": ("file_path",)}
 ENVELOPE = ("<task-notification", "<system-reminder", "<local-command",
             "<command-name", "<command-message", "<!-- attach")
