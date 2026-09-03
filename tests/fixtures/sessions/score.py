@@ -30,7 +30,7 @@ REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO))
 
 from skillpp.capture import _intents_for, _title_for  # noqa: E402
-from skillpp.segment import segment  # noqa: E402
+from skillpp.segment import is_marker, segment  # noqa: E402
 
 
 def load(tag: str | None = None) -> list[dict]:
@@ -62,15 +62,29 @@ def check(doc: dict) -> dict:
     missing = [needle for needle in truth.get("must_contain", [])
                if needle not in blob]
 
+    # A session that never commits has no commit subject to be titled from, so
+    # `title: null` means "not applicable" rather than "no opinion". Scoring it
+    # against the prompt-derived title would pin behaviour we want to change.
+    want_title = truth.get("title")
+    title_ok = True if want_title is None else want_title in titles
+
+    # `markers` is pinned only where it is the point of the fixture — a
+    # commitless session's shape is the thing being recorded, not an accident.
+    want_markers = truth.get("markers")
+    got_markers = sum(1 for s in steps if is_marker(s))
+    markers_ok = True if want_markers is None else got_markers == want_markers
+
     return {
         "tag": doc["tag"],
         "name": doc["name"],
         "episodes": {"want": truth["episodes"], "got": len(episodes),
                      "ok": len(episodes) == truth["episodes"]},
-        "title": {"want": truth["title"], "got": titles[0] if titles else "",
-                  "ok": truth["title"] in titles},
+        "title": {"want": want_title, "got": titles[0] if titles else "",
+                  "ok": title_ok, "n/a": want_title is None},
         "kept": {"want": truth.get("must_contain", []), "missing": missing,
                  "ok": not missing},
+        "markers": {"want": want_markers, "got": got_markers,
+                    "ok": markers_ok, "n/a": want_markers is None},
     }
 
 
@@ -83,20 +97,37 @@ def main(argv: list[str]) -> int:
     failed = 0
     for doc in docs:
         row = check(doc)
-        ok = all(row[k]["ok"] for k in ("episodes", "title", "kept"))
-        failed += not ok
-        print(f"\n{'ok  ' if ok else 'MISS'} {row['tag']}  {row['name']}")
+        ok = all(row[k]["ok"] for k in ("episodes", "title", "kept", "markers"))
+        # A fixture can record a gap the pipeline is known not to close. Those
+        # are not failures of the run; they are the reason the fixture exists.
+        known = doc.get("expected_fail")
+        if not ok and known:
+            label = "GAP "
+        else:
+            label = "ok  " if ok else "MISS"
+            failed += not ok
+        print(f"\n{label} {row['tag']}  {row['name']}")
         e = row["episodes"]
         print(f"       episodes  {e['got']}/{e['want']}"
               f"{'' if e['ok'] else '   <-- wrong'}")
         t = row["title"]
         print(f"       title     {t['got'][:58]!r}"
+              f"{' (not scored — no commit)' if t['n/a'] else ''}"
               f"{'' if t['ok'] else chr(10) + '                 want ' + repr(t['want'])}")
         k = row["kept"]
         print(f"       kept      {'all present' if k['ok'] else 'MISSING ' + str(k['missing'])}"
               f"   ({', '.join(k['want'])})")
+        m = row["markers"]
+        if not m["n/a"]:
+            print(f"       markers   {m['got']}/{m['want']}"
+                  f"{'' if m['ok'] else '   <-- wrong'}")
 
-    print(f"\n{len(docs) - failed}/{len(docs)} sessions pass")
+    gaps = sum(1 for d in docs if d.get("expected_fail"))
+    print(f"\n{len(docs) - failed - gaps}/{len(docs) - gaps} sessions pass"
+          + (f", {gaps} known gap(s)" if gaps else ""))
+    for d in docs:
+        if d.get("expected_fail"):
+            print(f"   GAP {d['tag']}: {d['expected_fail'][:120]}…")
     return 1 if failed else 0
 
 

@@ -3015,15 +3015,53 @@ class TestLiveSessions(unittest.TestCase):
         """A silently empty directory would make every test below vacuous."""
         self.assertGreaterEqual(len(self.docs), 2)
 
+    def _scored(self):
+        """Sessions the pipeline is expected to get right.
+
+        A fixture carrying `expected_fail` records a gap that is known and
+        unfixed; asserting against it would only restate the gap. It is checked
+        separately, by `test_the_known_gaps_are_still_gaps`.
+        """
+        return [d for d in self.docs if not d.get("expected_fail")]
+
     def test_every_live_session_segments_to_its_ground_truth(self):
-        for doc in self.docs:
+        for doc in self._scored():
             with self.subTest(doc["tag"]):
                 row = self.score.check(doc)
                 self.assertTrue(row["episodes"]["ok"],
                                 f"{doc['name']}: {row['episodes']}")
 
-    def test_every_live_session_is_titled_after_the_work(self):
+    def test_the_known_gaps_are_still_gaps(self):
+        """Fails when a recorded gap closes — which is the point.
+
+        A gap that quietly starts passing is a fix nobody noticed, and the
+        fixture's ground truth and `expected_fail` note then both need
+        rewriting. Better to be told.
+        """
         for doc in self.docs:
+            if not doc.get("expected_fail"):
+                continue
+            with self.subTest(doc["tag"]):
+                row = self.score.check(doc)
+                ok = all(row[k]["ok"] for k in ("episodes", "title", "kept", "markers"))
+                self.assertFalse(
+                    ok, f"{doc['name']} now passes — remove `expected_fail` "
+                        f"and update the fixture: {doc['expected_fail'][:90]}")
+
+    def test_a_commitless_session_is_still_captured(self):
+        """No commit must not mean no capture. It fragments today, but the
+        work is banked — losing it entirely would be a different, worse bug."""
+        for doc in self.docs:
+            if doc["truth"].get("markers") != 0:
+                continue
+            with self.subTest(doc["tag"]):
+                row = self.score.check(doc)
+                self.assertEqual(row["markers"]["got"], 0)
+                self.assertGreaterEqual(row["episodes"]["got"], 1,
+                                        "commitless work must still bank something")
+
+    def test_every_live_session_is_titled_after_the_work(self):
+        for doc in self._scored():
             with self.subTest(doc["tag"]):
                 row = self.score.check(doc)
                 self.assertTrue(row["title"]["ok"],
@@ -3033,7 +3071,7 @@ class TestLiveSessions(unittest.TestCase):
         """The assertion that matters. An episode can be the right size and the
         right name and still have lost the documentation lookup that makes the
         procedure worth repeating."""
-        for doc in self.docs:
+        for doc in self._scored():
             with self.subTest(doc["tag"]):
                 row = self.score.check(doc)
                 self.assertTrue(row["kept"]["ok"],
