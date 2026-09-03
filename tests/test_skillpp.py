@@ -30,6 +30,7 @@ from fixtures.messy_session import (EXPECTED_OCCURRENCES, LEAKED_TOKEN,
 
 
 _REAL_JUDGE = None
+_REAL_DESCRIBE = None
 
 
 def setUpModule() -> None:
@@ -50,15 +51,20 @@ def setUpModule() -> None:
     prompt rules goes on measuring them, and a test of the judged path opts in
     with `TempRoot._stub_judge`.
     """
-    global _REAL_JUDGE
+    global _REAL_JUDGE, _REAL_DESCRIBE
     import skillpp.boundary as boundary
     _REAL_JUDGE = boundary.judge_in_session
+    _REAL_DESCRIBE = boundary.describe_in_session
     boundary.judge_in_session = lambda config, session, step: None
+    # Same reasoning for the describer, which runs on the same hot path and is
+    # slower still — it writes a sentence where the judge writes one word.
+    boundary.describe_in_session = lambda config, session, step: ""
 
 
 def tearDownModule() -> None:
     import skillpp.boundary as boundary
     boundary.judge_in_session = _REAL_JUDGE
+    boundary.describe_in_session = _REAL_DESCRIBE
 
 
 def bash(command: str, failed: bool = False) -> dict:

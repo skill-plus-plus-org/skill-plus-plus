@@ -18,12 +18,17 @@ than one that misses a boundary.
 
 Measured on `gemma3n:e4b`, warm, on this prompt:
 
-* `think=False` matters: 11.5s unset against 4.2s with it off. Ollama turns
-  thinking on by default where a model supports it.
-* the one-word instruction matters more: 4.42s against **0.49s**, because
-  generation length dominates, not prompt processing. The instruction in
-  `prompts/task_end.md` is load-bearing for latency, not tidiness.
+* the one-word instruction is what buys the latency: 4.42s against **0.49s**,
+  because generation length dominates, not prompt processing. The instruction in
+  `prompts/task_end.md` is load-bearing, not tidiness.
 * ~0.73s per call with the full context prompt below.
+* `think=False` costs nothing and buys nothing *here*. An earlier note in this
+  docstring claimed 11.5s unset against 4.2s with it off; re-measured warm, three
+  runs each, it is 1.10s against 1.09s — the original 11.5s was the model
+  loading. `gemma3n:e4b` has no thinking capability at all and `think=True`
+  returns HTTP 400. The flag stays because it is free and because it matters
+  enormously on a model that *can* think: `local.ask` records 113.8s against
+  0.5s on `qwen3.5:9b` for the same one-word question.
 
 Framings tried and rejected, on a 13-case probe:
 
@@ -103,6 +108,14 @@ def render_step(step: dict) -> str:
     So the tool-specific branch consumes the keys it knows how to phrase, and
     whatever is left is appended rather than lost.
     """
+    # A recorded description says what the step did in words. Prefer it: the
+    # raw alternative is what pushed one real prompt to 5,789 characters, four
+    # `python3 -c` heredocs burying the single line that mattered.
+    did = str(step.get("did") or "").strip()
+    if did:
+        failed = " — and it failed" if step.get("failed") else ""
+        return f"{did}{failed}"
+
     tool = str(step.get("tool") or "")
     payload = {k: v for k, v in (step.get("input") or {}).items()
                if v not in (None, "")}
@@ -153,6 +166,81 @@ def judge(step: dict, *, goal: str = "", prior: list[str] | None = None,
     except LocalModelUnavailable:
         return None
     return yes_no(reply)
+
+
+# How much of a field to show the describer. Long enough that a `Write` is
+# recognisable from its opening, short enough that the model describes the step
+# instead of continuing it — handed 900 characters of a markdown file with no
+# other context, it started rewriting the document.
+_DESCRIBE_CHARS = 700
+
+
+def describe(step: dict, *, asks: list[str], index: int,
+             model: str, host: str,
+             timeout: float = 30.0) -> str:
+    """One sentence: what this step did, and the part it plays in the task.
+
+    Everything downstream currently infers that from a command string, each
+    with its own partial vocabulary — git verbs in `is_marker`, a read list in
+    `is_read_only`, four tool shapes in `render_step`. This records it once,
+    where the answer is still knowable.
+
+    Three things the probes settled, all load-bearing:
+
+    * **Every request so far, in order.** Given only the latest one, the model
+      describes the goal rather than the step, identically each time.
+    * **No previously generated descriptions.** Given them, it copies them — by
+      the sixth step it repeated one sentence verbatim for every step after,
+      including the one that produced the deliverable.
+    * **The part it plays goes in the sentence, not in a field.** Asked for a
+      label from a closed vocabulary it answered "Checking" for almost
+      everything and called the delivering step "Narrowing". Asked for prose it
+      writes "enabling the identification of…", "attempted to locate…",
+      "fulfilling the developer's request" — which is the same information,
+      correct.
+
+    Costs, measured warm through `handle_tool` on a real payload, median of
+    four: capture alone 0.00s, judge alone 0.89s, describing alone 1.93s, both
+    2.49s. Measure warm — a first call is ~11s and it is the model loading, the
+    same trap that once put a false `think=False` claim in this docstring.
+
+    Returns "" on any failure. A missing model costs the sentence, never the
+    step.
+    """
+    payload = dict(step.get("input") or {})
+    body = ""
+    for key in ("command", "content", "new_string", "pattern", "url", "query",
+                "file_path", "skill"):
+        if payload.get(key):
+            body = str(payload[key])[:_DESCRIBE_CHARS]
+            break
+    template = (PROMPTS / "step_description.md").read_text(encoding="utf-8")
+    prompt = (template
+              .replace("{ASKS}", "\n".join(f"  {n}. {a[:220]}"
+                                           for n, a in enumerate(asks, 1))
+                       or "  (nothing stated)")
+              .replace("{INDEX}", str(index))
+              .replace("{SAID}", (step.get("said") or "-")[:500])
+              .replace("{TOOL}", str(step.get("tool") or "unknown"))
+              .replace("{INPUT}", body or "(no arguments recorded)")
+              .replace("{REPLY}", (step.get("reply") or "-")[:220]))
+    try:
+        reply = ask(model, prompt, host=host, timeout=timeout, think=False)
+    except LocalModelUnavailable:
+        return ""
+    return " ".join(reply.split())[:300]
+
+
+def describe_in_session(config, session: dict, step: dict) -> str:
+    """`describe`, with the asks and the step's position read off the buffer."""
+    from .segment import is_prompt
+
+    steps = session.get("steps", [])
+    asks = [str((s.get("input") or {}).get("text", "")).strip()
+            for s in steps if is_prompt(s)]
+    index = sum(1 for s in steps if not is_prompt(s)) + 1
+    return describe(step, asks=[a for a in asks if a], index=index,
+                    model=config.local_model, host=config.ollama_url)
 
 
 def window(steps: list[dict]) -> tuple[str, list[str]]:

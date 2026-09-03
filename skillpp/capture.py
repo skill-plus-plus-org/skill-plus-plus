@@ -40,13 +40,30 @@ from .segment import PROMPT_TOOL, feeds_a_write, segment
 # and exploration should not reach a signature. That holds for a read that leads
 # nowhere, and `_substantive` already drops those. It does not hold for the read
 # that fed the edit.
+# A step that keeps only a path cannot be described. Asked what the `Write` that
+# produced COVERAGE.md did, a model shown `{"file_path": ".../COVERAGE.md"}`
+# answered "Analyze the existing coverage report" — it wrote one. Every field
+# here is bounded by `max_field_chars`, so widening it costs length, not shape.
 _KEEP_INPUT = {
     "Bash": ("command", "description"),
-    "Write": ("file_path",),
-    "Edit": ("file_path",),
-    "NotebookEdit": ("file_path",),
+    "Write": ("file_path", "content"),
+    "Edit": ("file_path", "old_string", "new_string"),
+    "NotebookEdit": ("file_path", "new_source"),
     "Read": ("file_path",),
+    "Glob": ("pattern", "path"),
+    "Grep": ("pattern", "path"),
+    "WebFetch": ("url", "prompt"),
+    "WebSearch": ("query",),
+    "Task": ("description", "subagent_type"),
+    "Skill": ("skill", "args"),
 }
+
+# How much of a tool's reply to keep. It is the only record of what a step
+# *did* — `_failed` reads it for a boolean and everything else was dropped, so
+# "File created successfully at …" and "no matches found" were both invisible
+# downstream. Short on purpose: the head of a reply says what happened, and the
+# tail is usually payload.
+_RESPONSE_CHARS = 400
 # Pure exploration: recorded, but never the reason a workflow is proposed.
 # UserPrompt is the segmentation sentinel written by handle_prompt — a task
 # boundary, never a step of the workflow itself.
@@ -133,6 +150,72 @@ def _save_session(config: Config, session: dict) -> None:
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(session, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
+
+
+def _reply_text(response) -> str:
+    """What the tool said back, flattened and bounded.
+
+    Whatever shape the harness uses — a string, a dict of fields, a list of
+    content blocks — reduce it to the leading text. `_failed` already inspects
+    this object for a verdict; this keeps the part a reader (or a model) needs
+    to know what actually happened.
+    """
+    if isinstance(response, str):
+        text = response
+    elif isinstance(response, dict):
+        for key in ("stdout", "output", "content", "result", "text"):
+            value = response.get(key)
+            if isinstance(value, str) and value.strip():
+                text = value
+                break
+        else:
+            text = " ".join(str(v) for v in response.values()
+                            if isinstance(v, (str, int, float)))
+    elif isinstance(response, list):
+        text = " ".join(str(b.get("text", b)) if isinstance(b, dict) else str(b)
+                        for b in response)
+    else:
+        text = str(response or "")
+    return " ".join(text.split())[:_RESPONSE_CHARS]
+
+
+def _narration(payload: dict) -> str:
+    """What the assistant said just before this step, from the transcript.
+
+    The command stream only implies completion; the narration around it states
+    it in plain language — `tests/benchmarks/boundaries.py` relies on exactly
+    this when a person is asked to label a boundary, and capture never had it.
+
+    The hook payload carries `transcript_path`. Everything here is best effort:
+    a missing or unreadable transcript costs the narration and nothing else.
+    """
+    path = payload.get("transcript_path")
+    if not path:
+        return ""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as fh:
+            rows = fh.readlines()[-40:]
+    except OSError:
+        return ""
+    said: list[str] = []
+    for line in rows:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        message = row.get("message") or {}
+        if row.get("type") != "assistant" or not isinstance(
+                message.get("content"), list):
+            continue
+        for block in message["content"]:
+            if not isinstance(block, dict):
+                continue
+            kind = block.get("type")
+            if kind == "text" and (block.get("text") or "").strip():
+                said.append(block["text"])
+            elif kind == "tool_use":
+                said = []          # a new step starts; earlier talk was its own
+    return " ".join(" ".join(said).split())[:_RESPONSE_CHARS]
 
 
 def _failed(response) -> bool:
@@ -223,6 +306,27 @@ def handle_tool(config: Config, payload: dict) -> None:
         "failed": _failed(payload.get("tool_response")),
         "t": round(time.time(), 1),
     }
+    # What the tool said back, and what the assistant said going in. Scrubbed
+    # like everything else, and empty rather than absent when unavailable, so a
+    # reader can tell "nothing was said" from "this shape was never recorded".
+    reply = scrub(_reply_text(payload.get("tool_response")))
+    if reply:
+        step["reply"] = reply
+    said = scrub(_narration(payload))
+    if said:
+        step["said"] = said
+    # One sentence saying what this step did and the part it plays, written now
+    # while the reply and the narration are still here. Everything downstream —
+    # `is_marker`'s git verbs, `is_read_only`'s command list, `render_step`'s
+    # four tool shapes — is guessing at this from a command string.
+    if config.describe_steps:
+        try:
+            from .boundary import describe_in_session
+            note = describe_in_session(config, session, step)
+            if note:
+                step["did"] = note
+        except Exception as exc:  # noqa: BLE001 - a hook never raises at a dev
+            log_error(config, f"describe failed: {type(exc).__name__}: {exc}")
     # Did this end the task? Asked now, while the span behind it is still what
     # the developer was doing, and recorded so `segment` reads a boolean instead
     # of re-deriving an ending from a vocabulary of git verbs.

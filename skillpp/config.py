@@ -72,6 +72,12 @@ class Config:
         # so turn it off when recording a fixture that has to stay comparable
         # with those, or when the ~1.6s per tool call is not worth paying.
         self.judge_boundaries = _bool_env("SKILLPP_JUDGE", True)
+        # Ask the same model, on every tool call, to write one sentence saying
+        # what the step did and the part it plays (`skillpp.boundary.describe`).
+        # Same trade as the judge: it costs the developer a second or two per
+        # step and it is what lets a later stage read intent instead of parsing
+        # a command. `SKILLPP_DESCRIBE=0` turns it off.
+        self.describe_steps = _bool_env("SKILLPP_DESCRIBE", True)
         # A boundary that would close an episode smaller than this is ignored:
         # one step is not a workflow.
         # Where a local model is served, and which one to ask. The episode
