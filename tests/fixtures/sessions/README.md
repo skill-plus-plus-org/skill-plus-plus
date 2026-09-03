@@ -31,6 +31,20 @@ corpus could not:
 the wrong reasons; these name the steps whose loss would make the captured skill
 a different and worse procedure than the one performed.
 
+**`truth.episodes` counts candidates banked, not episodes cut.** Capture runs
+three stages: `segment` cuts the session up, `fold_session` discards the flagged
+episodes, and `_fold_steps` discards anything under two substantive steps. Only
+what survives all three is a candidate, and that is the number to write here. A
+trailing `git status` after a commit is cut as an episode and never banked — it
+does not count.
+
+`score.py` enforces that by calling `fold_session` and reading the ledger, rather
+than calling `segment` and counting. It used to count the cut, which made three
+fixtures fail for a defect that was the scorer's, and let `2095a8af` pass on a
+ground truth of 2 that its own `why` described as banking one. Do not reintroduce
+a private copy of the discard rules here; when the fold stage learns to throw
+something else away, this should follow without an edit.
+
 ## Running them
 
 ```bash

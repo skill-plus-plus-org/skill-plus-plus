@@ -21,16 +21,20 @@ procedure worth repeating, and only `must_contain` notices that.
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO))
 
-from skillpp.capture import _intents_for, _title_for  # noqa: E402
-from skillpp.segment import is_marker, segment  # noqa: E402
+from skillpp.capture import fold_session  # noqa: E402
+from skillpp.config import Config  # noqa: E402
+from skillpp.ledger import Ledger  # noqa: E402
+from skillpp.segment import is_marker  # noqa: E402
 
 
 def load(tag: str | None = None) -> list[dict]:
@@ -43,22 +47,48 @@ def load(tag: str | None = None) -> list[dict]:
     return out
 
 
+def bank(doc: dict) -> list:
+    """The candidates this session actually banks, by running the real fold.
+
+    Not `segment()`. Segmentation is the first of three stages — it cuts, then
+    `fold_session` discards the flagged episodes, then `_fold_steps` discards
+    anything under two substantive steps. `truth.episodes` is defined by the
+    README as what a correct run *banks*, which is the third stage, so scoring
+    the first counted leftovers the pipeline throws away: a trailing
+    `git status` after a commit read as a second candidate in three fixtures.
+
+    Calling `fold_session` rather than reproducing its filters is the point. A
+    private copy of pipeline logic in a test helper is what put the count wrong
+    here, and what earlier let `boundaries.KEEP` drift from
+    `capture._KEEP_INPUT` until a rule fired only in fixtures. Anything the fold
+    stage learns to discard next is picked up here without an edit.
+
+    Nothing is re-executed: the steps are records, the commands are strings
+    being read. The temporary root exists only because banking writes entry
+    files.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        config = Config(Path(tmp) / "skillpp")
+        config.ensure_dirs()
+        fold_session(config, {"session_id": doc["tag"], "cwd": "",
+                              "prompts": [],
+                              "steps": copy.deepcopy(doc["steps"])})
+        return sorted(Ledger(config).all(), key=lambda e: -len(e.steps))
+
+
 def check(doc: dict) -> dict:
-    """Run one session through segmentation and compare against its truth."""
+    """Run one session through the pipeline and compare against its truth."""
     steps = doc["steps"]
     truth = doc["truth"]
-    episodes = segment(steps, 2, 0)
+    entries = bank(doc)
+    titles = [entry.title for entry in entries]
 
-    titles = []
-    for episode in episodes:
-        intents = _intents_for({"prompts": []}, episode.steps)
-        titles.append(_title_for(intents, episode.steps))
-
-    # `must_contain` is checked against the largest episode: the procedure is
-    # what the bulk of the work was, and a stray one-step trailer after the
-    # commit is not where the doc lookup would be.
-    main = max(episodes, key=lambda e: len(e.steps), default=None)
-    blob = json.dumps([s for s in (main.steps if main else [])])
+    # `must_contain` is checked against the largest banked candidate: the
+    # procedure is what the bulk of the work was, and a stray one-step trailer
+    # after the commit is not where the doc lookup would be. Against the
+    # *banked* one, because a needle surviving into an episode that is then
+    # discarded has not survived anywhere that matters.
+    blob = json.dumps(entries[0].steps) if entries else "[]"
     missing = [needle for needle in truth.get("must_contain", [])
                if needle not in blob]
 
@@ -77,8 +107,8 @@ def check(doc: dict) -> dict:
     return {
         "tag": doc["tag"],
         "name": doc["name"],
-        "episodes": {"want": truth["episodes"], "got": len(episodes),
-                     "ok": len(episodes) == truth["episodes"]},
+        "episodes": {"want": truth["episodes"], "got": len(entries),
+                     "ok": len(entries) == truth["episodes"]},
         "title": {"want": want_title, "got": titles[0] if titles else "",
                   "ok": title_ok, "n/a": want_title is None},
         "kept": {"want": truth.get("must_contain", []), "missing": missing,
