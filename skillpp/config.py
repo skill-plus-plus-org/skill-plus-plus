@@ -31,6 +31,19 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    """Unset means *default*; anything falsey-looking means off.
+
+    Generous about what counts as off on purpose — someone reaching for this is
+    turning something off in a hurry, and `SKILLPP_JUDGE=false` failing open
+    because only "0" was handled is the wrong way to learn the spelling.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "off", "")
+
+
 class Config:
     """Resolved paths and thresholds for one invocation."""
 
@@ -53,6 +66,12 @@ class Config:
         self.max_field_chars = _int_env("SKILLPP_MAX_FIELD", 2000)
         # Never ask the developer more than this many questions (README 4).
         self.max_questions = _int_env("SKILLPP_MAX_QUESTIONS", 3)
+        # Ask a local model, on every tool call, whether the task ended there
+        # (`skillpp.boundary`). Off restores the marker-and-prompt rules, which
+        # is what every session captured before it, and every fixture, records —
+        # so turn it off when recording a fixture that has to stay comparable
+        # with those, or when the ~1.6s per tool call is not worth paying.
+        self.judge_boundaries = _bool_env("SKILLPP_JUDGE", True)
         # A boundary that would close an episode smaller than this is ignored:
         # one step is not a workflow.
         # Where a local model is served, and which one to ask. The episode

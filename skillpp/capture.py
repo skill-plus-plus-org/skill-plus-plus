@@ -35,7 +35,7 @@ _KEEP_INPUT = {
     "NotebookEdit": ("file_path",),
 }
 # Pure exploration: recorded, but never the reason a workflow is proposed.
-# UserPrompt is the segmentation sentinel written by handle_prompt — a task
+# `UserPrompt` is the segmentation sentinel written by handle_prompt — a task
 # boundary, never a step of the workflow itself.
 _NOISE_TOOLS = {"Read", "Glob", "Grep", "TodoWrite", "Task", "WebFetch", "WebSearch",
                 PROMPT_TOOL}
@@ -231,13 +231,14 @@ def handle_tool(config: Config, payload: dict) -> None:
     # nothing was asked. Absent means unjudged, and `segment` falls back to the
     # vocabulary rules for the whole stream, which is the right behaviour when
     # Ollama is not running.
-    try:
-        from .boundary import judge_in_session
-        verdict = judge_in_session(config, session, step)
-        if verdict is not None:
-            step["end"] = verdict
-    except Exception as exc:  # noqa: BLE001 - a hook never raises at a developer
-        log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
+    if config.judge_boundaries:
+        try:
+            from .boundary import judge_in_session
+            verdict = judge_in_session(config, session, step)
+            if verdict is not None:
+                step["end"] = verdict
+        except Exception as exc:  # noqa: BLE001 - a hook never raises at a dev
+            log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
     session["steps"].append(step)
     _save_session(config, session)
 
