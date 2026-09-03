@@ -85,13 +85,14 @@ class Episode:
     """One task's worth of steps, cut out of a session."""
 
     steps: list[dict] = field(default_factory=list)
-    ended_by: str = "session-end"   # "marker" | "prompt" | "session-end"
-    flagged: bool = False           # no marker, and the session did segment
+    # "judged" | "marker" | "prompt" | "session-end"
+    ended_by: str = "session-end"
+    flagged: bool = False           # no ending, and the session did segment
     trimmed: int = 0                # leading read-only steps dropped
 
     @property
     def has_marker(self) -> bool:
-        return any(is_marker(step) for step in self.steps)
+        return any(is_end(step) for step in self.steps)
 
 
 def is_marker(step: dict) -> bool:
@@ -115,6 +116,33 @@ def is_marker(step: dict) -> bool:
     # session: 17 commits, 0 markers, and every boundary fell through to "the
     # developer typed something new".
     return any(link in COMPLETION_MARKERS for link in normalize_links(command))
+
+
+def was_judged(steps: list[dict]) -> bool:
+    """Did something judge these steps as they were captured?
+
+    A step carries ``end`` only if `boundary.judge_in_session` answered for it.
+    Sessions recorded before that existed, and every hand-written fixture, carry
+    no verdict at all — so the vocabulary rules below stay live for them rather
+    than silently reading every old stream as one unbroken episode.
+    """
+    return any("end" in step for step in steps if not is_prompt(step))
+
+
+def is_end(step: dict, judged: bool | None = None) -> bool:
+    """Did *step* finish a task?
+
+    Where a verdict was recorded, that is the answer. Where none was — an older
+    session, a fixture, a model that was unreachable at the time — fall back to
+    `is_marker`'s vocabulary. Passing *judged* decides it for a whole stream at
+    once; leaving it `None` decides per step, which is what `Episode.has_marker`
+    needs since it holds steps and not the stream they came from.
+    """
+    if judged is None:
+        judged = "end" in step
+    if judged:
+        return step.get("end") is True
+    return is_marker(step)
 
 
 def is_prompt(step: dict) -> bool:
@@ -303,12 +331,20 @@ def segment(steps: list[dict], min_steps: int = 2,
         episodes.append(current)
         current = Episode()
 
+    judged = was_judged(steps)
+
     for step in steps:
         if is_prompt(step):
             # A new stated goal ends the preceding work, but only if there was
             # enough of it. Mid-task prompts ("continue", "fix that") are common
             # and must not shred an episode.
-            if substantive_count(current) >= min_steps:
+            #
+            # Only where nothing judged the steps. A prompt is a proxy for "the
+            # last thing must have finished", and it is a poor one — it cuts on a
+            # step count, which measures that work happened, not that a goal
+            # ended. Where a verdict exists it answers the question directly, and
+            # the sentinel goes back to being context and a source of titles.
+            if not judged and substantive_count(current) >= min_steps:
                 close("prompt")
             # The sentinel belongs to the episode it opens, so the title can
             # come from a prompt inside the episode's own span.
@@ -316,9 +352,9 @@ def segment(steps: list[dict], min_steps: int = 2,
             continue
 
         current.steps.append(step)
-        if is_marker(step) and substantive_count(current) >= min_steps:
+        if is_end(step, judged) and substantive_count(current) >= min_steps:
             # Nothing after this point belongs to the finished task.
-            close("marker")
+            close("marker" if not judged else "judged")
 
     if substantive_count(current) > 0:
         episodes.append(current)

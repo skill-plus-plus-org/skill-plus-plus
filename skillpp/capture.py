@@ -218,6 +218,26 @@ def handle_tool(config: Config, payload: dict) -> None:
         "failed": _failed(payload.get("tool_response")),
         "t": round(time.time(), 1),
     }
+    # Did this end the task? Asked now, while the span behind it is still what
+    # the developer was doing, and recorded so `segment` reads a boolean instead
+    # of re-deriving an ending from a vocabulary of git verbs.
+    #
+    # The `try` wraps the judgement only. A model that is missing, slow or
+    # incoherent costs the verdict, never the step — losing the step would lose
+    # the work, which is the one thing capture exists to prevent.
+    # The key is written only when the model actually answered. `end: None` on
+    # every step would read downstream as "this stream was judged, and nothing
+    # ended" — a session with no boundaries at all — when what happened is that
+    # nothing was asked. Absent means unjudged, and `segment` falls back to the
+    # vocabulary rules for the whole stream, which is the right behaviour when
+    # Ollama is not running.
+    try:
+        from .boundary import judge_in_session
+        verdict = judge_in_session(config, session, step)
+        if verdict is not None:
+            step["end"] = verdict
+    except Exception as exc:  # noqa: BLE001 - a hook never raises at a developer
+        log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
     session["steps"].append(step)
     _save_session(config, session)
 

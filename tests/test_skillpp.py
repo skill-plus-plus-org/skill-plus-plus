@@ -29,6 +29,38 @@ from fixtures.messy_session import (EXPECTED_OCCURRENCES, LEAKED_TOKEN,
                                     to_session_dict)
 
 
+_REAL_JUDGE = None
+
+
+def setUpModule() -> None:
+    """Silence the boundary judge for the whole suite.
+
+    `capture.handle_tool` asks a local model whether each step ended a task.
+    Left real, the suite needs Ollama running and pays ~0.7s per captured step —
+    measured, `TestBenchmarkSegmentation` alone went from 0.4s to **371s**, and
+    a machine without Ollama would sit through a five-second timeout per step
+    instead.
+
+    Module scope rather than `TempRoot`, because the classes that route through
+    capture are not all `TempRoot` subclasses — `TestBenchmarkSegmentation` is a
+    plain `TestCase` and is exactly the one that hurt.
+
+    The stub answers `None`, "no opinion", which is what a step captured before
+    the judge existed carries. So every test written against the marker and
+    prompt rules goes on measuring them, and a test of the judged path opts in
+    with `TempRoot._stub_judge`.
+    """
+    global _REAL_JUDGE
+    import skillpp.boundary as boundary
+    _REAL_JUDGE = boundary.judge_in_session
+    boundary.judge_in_session = lambda config, session, step: None
+
+
+def tearDownModule() -> None:
+    import skillpp.boundary as boundary
+    boundary.judge_in_session = _REAL_JUDGE
+
+
 def bash(command: str, failed: bool = False) -> dict:
     return {"tool": "Bash", "input": {"command": command}, "failed": failed}
 
@@ -39,6 +71,32 @@ class TempRoot(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.config = Config(self.root / "skillpp")
         self.config.ensure_dirs()
+        self.judged = self._stub_judge(None)
+
+    def _stub_judge(self, verdict):
+        """Answer the boundary judge without a model.
+
+        `handle_tool` asks a local model whether each step ended a task. Left
+        real, the suite needs Ollama running and pays ~0.7s per captured step —
+        so a test of the ledger becomes a test of the model, and a machine
+        without Ollama sees hundreds of five-second timeouts instead of results.
+
+        The default is `None`, "no opinion", which is what a step recorded
+        before the judge existed carries — so every test written against the
+        marker and prompt rules keeps measuring them. Tests of the judged path
+        call this with `True`/`False`, or replace `calls` with their own script.
+        """
+        import skillpp.boundary as boundary
+        real = boundary.judge_in_session
+        calls: list[dict] = []
+
+        def fake(config, session, step):
+            calls.append(step)
+            return verdict(step) if callable(verdict) else verdict
+
+        boundary.judge_in_session = fake
+        self.addCleanup(lambda: setattr(boundary, "judge_in_session", real))
+        return calls
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
