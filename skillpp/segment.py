@@ -149,6 +149,36 @@ def is_prompt(step: dict) -> bool:
     return step.get("tool") == PROMPT_TOOL
 
 
+# How far ahead to look for the write a `Read` fed. Read-then-edit is usually
+# adjacent; a couple of steps of slack covers a read, a check, then the edit.
+READ_FEEDS_WINDOW = 3
+
+_WRITE_TOOLS = ("Edit", "Write", "NotebookEdit")
+
+
+def feeds_a_write(steps: list[dict], index: int,
+                  window: int = READ_FEEDS_WINDOW) -> bool:
+    """Does the `Read` at *index* name the file a nearby write then changes?
+
+    Lives here, and not in `capture`, because two rules need the same answer and
+    for a while they disagreed. `capture._substantive` kept such a read; then
+    `trim_leading_exploration` cut it again whenever it happened to open an
+    episode, because it only asked whether the step was read-only. The read that
+    names the file a procedure operates on is not exploration in one position
+    and procedure in another.
+    """
+    step = steps[index]
+    if step.get("tool") != "Read":
+        return False
+    path = (step.get("input") or {}).get("file_path")
+    if not path:
+        return False
+    ahead = steps[index + 1:index + 1 + window]
+    return any(s.get("tool") in _WRITE_TOOLS
+               and (s.get("input") or {}).get("file_path") == path
+               for s in ahead)
+
+
 # MCP verbs that only retrieve. A tool call cannot be judged from its name in
 # general, which is why this is a prefix list and not a rule: `search_messages`
 # and `get_event` look, `send_message` and `append_rows` do not. Anything not
@@ -224,8 +254,15 @@ def trim_leading_exploration(steps: list[dict],
     bank a candidate it should have discarded.
     """
 
-    def trimmable(step: dict) -> bool:
+    def trimmable(position: int) -> bool:
+        step = steps[position]
         if str(step.get("tool") or "").startswith("mcp__"):
+            return False
+        # The read that named the file about to be written is step one of the
+        # procedure, wherever it falls. `capture._substantive` already keeps it;
+        # cutting it here because it happens to come first undid that, and did
+        # it silently — the episode simply started at the edit.
+        if feeds_a_write(steps, position):
             return False
         return is_read_only(step)
 
@@ -237,7 +274,7 @@ def trim_leading_exploration(steps: list[dict],
             prefix.append(step)
             index += 1
             continue
-        if trimmable(step):
+        if trimmable(index):
             cut += 1
             index += 1
             continue

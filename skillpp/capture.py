@@ -25,7 +25,7 @@ from .ledger import Entry, Ledger, make_id, STATUS_CANDIDATE
 from .normalize import parameterize, signature
 from .recurrence import find_match
 from .sanitize import scrub, scrub_obj
-from .segment import PROMPT_TOOL, segment
+from .segment import PROMPT_TOOL, feeds_a_write, segment
 
 # Tool inputs worth keeping. Anything else is recorded by name only.
 #
@@ -52,9 +52,6 @@ _KEEP_INPUT = {
 # boundary, never a step of the workflow itself.
 _NOISE_TOOLS = {"Read", "Glob", "Grep", "TodoWrite", "Task", "WebFetch", "WebSearch",
                 PROMPT_TOOL}
-# How far ahead to look for the write a `Read` fed. Read-then-edit is usually
-# adjacent; a couple of steps of slack covers a read, a check, then the edit.
-_READ_FEEDS_WINDOW = 3
 
 
 def _substantive(steps: list[dict]) -> list[dict]:
@@ -75,14 +72,9 @@ def _substantive(steps: list[dict]) -> list[dict]:
         if tool not in _NOISE_TOOLS:
             keep.append(step)
             continue
-        if tool != "Read":
-            continue
-        path = (step.get("input") or {}).get("file_path")
-        if not path:
-            continue
-        ahead = steps[index + 1:index + 1 + _READ_FEEDS_WINDOW]
-        if any(s.get("tool") in ("Edit", "Write", "NotebookEdit")
-               and (s.get("input") or {}).get("file_path") == path for s in ahead):
+        # One predicate, shared with `trim_leading_exploration`, which used to
+        # cut these again whenever one opened an episode.
+        if feeds_a_write(steps, index):
             keep.append(step)
     return keep
 
