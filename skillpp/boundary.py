@@ -108,6 +108,11 @@ def render_step(step: dict) -> str:
     So the tool-specific branch consumes the keys it knows how to phrase, and
     whatever is left is appended rather than lost.
     """
+    if JUDGE_READS_SUMMARY:
+        did = str(step.get("summary") or "").strip()
+        if did:
+            return f"{did}{' — and it failed' if step.get('failed') else ''}"
+
     # `step["summary"]` is deliberately NOT used here, and that is a
     # measurement. Rendering the judge's context as summaries instead of raw
     # commands took it from 3 fixed / 5 broken to 1 fixed / 6 broken on the live
@@ -192,6 +197,17 @@ _DESCRIBE_CHARS = 700
 # is signal — paths, matches, counts — not prose to be continued.
 _REPLY_CHARS = 1200
 
+# How much of a generated summary to keep. A length instruction does not control
+# this: across three wordings, including "never exceed 200 characters", the
+# median moved 150 -> 90 and the maximum stayed ~900 in all three. Enforced
+# here, not asked for.
+SUMMARY_CHARS = 300
+
+# Whether the judge's context renders steps as their summaries instead of raw
+# commands. Off: measured 1 fixed / 6 broken against 3 fixed / 5 broken, every
+# session gaining episodes. See `docs/benchmarks.md`. The benchmarks flip it.
+JUDGE_READS_SUMMARY = False
+
 
 def describe(step: dict, *, asks: list[str], index: int,
              model: str, host: str, reply: str = "",
@@ -239,11 +255,6 @@ def describe(step: dict, *, asks: list[str], index: int,
             break
     template = (PROMPTS / "step_description.md").read_text(encoding="utf-8")
     prompt = (template
-              .replace("{ASKS}", "\n".join(f"  {n}. {a[:220]}"
-                                           for n, a in enumerate(asks, 1))
-                       or "  (nothing stated)")
-              .replace("{INDEX}", str(index))
-              .replace("{SAID}", (step.get("assistant_note") or "-")[:500])
               .replace("{TOOL}", str(step.get("tool") or "unknown"))
               .replace("{INPUT}", body or "(no arguments recorded)")
               .replace("{REPLY}", (reply or step.get("tool_returned")
@@ -252,7 +263,7 @@ def describe(step: dict, *, asks: list[str], index: int,
         reply = ask(model, prompt, host=host, timeout=timeout, think=False)
     except LocalModelUnavailable:
         return ""
-    return " ".join(reply.split())[:300]
+    return " ".join(reply.split())[:SUMMARY_CHARS]
 
 
 def describe_in_session(config, session: dict, step: dict,

@@ -770,3 +770,61 @@ person does not pay for them again:
   1.09s) and an 11.15s reading for a step that costs 2.49s.
 * **`gemma3n:e4b` cannot think.** `think=True` returns HTTP 400. The flag stays
   because it is free here and worth 113.8s against 0.5s on a model that can.
+
+### The tenth and eleventh configurations, and what actually helped
+
+Two more runs, both on the same ten live sessions (`263d65ce` skipped — it is a
+third of the corpus by step count and the slowest by far).
+
+| | fixtures | what the judge reads | result |
+| --- | --- | --- | --- |
+| A | as recorded | raw commands | 3 fixed / 5 broken |
+| B | re-extracted | raw commands | **3 fixed / 3 broken** |
+| C | re-extracted | generated summaries | 3 fixed / 5 broken |
+
+**B is the best the judge has ever scored**, and the improvement has nothing to
+do with the describer.
+
+*Re-extracted* means the fixtures were rebuilt from their original transcripts
+with the current `_KEEP_INPUT`, which now stores `content` for a `Write`,
+`old_string`/`new_string` for an `Edit`, and a bounded `tool_returned` for
+everything. Those reach the judge through `render_step`'s leftover-field
+rendering. That widening was made for the describer's benefit and never measured
+against the judge; it is worth two sessions on its own:
+
+    71448e61   BROKE -> ok
+    d5fd2e59   BROKE -> ok
+
+*Summaries* then give one session back and lose three:
+
+    241955c7   still wrong -> FIXED
+    71448e61   ok -> BROKE
+    a7be1ef5   ok -> BROKE
+    fb505861   FIXED -> still wrong
+
+This is with the summary prompt rewritten to its minimal form — tool, input,
+reply, and "in one sentence of at most 20 words, say what that did; describe it,
+do not continue or reproduce any content shown above". That prompt is a large
+improvement on its predecessor as a *record*: 87-141 characters, 1.7s per step,
+no fabrication, where the previous one produced 2,182 characters and invented
+eight topics that were not in the file it was describing. It still does not help
+the judge.
+
+So: capturing more of each step helps. Describing each step does not. The
+describer earns its place as a record and has never earned it as judge input.
+
+### A failure mode the score hides
+
+`a8b61dae` reports `0/1` under summaries — not a wrong episode count, **no
+candidate at all**. The judge marked zero endings across 26 work steps, so
+`segment` produced one markerless episode, `max_markerless_steps` (25) flagged
+it, and `fold_session` dropped it. One step over the threshold and the session
+disappears with nothing to review.
+
+That threshold was calibrated when "markerless" meant "no git verb appeared".
+Under the judge it means "the model said no 26 times", which is a different
+claim. Worth re-deriving before the judge is trusted by default.
+
+`judge_replay.py --verbose` was no help here: it prints only steps the judge
+called endings, so a run with zero endings prints nothing and looks identical to
+a run that never executed.

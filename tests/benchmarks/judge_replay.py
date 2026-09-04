@@ -59,13 +59,9 @@ def judged_copy(doc: dict, config: Config, *, verbose: bool = False,
         if summarise:
             asks = [str((s.get("input") or {}).get("text", "")).strip()
                     for s in seen if is_prompt(s)]
-            # No `reply` argument: these fixtures were recorded before capture
-            # kept `tool_returned`, so there is no tool output to hand over.
-            # The summaries here are built from the asks and the step's input
-            # alone, which is weaker than the live path — worth remembering
-            # before reading too much into the result.
             note = describe(step, asks=[a for a in asks if a],
                             index=sum(1 for s in seen if not is_prompt(s)) + 1,
+                            reply=step.get("tool_returned", ""),
                             model=config.local_model, host=config.ollama_url)
             if note:
                 step["summary"] = note
@@ -90,6 +86,9 @@ def main(argv: list[str]) -> int:
                     help="how many prior steps to show (default boundary.CONTEXT_STEPS)")
     ap.add_argument("--describe", action="store_true",
                     help="also send the developer's description (default: withheld)")
+    ap.add_argument("--skip", action="append", default=[],
+                    help="tag to leave out, repeatable. `263d65ce` is a third of "
+                         "the corpus by step count and the slowest by far.")
     ap.add_argument("--summarise", action="store_true",
                     help="write a `summary` on each step first, so the judge reads "
                          "sentences instead of raw commands. Slow: adds a model call "
@@ -101,12 +100,18 @@ def main(argv: list[str]) -> int:
     if args.context is not None:
         boundary.CONTEXT_STEPS = args.context
     boundary.SEND_DESCRIPTION = args.describe
+    if args.summarise:
+        # Keep the summary whole and let the judge read it — the configuration
+        # being measured. Defaults stay where the last measurement left them.
+        boundary.SUMMARY_CHARS = 1200
+        boundary.JUDGE_READS_SUMMARY = True
 
     config = Config()
     print(f"context {boundary.CONTEXT_STEPS} steps, "
           f"description {'sent' if args.describe else 'withheld'}, "
           f"summaries {'generated' if args.summarise else 'absent'}")
-    docs = live_score.load(args.tag)
+    docs = [d for d in live_score.load(args.tag)
+            if not any(d["tag"].startswith(t) for t in args.skip)]
     if not docs:
         print("no sessions matched", file=sys.stderr)
         return 1
