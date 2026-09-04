@@ -232,7 +232,7 @@ def _episodes_of(entry: dict) -> list[dict]:
     # stripped copy instead gave every episode in a transcript the same
     # evidence, which is no evidence at all.
     out = []
-    for index, episode in enumerate(segment(raw, 2, 25)):
+    for index, episode in enumerate(segment(raw, 2)):
         work = [s for s in episode.steps if s["tool"] not in NOISE]
         if len(work) < 2:
             continue

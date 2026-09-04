@@ -126,17 +126,6 @@ class Config:
         # pathological backlog, not an expected duration.
         self.background_timeout_seconds = _int_env(
             "SKILLPP_BACKGROUND_TIMEOUT", 120)
-        # Above this, an episode with no completion marker is a slog
-        # rather than a procedure. Not a cap on procedures: a finished
-        # 50-step migration that ends in a marker is one recipe and is
-        # kept however long it ran. This only catches the other shape —
-        # a long stretch that ended because the next request arrived,
-        # which is what a 433 KB session produces nine of. Sized from
-        # the windowing measurements on real sessions: prompt-to-prompt
-        # segments run a median of 290 tokens and p90 of 1,458, so a
-        # procedure is a small number of steps, not sixty.
-        self.max_markerless_steps = _int_env(
-            "SKILLPP_MAX_MARKERLESS_STEPS", 25)
         self.min_episode_steps = _int_env("SKILLPP_MIN_EPISODE_STEPS", 2)
 
     @property

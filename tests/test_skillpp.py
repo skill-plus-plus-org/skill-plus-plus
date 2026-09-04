@@ -1329,7 +1329,7 @@ class TestReadsAndRetrievals(unittest.TestCase):
                  {"tool": "Read", "input": {"file_path": "/tmp/a.md"}, "failed": False},
                  {"tool": "Read", "input": {"file_path": "/tmp/b.md"}, "failed": False},
                  {"tool": "mcp__Slack__search_messages", "input": {}, "failed": False}]
-        self.assertTrue(segment(steps, 2, 25)[0].flagged)
+        self.assertTrue(segment(steps, 2)[0].flagged)
 
 
 class TestStripScaffolding(unittest.TestCase):

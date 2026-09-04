@@ -154,7 +154,7 @@ def main(argv: list[str]) -> int:
     out = HERE / f"{args.tag[:8]}-{args.name}.json"
     out.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
 
-    got = segment([dict(s) for s in steps], 2, 25)
+    got = segment([dict(s) for s in steps], 2)
     print(f"wrote {out.name}")
     print(f"  {len(work)} steps, {doc['shape']['prompts']} prompts, "
           f"{doc['shape']['failed']} failed")

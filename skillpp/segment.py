@@ -332,8 +332,7 @@ def _absorb_before_commit(episodes: list[Episode]) -> list[Episode]:
     return out
 
 
-def segment(steps: list[dict], min_steps: int = 2,
-            max_markerless: int = 0) -> list[Episode]:
+def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
     """Cut *steps* into episodes.
 
     *min_steps* counts steps that are not prompt sentinels — a boundary that
@@ -355,6 +354,14 @@ def segment(steps: list[dict], min_steps: int = 2,
 
     Flagging applies only when the session actually segmented. A session that
     did one thing start to finish needs no artifact to be believable.
+
+    Length is deliberately not a flag. A `max_markerless_steps` setting used to
+    flag any episode past 25 steps that carried no marker. Measured against the
+    live sessions it never fired on the vocabulary path — every session long
+    enough to trip it ends in a marker — and on the judged path it emptied three
+    ledgers outright: the judge found no ending, the whole session became one
+    markerless episode, and the rule threw it away. Removing it took the judge
+    from 3 fixed / 3 broken to 3 fixed / 0 broken. See `docs/benchmarks.md`.
     """
     episodes: list[Episode] = []
     current = Episode()
@@ -423,21 +430,6 @@ def segment(steps: list[dict], min_steps: int = 2,
                 and not episode.has_marker
                 and all(is_read_only(s) for s in episode.steps
                         if not is_prompt(s)))
-
-    # A long stretch with nothing to show for itself. `max_markerless` is off
-    # by default so callers opt in; `fold_session` passes the configured value.
-    #
-    # Deliberately conditioned on the absence of a marker. "Length is not the
-    # failure; never finishing is" — a fifty-step migration ending in a commit
-    # is one recipe. What this catches is the other shape: sixty steps that
-    # ended only because the developer typed the next thing, which is what a
-    # 433 KB session produced nine of, every one of them titled after whatever
-    # was said at the top.
-    if max_markerless:
-        for episode in episodes:
-            work = [s for s in episode.steps if not is_prompt(s)]
-            if len(work) > max_markerless and not episode.has_marker:
-                episode.flagged = True
 
     # An episode whose every substantive step only looked at things contains no
     # method, however it ended and however long it ran. Without this, a whole

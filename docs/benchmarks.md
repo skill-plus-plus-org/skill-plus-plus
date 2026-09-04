@@ -165,10 +165,14 @@ That diagnosed `big` properly. Segmentation was producing **nine episodes of
 steps; lexical matching then merged eight of them into one candidate at ×8. Not
 one defect but two.
 
-`max_markerless_steps` (25) flags a long stretch that has nothing to show for
+`max_markerless_steps` (25) flagged a long stretch that had nothing to show for
 itself. Conditioned on the absence of a marker on purpose — *length is not the
 failure, never finishing is*, and a fifty-step migration ending in a commit is
-one recipe. `big` now banks **1 candidate instead of a 61-step blob at ×8**.
+one recipe. `big` banked **1 candidate instead of a 61-step blob at ×8**.
+
+That rule has since been removed — see *The length rule is gone* at the end of
+this file. `big` is a synthetic case and is no longer evidence; the live
+sessions say the rule cost three ledgers and saved none.
 
 ### Embeddings: a tie-breaker for one band
 
@@ -828,3 +832,60 @@ claim. Worth re-deriving before the judge is trusted by default.
 `judge_replay.py --verbose` was no help here: it prints only steps the judge
 called endings, so a run with zero endings prints nothing and looks identical to
 a run that never executed.
+
+### The length rule is gone
+
+Removed `max_markerless_steps` outright. Two measurements, both against the live
+sessions:
+
+**Deterministic path — the rule never fired.** `score.py` over all eleven
+fixtures is byte-identical with it on and off:
+
+```
+rule ON  (25):  6/6 sessions pass, 5 known gap(s)
+rule OFF  (0):  6/6 sessions pass, 5 known gap(s)
+```
+
+Every session long enough to trip 25 steps — `1c3c9422` (54), `2095a8af` (50),
+`263d65ce` (110) — contains a `git commit`, so `has_marker` is true and the rule
+skips it. It has never once fired on real captured work.
+
+**Judged path — the rule was the whole remaining deficit.** `judge_replay.py`
+at `_VALUE_CHARS=80`, ten sessions, `263d65ce` skipped:
+
+| session | work steps | rule ON | rule OFF |
+| --- | --- | --- | --- |
+| `1c3c9422` desk-booking | 54 | **BROKE** 0/1 | ok 1/1 |
+| `2095a8af` timesheet-timesheet | 50 | **BROKE** 0/1 | ok 1/1 |
+| `a8b61dae` failed-commit-then-retry | 28 | **BROKE** 0/1 | ok 1/1 |
+| `5c7b0f81` coverage-writeup-run2 | | FIXED | FIXED |
+| `95b6bde7` mcp-retrieval-then-compare | | FIXED | FIXED |
+| `fb505861` coverage-writeup | | FIXED | FIXED |
+| `71448e61`, `a7be1ef5`, `d5fd2e59` | | ok | ok |
+| `241955c7` two-unrelated-tasks | | still wrong 1/2 | still wrong 1/2 |
+| | | **3 fixed, 3 broken** | **3 fixed, 0 broken** |
+
+All three broken sessions are the same shape, and it is the one the section
+above describes: judge marks no endings → one markerless episode → flagged →
+`foldable` drops it → **empty ledger**. Not a wrong count, no candidate at all.
+Every one of the three is over 25 steps; the three that already worked are all
+under it.
+
+This is the first configuration where the judge beats the vocabulary outright.
+
+**What the removal gives up.** The rule was written for a shape this corpus does
+not contain: the 433 KB session that produced nine ~61-step markerless episodes.
+That measurement is real, but it came from a synthetic case, and no live fixture
+reproduces it — `263d65ce` is the closest by size and it ends in a marker. The
+trade is deliberate: a defence against an unrepresented shape, for a fix to three
+represented ones. Nothing in the test suite covered the rule, which is part of
+why it survived this long.
+
+If that shape ever shows up in a real capture, the fix is not a length cap. It is
+that the judge found no ending in sixty steps, and the length cap only hid it.
+
+**Untouched by this.** `241955c7` still merges two unrelated tasks into one
+episode — a genuine judge miss, and the sign that the removal is not papering
+over judge errors. The read-only flag (an episode whose every step only looked
+at things) and the trailing-session-end flag both stay; they are conditioned on
+what the work *did*, not on how long it ran.

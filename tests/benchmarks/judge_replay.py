@@ -86,6 +86,10 @@ def main(argv: list[str]) -> int:
                     help="how many prior steps to show (default boundary.CONTEXT_STEPS)")
     ap.add_argument("--describe", action="store_true",
                     help="also send the developer's description (default: withheld)")
+    ap.add_argument("--value-chars", type=int, default=None,
+                    help="how much of each leftover input field render_step shows "
+                         "(default boundary._VALUE_CHARS). 80 is what clipped an "
+                         "Edit's old_string in the session that flipped.")
     ap.add_argument("--skip", action="append", default=[],
                     help="tag to leave out, repeatable. `263d65ce` is a third of "
                          "the corpus by step count and the slowest by far.")
@@ -100,6 +104,8 @@ def main(argv: list[str]) -> int:
     if args.context is not None:
         boundary.CONTEXT_STEPS = args.context
     boundary.SEND_DESCRIPTION = args.describe
+    if args.value_chars is not None:
+        boundary._VALUE_CHARS = args.value_chars
     if args.summarise:
         # Keep the summary whole and let the judge read it — the configuration
         # being measured. Defaults stay where the last measurement left them.
@@ -107,7 +113,8 @@ def main(argv: list[str]) -> int:
         boundary.JUDGE_READS_SUMMARY = True
 
     config = Config()
-    print(f"context {boundary.CONTEXT_STEPS} steps, "
+    print(f"value_chars {boundary._VALUE_CHARS}, "
+          f"context {boundary.CONTEXT_STEPS} steps, "
           f"description {'sent' if args.describe else 'withheld'}, "
           f"summaries {'generated' if args.summarise else 'absent'}")
     docs = [d for d in live_score.load(args.tag)
