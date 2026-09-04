@@ -108,14 +108,21 @@ def render_step(step: dict) -> str:
     So the tool-specific branch consumes the keys it knows how to phrase, and
     whatever is left is appended rather than lost.
     """
-    # A recorded description says what the step did in words. Prefer it: the
-    # raw alternative is what pushed one real prompt to 5,789 characters, four
-    # `python3 -c` heredocs burying the single line that mattered.
-    did = str(step.get("summary") or "").strip()
-    if did:
-        failed = " — and it failed" if step.get("failed") else ""
-        return f"{did}{failed}"
-
+    # `step["summary"]` is deliberately NOT used here, and that is a
+    # measurement. Rendering the judge's context as summaries instead of raw
+    # commands took it from 3 fixed / 5 broken to 1 fixed / 6 broken on the live
+    # sessions, over-cutting every one: desk-booking 1 -> 4 episodes,
+    # failed-retry 1 -> 4, long-session 1 -> 8, and three of them lost
+    # `must_contain` steps as the content scattered.
+    #
+    # The cause is in the summaries themselves. Each ends by tying the step to
+    # the request — "fulfilling the developer's request", "informing the
+    # developer's next task" — and the judge is then asked whether the request
+    # is done while reading twenty such sentences. The phrasing that makes a
+    # summary readable is the phrasing that reads as completion.
+    #
+    # See `docs/benchmarks.md`. The summary stays on the step for readers and
+    # later stages; it just does not feed this prompt.
     tool = str(step.get("tool") or "")
     payload = {k: v for k, v in (step.get("input") or {}).items()
                if v not in (None, "")}

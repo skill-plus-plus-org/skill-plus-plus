@@ -678,3 +678,95 @@ happens, not *which* pairs are recognised, and the corpus confirms it.
 
 Fail-safe re-verified after the change: an unreachable model folds nothing,
 records no decision, leaves the queue byte-identical, and returns in 0.10s.
+
+---
+
+## The boundary judge: nine configurations, measured
+
+The proposal, again: replace `is_marker`'s vocabulary of git verbs with a local
+model asked, on every tool call, whether the task ended there. `6ca48a5` above
+recorded the first attempt and did not wire it in. This is the second, wired in
+behind `SKILLPP_JUDGE` and measured properly.
+
+**Read this before proposing a tenth.** Every row is a real run against
+`tests/fixtures/sessions/`, which is the only yardstick here — the synthetic
+corpus was written by whoever wrote the detector, and rewards the opposite goal
+shape because its tasks run 3-4 steps against 20+ in real spans.
+
+| what the judge was given | live sessions |
+| --- | --- |
+| the step alone, no goal, no span | 0 of 5 |
+| + the goal and the steps behind it | 0 of 5 |
+| + **what an ending is** | this is the whole difference |
+| goal = latest prompt only | 0 of 5 — read 54 steps as 27 endings |
+| goal = first prompt of the span | 0 of 5 — 54 steps, 17 episodes |
+| goal = every prompt in the span, 6 steps of context | 2 of 5 |
+| …10 steps of context | 3 of 5 |
+| …**20 steps of context** | **4 of 5** — the best it ever reached |
+| + the developer's own `description` per step | 2 of 5 |
+| + a deterministic prior ("this step only looked") | worse, and broke a passing case |
+| + steps rendered as generated summaries | **1 fixed / 6 broken** |
+
+The vocabulary it is trying to beat scores 3 of 5 and costs nothing.
+
+### What each failure was, so it is not rediscovered
+
+**Latest prompt as the goal** — a task is stated across several prompts, so the
+last one is a sub-step, and a sub-step is satisfied by a single edit. The goal
+named a file, the step touched that file, "delivered?" was honestly yes, every
+time.
+
+**First prompt of the span** — once an ending fires the span resets, and the
+next span has no prompt in it at all. The goal renders "(not stated)" and the
+context renders "(nothing yet)", so the model is asked whether a request it
+cannot see is finished. It says yes, which fires another ending, which empties
+the next span. A 50-step session became 13 episodes.
+
+**Every prompt in the span** — the shape that works, and it carries a ratchet:
+miss one ending and the next prompt joins the same goal, so the question becomes
+"is *every* part done" over two tasks and is harder to answer yes than the first
+was. Its failures are all `got 1` whatever the truth was.
+
+**Context size is the strongest lever measured.** 6 steps 2/5, 10 steps 3/5,
+20 steps 4/5. At 20 the one multi-task live session came out right for the first
+time — the work that had finished was simply scrolling out of a smaller window.
+It buys nothing on the synthetic corpus because every task there already fits in
+six steps, which is why that corpus cannot see this.
+
+**The developer's `description`** — 2/5 against 4/5 without. Tried before the
+command and after it; byte-identical results, so not a phrasing effect. The
+extra detail itself pushes the model toward "delivered".
+
+**Generated summaries as the judge's context** — 1 fixed / 6 broken, and every
+session gained episodes: desk-booking 1→4, failed-retry 1→4, long-session 1→8,
+with three losing `must_contain` steps as content scattered across fragments.
+The cause is in the summaries: each ends by tying the step to the request —
+"fulfilling the developer's request", "informing the developer's next task" —
+and the judge reads twenty of those before being asked whether the request is
+done. The phrasing that makes a summary readable reads as completion.
+
+Cost: 3.2s per step, and 8.6s on the 110-step session as summaries fill the
+window. Two model calls per tool call at that rate is not viable on a hook.
+
+### The one thing the judge has ever done better than code
+
+`241955c7` — two unrelated jobs, one commit — is 1 episode under the vocabulary
+against a truth of 2, and the judge gets it right, with content intact, in the
+summaries configuration. That is the case this whole thread exists for, and it
+is the only one. It cost six correct sessions to buy.
+
+### Where it stands
+
+Wired in, default on, `SKILLPP_JUDGE=0` to disable. `render_step` deliberately
+does **not** use `step["summary"]`; see the comment there. The describer stays —
+it produces a better record, verified separately — it simply does not feed this
+prompt.
+
+Two traps that produced false readings during this work, recorded so the next
+person does not pay for them again:
+
+* **Measure warm.** A first call is ~11s and that is the model loading. It put a
+  false `think=False` claim in `boundary.py` (11.5s vs 4.2s; warm it is 1.10s vs
+  1.09s) and an 11.15s reading for a step that costs 2.49s.
+* **`gemma3n:e4b` cannot think.** `think=True` returns HTTP 400. The flag stays
+  because it is free here and worth 113.8s against 0.5s on a model that can.

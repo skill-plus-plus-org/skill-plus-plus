@@ -30,12 +30,14 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tests" / "fixtures" / "sessions"))
 
 import score as live_score                                    # noqa: E402
-from skillpp.boundary import judge, render_step, window   # noqa: E402
+from skillpp.boundary import (describe, judge, render_step,   # noqa: E402
+                              window)
 from skillpp.config import Config                             # noqa: E402
 from skillpp.segment import is_prompt                         # noqa: E402
 
 
-def judged_copy(doc: dict, config: Config, *, verbose: bool = False) -> dict:
+def judged_copy(doc: dict, config: Config, *, verbose: bool = False,
+                summarise: bool = False) -> dict:
     """A copy of *doc* whose steps carry the model's verdicts.
 
     Goal and span come from `boundary.window`, the same one `judge_in_session`
@@ -54,6 +56,19 @@ def judged_copy(doc: dict, config: Config, *, verbose: bool = False) -> dict:
         if is_prompt(step):
             seen.append(step)
             continue
+        if summarise:
+            asks = [str((s.get("input") or {}).get("text", "")).strip()
+                    for s in seen if is_prompt(s)]
+            # No `reply` argument: these fixtures were recorded before capture
+            # kept `tool_returned`, so there is no tool output to hand over.
+            # The summaries here are built from the asks and the step's input
+            # alone, which is weaker than the live path — worth remembering
+            # before reading too much into the result.
+            note = describe(step, asks=[a for a in asks if a],
+                            index=sum(1 for s in seen if not is_prompt(s)) + 1,
+                            model=config.local_model, host=config.ollama_url)
+            if note:
+                step["summary"] = note
         goal, done = window(seen)
         verdict = judge(step, goal=goal,
                         prior=done, model=config.local_model,
@@ -75,6 +90,11 @@ def main(argv: list[str]) -> int:
                     help="how many prior steps to show (default boundary.CONTEXT_STEPS)")
     ap.add_argument("--describe", action="store_true",
                     help="also send the developer's description (default: withheld)")
+    ap.add_argument("--summarise", action="store_true",
+                    help="write a `summary` on each step first, so the judge reads "
+                         "sentences instead of raw commands. Slow: adds a model call "
+                         "per step. Fixtures were recorded before summaries existed, "
+                         "so without this the judge is measured on the old input.")
     args = ap.parse_args(argv)
 
     import skillpp.boundary as boundary
@@ -84,7 +104,8 @@ def main(argv: list[str]) -> int:
 
     config = Config()
     print(f"context {boundary.CONTEXT_STEPS} steps, "
-          f"description {'sent' if args.describe else 'withheld'}")
+          f"description {'sent' if args.describe else 'withheld'}, "
+          f"summaries {'generated' if args.summarise else 'absent'}")
     docs = live_score.load(args.tag)
     if not docs:
         print("no sessions matched", file=sys.stderr)
@@ -95,7 +116,8 @@ def main(argv: list[str]) -> int:
     for doc in docs:
         before = live_score.check(doc)
         started = time.time()
-        after = live_score.check(judged_copy(doc, config, verbose=args.verbose))
+        after = live_score.check(judged_copy(doc, config, verbose=args.verbose,
+                                             summarise=args.summarise))
         steps = sum(1 for s in doc["steps"] if not is_prompt(s))
         took = time.time() - started
 
