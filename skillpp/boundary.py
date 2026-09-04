@@ -111,7 +111,7 @@ def render_step(step: dict) -> str:
     # A recorded description says what the step did in words. Prefer it: the
     # raw alternative is what pushed one real prompt to 5,789 characters, four
     # `python3 -c` heredocs burying the single line that mattered.
-    did = str(step.get("did") or "").strip()
+    did = str(step.get("summary") or "").strip()
     if did:
         failed = " — and it failed" if step.get("failed") else ""
         return f"{did}{failed}"
@@ -174,9 +174,20 @@ def judge(step: dict, *, goal: str = "", prior: list[str] | None = None,
 # other context, it started rewriting the document.
 _DESCRIBE_CHARS = 700
 
+# How much of the tool's reply the describer sees. This was 220 and the number
+# was a guess. Measured on a real `grep` whose reply ran 4,623 characters, with
+# nothing else changed: at 220 the description was "identified relevant Python
+# files using grep" and named nothing; at 1200 it was "located relevant code in
+# `cards.py` and `skillset.py`", which is the answer.
+#
+# It does not have the failure mode raw file *content* has, where more input made
+# the model continue the document instead of describing the step. Command output
+# is signal — paths, matches, counts — not prose to be continued.
+_REPLY_CHARS = 1200
+
 
 def describe(step: dict, *, asks: list[str], index: int,
-             model: str, host: str,
+             model: str, host: str, reply: str = "",
              timeout: float = 30.0) -> str:
     """One sentence: what this step did, and the part it plays in the task.
 
@@ -204,6 +215,11 @@ def describe(step: dict, *, asks: list[str], index: int,
     2.49s. Measure warm — a first call is ~11s and it is the model loading, the
     same trap that once put a false `think=False` claim in this docstring.
 
+    *reply* is the tool's answer, passed in rather than read off the step. The
+    step's own `tool_returned` is already cut to storage size, so reading it
+    back would cap the describer below `_REPLY_CHARS` and make widening that
+    budget a no-op. The caller has the untruncated reply in hand.
+
     Returns "" on any failure. A missing model costs the sentence, never the
     step.
     """
@@ -220,10 +236,11 @@ def describe(step: dict, *, asks: list[str], index: int,
                                            for n, a in enumerate(asks, 1))
                        or "  (nothing stated)")
               .replace("{INDEX}", str(index))
-              .replace("{SAID}", (step.get("said") or "-")[:500])
+              .replace("{SAID}", (step.get("assistant_note") or "-")[:500])
               .replace("{TOOL}", str(step.get("tool") or "unknown"))
               .replace("{INPUT}", body or "(no arguments recorded)")
-              .replace("{REPLY}", (step.get("reply") or "-")[:220]))
+              .replace("{REPLY}", (reply or step.get("tool_returned")
+                                  or "-")[:_REPLY_CHARS]))
     try:
         reply = ask(model, prompt, host=host, timeout=timeout, think=False)
     except LocalModelUnavailable:
@@ -231,7 +248,8 @@ def describe(step: dict, *, asks: list[str], index: int,
     return " ".join(reply.split())[:300]
 
 
-def describe_in_session(config, session: dict, step: dict) -> str:
+def describe_in_session(config, session: dict, step: dict,
+                        reply: str = "") -> str:
     """`describe`, with the asks and the step's position read off the buffer."""
     from .segment import is_prompt
 
@@ -240,6 +258,7 @@ def describe_in_session(config, session: dict, step: dict) -> str:
             for s in steps if is_prompt(s)]
     index = sum(1 for s in steps if not is_prompt(s)) + 1
     return describe(step, asks=[a for a in asks if a], index=index,
+                    reply=reply,
                     model=config.local_model, host=config.ollama_url)
 
 

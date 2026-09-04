@@ -58,7 +58,8 @@ def setUpModule() -> None:
     boundary.judge_in_session = lambda config, session, step: None
     # Same reasoning for the describer, which runs on the same hot path and is
     # slower still — it writes a sentence where the judge writes one word.
-    boundary.describe_in_session = lambda config, session, step: ""
+    boundary.describe_in_session = (
+        lambda config, session, step, reply="": "")
 
 
 def tearDownModule() -> None:
@@ -534,6 +535,66 @@ class TestCapture(TempRoot):
         handle_session_end(self.config, {"session_id": "ro"})
         entry = list(Ledger(self.config).all())[0]
         self.assertNotIn("read", entry.signature.split(" | "))
+
+    def test_the_describer_sees_more_reply_than_the_step_stores(self):
+        """The describer must not read the reply back off the step.
+
+        `tool_returned` is cut to storage size. An earlier version of the
+        describer read it from there, which capped the model below the budget
+        that was measured to help it and made widening that budget a no-op —
+        `boundary._REPLY_CHARS` is 1200 and the stored field is 400. The
+        difference only shows on a reply longer than the storage cap, which is
+        37% of real tool calls.
+        """
+        import skillpp.boundary as boundary
+        seen = {}
+
+        def spy(config, session, step, reply=""):
+            seen["reply"] = reply
+            seen["stored"] = step.get("tool_returned", "")
+            return "described"
+
+        real = boundary.describe_in_session
+        boundary.describe_in_session = spy
+        self.addCleanup(lambda: setattr(boundary, "describe_in_session", real))
+
+        handle_tool(self.config, {
+            "session_id": "big", "cwd": "/p", "tool_name": "Bash",
+            "tool_input": {"command": "grep -rn thing ."},
+            "tool_response": {"stdout": "match " * 900}})
+
+        self.assertGreater(len(seen["reply"]), boundary._REPLY_CHARS)
+        self.assertLessEqual(len(seen["stored"]), 400)
+        self.assertGreater(len(seen["reply"]), len(seen["stored"]))
+
+    def test_the_reply_reaches_the_prompt_not_just_the_call(self):
+        """`describe_in_session` once accepted `reply` and dropped it.
+
+        The parameter was added and never forwarded, so `describe` fell back to
+        the stored 400 characters and widening the budget did nothing. Stubbing
+        `describe_in_session` cannot catch that — it is the callee that lost the
+        argument — so this asserts on the prompt `describe` actually builds.
+        """
+        import skillpp.boundary as boundary
+        seen = {}
+
+        def spy_ask(model, prompt, **kw):
+            seen["prompt"] = prompt
+            return "described"
+
+        real = boundary.ask
+        boundary.ask = spy_ask
+        self.addCleanup(lambda: setattr(boundary, "ask", real))
+
+        needle = "UNIQUE-MARKER-DEEP-IN-THE-REPLY"
+        _REAL_DESCRIBE(
+            self.config,
+            {"steps": [{"tool": "UserPrompt", "input": {"text": "find it"},
+                        "failed": False}]},
+            {"tool": "Bash", "input": {"command": "grep -rn thing ."},
+             "tool_returned": "x" * 400},
+            reply="filler " * 60 + needle)
+        self.assertIn(needle, seen["prompt"])
 
     def test_session_buffer_is_deleted_after_fold(self):
         for cmd in ("npm ci", "npm test"):

@@ -25,7 +25,7 @@ from .ledger import Entry, Ledger, make_id, STATUS_CANDIDATE
 from .normalize import parameterize, signature
 from .recurrence import find_match
 from .sanitize import scrub, scrub_obj
-from .segment import PROMPT_TOOL, feeds_a_write, segment
+from .segment import PROMPT_TOOL, feeds_a_write, is_prompt, segment
 
 # Tool inputs worth keeping. Anything else is recorded by name only.
 #
@@ -40,6 +40,7 @@ from .segment import PROMPT_TOOL, feeds_a_write, segment
 # and exploration should not reach a signature. That holds for a read that leads
 # nowhere, and `_substantive` already drops those. It does not hold for the read
 # that fed the edit.
+#
 # A step that keeps only a path cannot be described. Asked what the `Write` that
 # produced COVERAGE.md did, a model shown `{"file_path": ".../COVERAGE.md"}`
 # answered "Analyze the existing coverage report" — it wrote one. Every field
@@ -152,13 +153,17 @@ def _save_session(config: Config, session: dict) -> None:
     tmp.replace(path)
 
 
-def _reply_text(response) -> str:
+def _reply_text(response, limit: int | None = _RESPONSE_CHARS) -> str:
     """What the tool said back, flattened and bounded.
 
     Whatever shape the harness uses — a string, a dict of fields, a list of
     content blocks — reduce it to the leading text. `_failed` already inspects
     this object for a verdict; this keeps the part a reader (or a model) needs
     to know what actually happened.
+
+    *limit* of ``None`` returns the whole thing. The describer wants that: what
+    is stored is cut to `_RESPONSE_CHARS`, and reading the stored field back
+    would cap the model below the budget measured to help it.
     """
     if isinstance(response, str):
         text = response
@@ -176,7 +181,8 @@ def _reply_text(response) -> str:
                         for b in response)
     else:
         text = str(response or "")
-    return " ".join(text.split())[:_RESPONSE_CHARS]
+    flat = " ".join(text.split())
+    return flat if limit is None else flat[:limit]
 
 
 def _narration(payload: dict) -> str:
@@ -197,7 +203,14 @@ def _narration(payload: dict) -> str:
             rows = fh.readlines()[-40:]
     except OSError:
         return ""
-    said: list[str] = []
+    # The text *preceding* the most recent tool call, which is this one — the
+    # hook fires after the call, so the transcript already holds it. Taking the
+    # text that follows instead returns nothing live, and on a finished
+    # transcript returns that session's closing words for every step: three
+    # consecutive steps were once given the same sentence, describing a file
+    # written long after the first of them ran.
+    pending: list[str] = []
+    before_last_call: list[str] = []
     for line in rows:
         try:
             row = json.loads(line)
@@ -211,11 +224,19 @@ def _narration(payload: dict) -> str:
             if not isinstance(block, dict):
                 continue
             kind = block.get("type")
-            if kind == "text" and (block.get("text") or "").strip():
-                said.append(block["text"])
+            # `thinking` as well as `text`, which `boundaries.py` also takes.
+            # Collecting only `text` returned nothing on real transcripts: what
+            # precedes a tool call is usually the reasoning that chose it, and
+            # that is the part worth having.
+            if kind in ("text", "thinking") and (block.get(kind) or "").strip():
+                pending.append(block[kind])
             elif kind == "tool_use":
-                said = []          # a new step starts; earlier talk was its own
-    return " ".join(" ".join(said).split())[:_RESPONSE_CHARS]
+                before_last_call = pending
+                pending = []
+    text = " ".join(" ".join(before_last_call).split())
+    if len(text) > _RESPONSE_CHARS:
+        text = text[:_RESPONSE_CHARS].rsplit(" ", 1)[0] + " …"
+    return text
 
 
 def _failed(response) -> bool:
@@ -309,12 +330,17 @@ def handle_tool(config: Config, payload: dict) -> None:
     # What the tool said back, and what the assistant said going in. Scrubbed
     # like everything else, and empty rather than absent when unavailable, so a
     # reader can tell "nothing was said" from "this shape was never recorded".
-    reply = scrub(_reply_text(payload.get("tool_response")))
-    if reply:
-        step["reply"] = reply
-    said = scrub(_narration(payload))
-    if said:
-        step["said"] = said
+    # Named by who produced them. `reply`/`said` said nothing about the actor,
+    # and in a list of four hundred steps that is the first question a reader
+    # has. `serves` is the hierarchy: which of the developer's requests this
+    # step is working on, so a flat list can still be read as nested work.
+    step["serves"] = sum(1 for s in session["steps"] if is_prompt(s)) or 1
+    returned = scrub(_reply_text(payload.get("tool_response")))
+    if returned:
+        step["tool_returned"] = returned
+    note = scrub(_narration(payload))
+    if note:
+        step["assistant_note"] = note
     # One sentence saying what this step did and the part it plays, written now
     # while the reply and the narration are still here. Everything downstream —
     # `is_marker`'s git verbs, `is_read_only`'s command list, `render_step`'s
@@ -322,9 +348,16 @@ def handle_tool(config: Config, payload: dict) -> None:
     if config.describe_steps:
         try:
             from .boundary import describe_in_session
-            note = describe_in_session(config, session, step)
-            if note:
-                step["did"] = note
+            # The flattened reply, not `step["tool_returned"]` — that one is
+            # already cut to storage size, and reading it back would cap the
+            # describer below the budget that was measured to help.
+            summary = describe_in_session(config, session, step,
+                                          reply=_reply_text(
+                                              payload.get("tool_response"),
+                                              limit=None))
+            if summary:
+                step["summary"] = summary
+                session["summarised_by"] = config.local_model
         except Exception as exc:  # noqa: BLE001 - a hook never raises at a dev
             log_error(config, f"describe failed: {type(exc).__name__}: {exc}")
     # Did this end the task? Asked now, while the span behind it is still what
