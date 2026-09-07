@@ -33,7 +33,27 @@ import score as live_score                                    # noqa: E402
 from skillpp.boundary import (describe, judge, render_step,   # noqa: E402
                               window)
 from skillpp.config import Config                             # noqa: E402
+from skillpp.local import LocalModelUnavailable, ask          # noqa: E402
 from skillpp.segment import is_prompt                         # noqa: E402
+
+
+def require_model(config: Config) -> None:
+    """Refuse to run against a model that is not there.
+
+    Without this the harness scores a green `ok` with `0.00s per step` when
+    Ollama is down: every `judge` call returns None, no verdict is written,
+    `was_judged` stays false, and the "judged" row is the vocabulary row printed
+    twice. It treats "the judge said nothing" and "the judge said no" as the
+    same state, which is the difference between a measurement and a blank.
+    """
+    try:
+        ask(config.local_model, "say ok", host=config.ollama_url, timeout=180.0)
+    except LocalModelUnavailable as exc:
+        raise SystemExit(
+            f"no model at {config.ollama_url}: {exc}\n"
+            f"start it with `ollama serve` and make sure "
+            f"`{config.local_model}` is pulled. Refusing to run: a replay "
+            f"without verdicts scores the vocabulary and calls it the judge.")
 
 
 def judged_copy(doc: dict, config: Config, *, verbose: bool = False,
@@ -52,6 +72,7 @@ def judged_copy(doc: dict, config: Config, *, verbose: bool = False,
     # session in. Feeding it the finished stream would let a step be judged
     # against boundaries found after it.
     seen: list[dict] = []
+    answered = 0
     for step in out["steps"]:
         if is_prompt(step):
             seen.append(step)
@@ -71,10 +92,49 @@ def judged_copy(doc: dict, config: Config, *, verbose: bool = False,
                         host=config.ollama_url, timeout=30.0)
         if verdict is not None:
             step["end"] = verdict
+            answered += 1
         if verbose and verdict:
             print(f"       end: {render_step(step)[:70]}")
         seen.append(step)
+    work = sum(1 for s in out["steps"] if not is_prompt(s))
+    if work and not answered:
+        raise SystemExit(
+            f"{out['tag']}: the model answered none of {work} steps. That is a "
+            f"blank, not a result — nothing was measured.")
+    out["_answered"] = answered
     return out
+
+
+def save_verdicts(doc: dict, judged: dict, config: Config, boundary) -> None:
+    """Write the model's verdicts into the fixture on disk.
+
+    Only `end` (and `summary`, when one was generated). The `truth` block is
+    never touched: rewriting a golden answer because the pipeline changed is how
+    the synthetic corpus started measuring itself.
+
+    A `judged` block records which model and configuration produced these, so a
+    stale set is visible rather than silently scored. Re-run this whenever the
+    judge prompt or its flags change.
+    """
+    path = doc["_path"]
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    for stored, replayed in zip(on_disk["steps"], judged["steps"]):
+        if "end" in replayed:
+            stored["end"] = replayed["end"]
+        else:
+            stored.pop("end", None)
+        if replayed.get("summary"):
+            stored["summary"] = replayed["summary"]
+    on_disk["judged"] = {
+        "model": config.local_model,
+        "context_steps": boundary.CONTEXT_STEPS,
+        "value_chars": boundary._VALUE_CHARS,
+        "send_description": boundary.SEND_DESCRIPTION,
+        "endings": sum(1 for s in judged["steps"] if s.get("end") is True),
+        "answered": judged.get("_answered", 0),
+        "replayed": __import__("datetime").date.today().isoformat(),
+    }
+    path.write_text(json.dumps(on_disk, indent=2, ensure_ascii=False) + "\n")
 
 
 def main(argv: list[str]) -> int:
@@ -93,6 +153,12 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--skip", action="append", default=[],
                     help="tag to leave out, repeatable. `263d65ce` is a third of "
                          "the corpus by step count and the slowest by far.")
+    ap.add_argument("--write", action="store_true",
+                    help="save the verdicts back into each fixture. The live "
+                         "sessions are projections of Claude Code transcripts, "
+                         "which carry no `end` field, so without this the "
+                         "corpus is unjudged by construction and cannot "
+                         "represent a pipeline that requires verdicts.")
     ap.add_argument("--summarise", action="store_true",
                     help="write a `summary` on each step first, so the judge reads "
                          "sentences instead of raw commands. Slow: adds a model call "
@@ -113,6 +179,7 @@ def main(argv: list[str]) -> int:
         boundary.JUDGE_READS_SUMMARY = True
 
     config = Config()
+    require_model(config)
     print(f"value_chars {boundary._VALUE_CHARS}, "
           f"context {boundary.CONTEXT_STEPS} steps, "
           f"description {'sent' if args.describe else 'withheld'}, "
@@ -128,14 +195,18 @@ def main(argv: list[str]) -> int:
     for doc in docs:
         before = live_score.check(doc)
         started = time.time()
-        after = live_score.check(judged_copy(doc, config, verbose=args.verbose,
-                                             summarise=args.summarise))
+        after_doc = judged_copy(doc, config, verbose=args.verbose,
+                                summarise=args.summarise)
+        after = live_score.check(after_doc)
         steps = sum(1 for s in doc["steps"] if not is_prompt(s))
         took = time.time() - started
 
         def line(row):
             return (f"episodes {row['episodes']['got']}/{row['episodes']['want']}"
                     f"  kept {'all' if row['kept']['ok'] else 'MISSING ' + str(row['kept']['missing'])}")
+
+        if args.write:
+            save_verdicts(doc, after_doc, config, boundary)
 
         ok_before = before["episodes"]["ok"] and before["kept"]["ok"]
         ok_after = after["episodes"]["ok"] and after["kept"]["ok"]
