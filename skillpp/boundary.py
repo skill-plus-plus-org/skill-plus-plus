@@ -232,8 +232,8 @@ def judge(step: dict, *, goal: str = "", prior: list[str] | None = None,
     return yes_no(reply)
 
 
-def gaps(steps: list[dict]) -> list[tuple[int, dict, list[dict]]]:
-    """Every place a boundary could be: `(index, the prompt, what follows)`.
+def gaps(steps: list[dict]) -> list[tuple[int, list[dict], list[dict]]]:
+    """Every place a boundary could be: `(index, what was said, what follows)`.
 
     A gap is a prompt sitting between two tool calls. That is the only shape
     this asks about, which is why it costs one call per prompt rather than one
@@ -253,11 +253,25 @@ def gaps(steps: list[dict]) -> list[tuple[int, dict, list[dict]]]:
         nxt = next((i for i, s in enumerate(after) if not is_prompt(s)), None)
         if nxt is None:
             continue
-        said = next((s for s in after[:nxt] if is_prompt(s)), None)
-        if said is not None:
+        # *Every* prompt in the gap, not the first. A developer often sends a
+        # challenge and then the instruction behind it, and the first alone can
+        # be unreadable: `1c3c9422` has "did you call MCP for this?" followed
+        # immediately by "Use the adk-docs MCP tool to look up how ADK eval
+        # cases and evalsets are structured" — a restatement of the opening
+        # request. Shown only the first, the model called it a new job and the
+        # session banked two episodes against a truth of one; shown both, it
+        # reads it as the redo it is. That was the corpus's last gap.
+        said = [s for s in after[:nxt] if is_prompt(s)]
+        if said:
             out.append((index, said,
                         [s for s in after[nxt:] if not is_prompt(s)][:NEXT_STEPS]))
     return out
+
+
+def said_text(prompts: list[dict]) -> str:
+    """What the developer said in one gap, in order, as the prompt renders it."""
+    out = [str((p.get("input") or {}).get("text", "")).strip() for p in prompts]
+    return "\n\n    ".join(t for t in out if t)
 
 
 def judge_session(config, session: dict) -> int:
@@ -278,7 +292,7 @@ def judge_session(config, session: dict) -> int:
     for index, said, follow in gaps(steps):
         goal, prior = window(steps[:index])
         verdict = judge(steps[index], goal=goal, prior=prior[-PRIOR_STEPS:],
-                        said=str((said.get("input") or {}).get("text", "")),
+                        said=said_text(said),
                         follow=[render_step(s) for s in follow],
                         model=config.local_model, host=config.ollama_url)
         if verdict is None:

@@ -32,7 +32,7 @@ sys.path.insert(0, str(REPO / "tests" / "fixtures" / "sessions"))
 import score as live_score                                    # noqa: E402
 import skillpp.boundary as boundary                           # noqa: E402
 from skillpp.boundary import (describe, gaps, judge,          # noqa: E402
-                              render_step, window)
+                              render_step, said_text, window)
 from skillpp.config import Config                             # noqa: E402
 from skillpp.local import LocalModelUnavailable, ask          # noqa: E402
 from skillpp.segment import is_prompt                         # noqa: E402
@@ -99,7 +99,7 @@ def judged_copy(doc: dict, config: Config, *, verbose: bool = False,
         asked += 1
         verdict = judge(steps[index], goal=goal,
                         prior=prior[-boundary.PRIOR_STEPS:],
-                        said=str((said.get("input") or {}).get("text", "")),
+                        said=said_text(said),
                         follow=[render_step(s) for s in follow],
                         model=config.local_model, host=config.ollama_url,
                         timeout=30.0)
