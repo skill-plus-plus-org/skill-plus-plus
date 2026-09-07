@@ -200,12 +200,12 @@ def is_read_only(step: dict) -> bool:
     if tool.startswith("mcp__"):
         leaf = tool.split("__")[-1].lower()
         return leaf.startswith(_MCP_READ_VERBS)
-    # The tools whose whole purpose is looking. Their absence here meant the
-    # flagging rule below — "every substantive step only looked at things" —
-    # could never fire on an episode containing a `Read`, which is most of them.
-    # `reading-around` passed only because the trimmer happened to cut one step
-    # and push it under the too-thin gate, not because anything recognised it as
-    # pure exploration.
+    # The tools whose whole purpose is looking. Their absence here meant nothing
+    # downstream could tell that an episode containing a `Read` was pure
+    # exploration, which is most of them; `reading-around` scored correctly only
+    # because the trimmer happened to cut one step and push it under the
+    # too-thin gate. What reads this now is `_absorb_read_only_preamble` and the
+    # trailing rule in `segment`, not the flag those cases were written for.
     # `ToolSearch` loads a tool's schema and `AskUserQuestion` asks the
     # developer something. Both are lookups. Their absence made the episode
     # that fetched the framework docs register as work that had produced
@@ -248,10 +248,9 @@ def trim_leading_exploration(steps: list[dict],
     model called it one particular job, correctly, on what it was shown.
 
     Narrow on purpose: this changes what the *trimmer* considers droppable and
-    leaves `is_read_only` alone. The flagging rules downstream use it to spot an
-    episode that only ever looked at things, and an all-MCP-reads episode is
-    exactly that — teaching `is_read_only` to ignore MCP made `reading-around`
-    bank a candidate it should have discarded.
+    leaves `is_read_only` alone. What is downstream now reads it is
+    `_absorb_read_only_preamble`, which folds an all-reads episode into the work
+    that followed rather than discarding it, and the trailing rule in `segment`.
     """
 
     def trimmable(position: int) -> bool:
@@ -286,6 +285,46 @@ def trim_leading_exploration(steps: list[dict],
         # and let the flagging rules deal with it.
         return steps, 0
     return remaining, cut
+
+
+def _only_looked(episode: Episode) -> bool:
+    """Did every substantive step in *episode* only look at things?
+
+    Trimming never leaves an episode with no substantive steps — it returns the
+    untrimmed list rather than cut below `min_steps` — so this is never asked of
+    an empty one, and the vacuous-truth case does not arise.
+    """
+    work = [s for s in episode.steps if not is_prompt(s)]
+    return bool(work) and all(is_read_only(s) for s in work)
+
+
+def _absorb_read_only_preamble(episodes: list[Episode]) -> list[Episode]:
+    """Fold an episode that only looked at things into the work that followed.
+
+    Pulling the material is step one of a method, not the search that found the
+    task. `trim_leading_exploration` already makes this argument about MCP calls
+    and exempts them; it stops being true one stage later, where a whole episode
+    of retrieval is a separate episode from the work it exists to inform.
+
+    Measured on `95b6bde7`, a real session — pull the ADK reference docs through
+    MCP, compare them against `cases.json` and `generate_evalset.py`, report. A
+    mid-task prompt ("compare that against how it actually works here") cut the
+    session in two, leaving the four retrievals alone in a read-only episode.
+    The pipeline banked one candidate, the right count, containing none of the
+    retrieval the procedure exists for.
+
+    Runs after trimming, so what is absorbed is what survived it. Only forward:
+    reading that *ends* a session concluded nothing and is a different shape,
+    which the trailing rule in `segment` still catches.
+    """
+    out: list[Episode] = []
+    for episode in episodes:
+        if out and _only_looked(out[-1]):
+            preamble = out.pop()
+            episode.steps = preamble.steps + episode.steps
+            episode.trimmed += preamble.trimmed
+        out.append(episode)
+    return out
 
 
 def _absorb_before_commit(episodes: list[Episode]) -> list[Episode]:
@@ -355,6 +394,16 @@ def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
     Flagging applies only when the session actually segmented. A session that
     did one thing start to finish needs no artifact to be believable.
 
+    Reading is deliberately not a flag either. An episode whose every step only
+    looked at things used to be flagged outright, on the reasoning that looking
+    contains no method. Its only justification was `reading-around` in
+    `tests/benchmarks/cases.py` — five hand-authored steps written alongside the
+    detector, exercised by no live session — while a real one, `95b6bde7`, lost
+    the MCP retrieval its procedure exists for. Reading that precedes work is
+    now absorbed into it (`_absorb_read_only_preamble`); reading that ends a
+    session is still caught by the trailing rule above. Noise is filtered
+    without guessing at content: a one-off never reaches `recurrence_threshold`.
+
     Length is deliberately not a flag. A `max_markerless_steps` setting used to
     flag any episode past 25 steps that carried no marker. Measured against the
     live sessions it never fired on the vocabulary path — every session long
@@ -415,6 +464,8 @@ def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
         episode.steps, episode.trimmed = trim_leading_exploration(
             episode.steps, min_steps)
 
+    episodes = _absorb_read_only_preamble(episodes)
+
     if len(episodes) > 1:
         for episode in episodes:
             # A trailing episode with no marker used to be flagged outright, on
@@ -428,17 +479,6 @@ def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
             episode.flagged = (
                 episode.ended_by == "session-end"
                 and not episode.has_marker
-                and all(is_read_only(s) for s in episode.steps
-                        if not is_prompt(s)))
-
-    # An episode whose every substantive step only looked at things contains no
-    # method, however it ended and however long it ran. Without this, a whole
-    # session of reading around banks one candidate titled after the question
-    # that started it — the single-episode case the flagging rule above
-    # deliberately exempts, which is why it needs saying separately.
-    for episode in episodes:
-        work = [s for s in episode.steps if not is_prompt(s)]
-        if work and all(is_read_only(s) for s in work):
-            episode.flagged = True
+                and _only_looked(episode))
 
     return episodes

@@ -886,6 +886,68 @@ that the judge found no ending in sixty steps, and the length cap only hid it.
 
 **Untouched by this.** `241955c7` still merges two unrelated tasks into one
 episode — a genuine judge miss, and the sign that the removal is not papering
-over judge errors. The read-only flag (an episode whose every step only looked
-at things) and the trailing-session-end flag both stay; they are conditioned on
-what the work *did*, not on how long it ran.
+over judge errors. The trailing-session-end flag stays; it is conditioned on
+what the work *did*, not on how long it ran. The read-only flag went next — see
+below.
+
+### Reading is not evidence that nothing happened
+
+`95b6bde7` is a real session: pull the ADK reference docs through MCP, compare
+them against `cases.json` and `generate_evalset.py`, report. It banked **one
+candidate — the right count — containing none of the retrieval the procedure
+exists for.** The count being right is what hid it; only `must_contain` could
+see it.
+
+```
+episode 1  ended_by=prompt  flagged=TRUE   work=4   <- dropped
+     mcp__adk-docs__list_doc_sources
+     mcp__adk-docs__fetch_docs  llms.txt
+     mcp__adk-docs__fetch_docs  evaluate/index.md
+     mcp__adk-docs__fetch_docs  criteria/index.md
+episode 2  ended_by=session-end  flagged=false  work=6   <- banked
+     the comparison, titled after the second prompt
+```
+
+A mid-task prompt (*"compare that against how it actually works here"*) cut the
+session, leaving the four retrievals alone in a read-only episode, which the
+all-read-only flag then discarded. `trim_leading_exploration` was not at fault —
+its MCP exemption works; a second rule defeated it one stage later.
+
+**Four variants, measured across all eleven sessions.**
+
+| variant | `95b6bde7` | corpus |
+| --- | --- | --- |
+| baseline | 1/1, **missing** `mcp__adk-docs` | 6/6, 5 gaps |
+| A — delete the flag only | **2/1**, still missing | 6/6, 5 gaps |
+| B — absorb read-only forward | 1/1, kept all | 7/7, 4 gaps |
+| **C — both (shipped)** | **1/1, kept all** | **7/7, 4 gaps** |
+
+A fails for a reason worth writing down: `must_contain` is checked against the
+**largest banked** candidate, so un-flagging rescues the retrieval episode from
+deletion but at four steps it loses to the six-step comparison, and the count is
+now wrong as well. The retrieval has to end up *inside* the episode the check
+reads.
+
+B and C score identically. The only read-only episodes anywhere in the corpus
+are three one-step trailers — a status check after the commit, in `2095a8af`,
+`a8b61dae` and `d5fd2e59` — dropped by the under-two-steps rule either way. The
+corpus cannot distinguish them.
+
+**C was chosen on consistency, not on score.** B leaves two rules contradicting
+each other — *read-only work is preamble, keep it* and *read-only work has no
+method, drop it* — resolved only by which runs later in `segment()`. And the
+flag's sole justification was `reading-around` in `tests/benchmarks/cases.py`:
+five hand-authored steps written alongside the detector, exercised by no live
+session. Same standing as `max_markerless_steps` above.
+
+**What it gives up.** An aimless reading session now banks a candidate instead
+of vanishing — a row left in the ledger to review rather than a silent discard.
+Noise is already filtered without guessing at content: `recurrence_threshold = 3`
+means a one-off never reaches `ready`. The corpus's `episodes == 0` negative
+cases drop from two to one; the surviving shape, work that concluded nothing
+*and* ended the session, is the only one that still banks nothing.
+
+**Scope.** Under the judge this session was never broken — verdicts stop prompts
+from cutting, so there was one episode and the retrieval survived. The defect
+was on the vocabulary path, which is what runs when the local model is
+unreachable.

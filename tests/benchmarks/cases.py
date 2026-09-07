@@ -239,12 +239,18 @@ CASES = [
 
     Case(
         "reading-around", "productivity",
-        "Read four documents, decided nothing, wrote nothing.",
+        "Read four documents, decided nothing, wrote nothing. Banks one now.",
         [P("catch me up on the pricing discussion"),
          M("Drive__search_files", query="pricing"),
          R("/tmp/pricing-v1.md"), R("/tmp/pricing-v2.md"),
          M("Slack__search_messages", query="pricing")],
-        episodes=0, methods=0, tags=["nothing-here", "mcp"]),
+        # Expected 0 until the all-read-only flag was deleted. This case was
+        # that flag's only justification, and a real session — `95b6bde7` —
+        # lost the MCP retrieval its procedure exists for to it. Banking this
+        # is the accepted cost: a row left in the ledger to review rather than
+        # a silent discard, and a one-off never reaches the recurrence
+        # threshold anyway.
+        episodes=1, methods=0, tags=["nothing-here", "mcp"]),
 ]
 
 

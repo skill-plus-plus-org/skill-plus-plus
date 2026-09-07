@@ -1158,18 +1158,19 @@ class TestSegmentBoundaries(unittest.TestCase):
         self.assertEqual(len(episodes), 1)
         self.assertFalse(episodes[0].flagged)
 
-    def test_a_session_that_only_looked_around_is_flagged(self):
+    def test_a_session_that_only_looked_around_is_kept(self):
         """Deliberately the opposite of what this file asserted before.
 
-        The old rule exempted every single-episode session from flagging, so a
-        whole session of reading banked one candidate titled after the question
-        that started it. Two benchmark cases exist for exactly that shape. A
-        session that only looked at things did not "do one thing" — it looked
-        around, and there is no method in it however it ended.
+        Reading was flagged as containing no method, on the strength of one
+        hand-authored benchmark case. A real session, `95b6bde7`, then lost the
+        MCP retrieval its procedure exists for to that rule. Looking things up
+        in the right order is a method; noise is filtered by the recurrence
+        threshold, which a one-off never reaches, rather than by guessing from
+        the tool names that nothing happened.
         """
         episodes = segment([bash("kubectl logs api"), bash("kubectl top pods")])
         self.assertEqual(len(episodes), 1)
-        self.assertTrue(episodes[0].flagged)
+        self.assertFalse(episodes[0].flagged)
 
 
 def _lb(command, failed=False):
@@ -1321,15 +1322,43 @@ class TestReadsAndRetrievals(unittest.TestCase):
         self.assertEqual(cut, 2)
         self.assertEqual([s["tool"] for s in kept], ["Edit", "Bash"])
 
-    def test_an_all_looking_episode_is_still_flagged(self):
-        """`reading-around`: two searches and two reads, and nothing else."""
+    def test_a_read_only_run_is_absorbed_into_the_work_it_precedes(self):
+        """`95b6bde7`: retrieval, then a prompt, then the work it informs.
+
+        The retrieval used to land in its own episode, which was flagged for
+        being all reads and dropped — so the session banked the comparison with
+        none of the material it compared.
+        """
         from skillpp.segment import segment
-        steps = [{"tool": "UserPrompt", "input": {"text": "catch me up"}, "failed": False},
+        steps = [{"tool": "UserPrompt", "input": {"text": "look up the docs"}, "failed": False},
+                 {"tool": "mcp__adk-docs__list_doc_sources", "input": {}, "failed": False},
+                 {"tool": "mcp__adk-docs__fetch_docs", "input": {"url": "a"}, "failed": False},
+                 {"tool": "mcp__adk-docs__fetch_docs", "input": {"url": "b"}, "failed": False},
+                 {"tool": "UserPrompt", "input": {"text": "now compare"}, "failed": False},
+                 {"tool": "Edit", "input": {"file_path": "/a.py"}, "failed": False},
+                 bash("pytest")]
+        episodes = segment(steps, 2)
+        self.assertEqual(len(episodes), 1)
+        self.assertFalse(episodes[0].flagged)
+        tools = [s["tool"] for s in episodes[0].steps]
+        self.assertIn("mcp__adk-docs__list_doc_sources", tools)
+        self.assertEqual(tools.count("mcp__adk-docs__fetch_docs"), 2)
+
+    def test_reading_that_ends_a_session_is_still_flagged(self):
+        """Absorbing is forward only. Nothing follows this, so it concluded
+
+        nothing — the trailing rule, which the absorb pass does not replace.
+        """
+        from skillpp.segment import segment
+        steps = [{"tool": "UserPrompt", "input": {"text": "ship it"}, "failed": False},
+                 {"tool": "Edit", "input": {"file_path": "/a.py"}, "failed": False},
+                 bash("git commit -m 'x'"),
+                 {"tool": "UserPrompt", "input": {"text": "catch me up"}, "failed": False},
                  {"tool": "mcp__Drive__search_files", "input": {}, "failed": False},
                  {"tool": "Read", "input": {"file_path": "/tmp/a.md"}, "failed": False},
-                 {"tool": "Read", "input": {"file_path": "/tmp/b.md"}, "failed": False},
                  {"tool": "mcp__Slack__search_messages", "input": {}, "failed": False}]
-        self.assertTrue(segment(steps, 2)[0].flagged)
+        episodes = segment(steps, 2)
+        self.assertTrue(episodes[-1].flagged)
 
 
 class TestStripScaffolding(unittest.TestCase):
@@ -2208,10 +2237,22 @@ class TestBenchmarkSegmentation(unittest.TestCase):
 
     def test_the_corpus_has_negative_cases(self):
         """Without sessions that should bank nothing, a detector that banks
-        everything scores perfectly."""
+        everything scores perfectly.
+
+        Was two `episodes == 0` cases; `reading-around` moved to one when the
+        all-read-only flag was deleted, because reading is no longer taken as
+        evidence that nothing happened. Only one shape banks nothing now — work
+        that concluded nothing *and* ended the session — so one is what the
+        corpus can honestly hold, and raising it back would mean inventing a
+        case rather than recording one.
+
+        The property this guards is unweakened: five cases still expect a banked
+        episode to yield no method, which is what a bank-everything detector
+        fails on.
+        """
         sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
         from benchmarks.cases import CASES
-        self.assertGreaterEqual(sum(1 for c in CASES if c.episodes == 0), 2)
+        self.assertGreaterEqual(sum(1 for c in CASES if c.episodes == 0), 1)
         self.assertGreaterEqual(sum(1 for c in CASES if c.methods == 0), 3)
 
 
