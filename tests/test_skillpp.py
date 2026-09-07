@@ -1062,11 +1062,17 @@ class TestSegmentBoundaries(unittest.TestCase):
         for tool in ("ToolSearch", "AskUserQuestion"):
             self.assertTrue(is_read_only({"tool": tool, "input": {}}), tool)
 
-    def test_markerless_work_folds_into_the_commit_that_ended_it(self):
+    def test_a_six_turn_session_with_one_task_is_one_episode(self):
         """The real session's shape: six turns, one task, one commit at the end.
 
         Each mid-task instruction did more than one tool call, which was all the
-        step-count guard asked for, so the prompt rule cut five times.
+        step-count guard asked for, so the prompt rule cut this five times and
+        banked five fragments plus the commit, none of them the procedure.
+        `_absorb_before_commit` existed to sweep those fragments back together.
+
+        Both are gone. Prompts do not cut, so there are no fragments to repair,
+        and the session is one episode because nothing claimed it ended until
+        the commit.
         """
         steps = [self._prompt("add an eval case for the desk-booking card"),
                  {"tool": "ToolSearch", "input": {}, "failed": False},
@@ -1108,13 +1114,21 @@ class TestSegmentBoundaries(unittest.TestCase):
                  bash("git commit -m 'ci'")]
         self.assertEqual(len(segment(steps)), 2)
 
-    def test_an_investigation_after_the_last_commit_is_not_absorbed(self):
-        """Trailing work keeps its own boundary — the commit preceded it."""
+    def test_work_after_a_verdict_keeps_its_own_boundary(self):
+        """Trailing work is its own episode — the ending preceded it.
+
+        This used to assert that `_absorb_before_commit` spared the trailing
+        investigation. That pass is gone, and the two episodes now come from the
+        verdict on the commit alone, with nothing re-merging them afterwards.
+        """
         steps = [self._prompt("fix the bug"), bash("python3 -c 'edit'"),
                  bash("git commit -m 'fix'"),
                  self._prompt("why is prod slow?"), bash("kubectl get pods"),
                  bash("kubectl logs api")]
-        self.assertEqual(len(segment(steps)), 2)
+        episodes = segment(steps)
+        self.assertEqual(len(episodes), 2)
+        self.assertEqual(episodes[0].ended_by, "judged")
+        self.assertEqual(episodes[1].ended_by, "session-end")
 
     def test_a_commit_made_with_git_dash_c_is_still_a_commit(self):
         """`git -C <path> commit` — how an agent commits without cd-ing first.
@@ -1690,20 +1704,27 @@ class TestSegmentBeforeAfter(TempRoot):
 
     @unittest.expectedFailure
     def test_after_the_repeated_workflow_reaches_the_threshold(self):
-        """Known failure since `_absorb_before_commit`, and left visible.
+        """Known failure, and left visible. The cause has moved twice.
 
         `s2` is "ship the api build" — which completes at
         `./scripts/deploy.sh staging`, not at a commit — followed by an
-        unrelated "add the release notes" that does commit. Absorb folds the
-        deploy into that commit, so the clean deploy signature appears in two
-        sessions instead of three and never reaches the threshold.
+        unrelated "add the release notes" that does commit. So the clean deploy
+        signature appears in two sessions instead of three and never reaches the
+        threshold.
 
-        The rule is right about the real session it was built from and wrong
-        here. Which shape is more common in real work is unmeasured: this
-        fixture is hand-authored, and no real captured session has yet shown a
-        task completing without a commit and being followed by one. Marked
-        expected rather than deleted so the day a real session shows that
-        shape, the cost is already written down.
+        It used to fail because `_absorb_before_commit` folded the deploy into
+        the commit that followed. That pass is gone — it never fired once across
+        the eleven live sessions and no test depended on it. Now it fails
+        because nothing separates them at all: `./deploy.sh` is not a completion
+        marker, only a verdict can say a deploy finished, and this suite's
+        stand-in judge is the marker vocabulary, which by design cannot.
+
+        Same open shape as the live session `241955c7` and the `two-chores-*`
+        cases. Marked expected rather than deleted, and rather than teaching the
+        stand-in to recognise `deploy.sh` — that would be tuning the double
+        until the test passes. This fixture is hand-authored, and no real
+        captured session has yet shown a task completing without a commit and
+        being followed by one.
         """
         self._fold_segmented(to_captured_session)
         deploys = [e for e in Ledger(self.config).all()
@@ -1720,8 +1741,8 @@ class TestSegmentBeforeAfter(TempRoot):
     # sessions. With nothing cutting, the deploy merges into whatever follows
     # and `CLEAN_SIGNATURE` never appears.
     #
-    # `_absorb_before_commit` already recorded this shape as a known cost — "a
-    # task that completes without committing, a deploy ending in
+    # `_absorb_before_commit` recorded this shape as a known cost before it was
+    # deleted — "a task that completes without committing, a deploy ending in
     # ./scripts/deploy.sh, is absorbed into whatever commits next". It is now
     # not merely absorbed but never separated. Same open problem as the live
     # session `241955c7` and the `two-chores-*` cases: only a model can say a

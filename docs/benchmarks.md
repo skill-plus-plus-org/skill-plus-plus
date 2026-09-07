@@ -1024,6 +1024,48 @@ whether a commit happened, and a verdict is the better answer to that question.
 - The marker vocabulary survives as a **test double**, standing in for a
   reachable model across the suite. That is where a hardcoded heuristic belongs.
 
+### The third repair pass goes too
+
+`_absorb_before_commit` folded every markerless episode forward into the next
+one that had a marker. It was written for the prompt rule's damage — on one real
+six-turn session that rule *"cut five times and banked five fragments plus the
+commit, none of them the procedure"*, and this pass swept them back together.
+
+With the prompt rule gone there are no fragments to sweep. Instrumented across
+all eleven live sessions it **never fires once**, the board is identical with it
+disabled, and the full suite passes with it stubbed out — 294 tests, no
+failures. Deleted.
+
+It is the third pass removed that existed only to repair the vocabulary's cuts,
+after `_absorb_read_only_preamble` and the length rule. Each was added after a
+real session lost work to a boundary nobody wanted, and each stopped having a
+job the moment the thing drawing those boundaries was removed.
+
+**This is also what made `has_marker` look load-bearing.** `_absorb_before_commit`
+was its only meaningful consumer, and the reason making `has_marker`
+observational "broke" `263d65ce` is that it woke a dormant pass and had it eat a
+correct boundary. The two readings are exactly inverted on that session:
+
+```
+judge said ENDING at step 98: Write .../article/sections/08-one-ag…
+
+  ep1   87 steps   verdict-based has_marker=True    observed has_marker=False
+  ep2   23 steps   verdict-based has_marker=False   observed has_marker=True
+```
+
+ep1 is the article work, ending in a `Write` the judge called an ending —
+not a git verb, so observation sees nothing. ep2 holds the `git commit`, which
+the judge did not call an ending. Neither reading was "the fact"; they answer
+different questions, and the pass asking was already dead.
+
+`has_marker` now has one consumer, the trailing-investigation flag.
+
+**Two tests named for the pass were passing vacuously** and have been rewritten
+rather than deleted: one asserted a fold that can no longer happen because there
+is only ever one episode, the other asserted that trailing work was *spared* by
+a pass that never touched it. Both now say what actually holds — a verdict cuts,
+and nothing re-merges afterwards.
+
 **A harness that scored green while measuring nothing.** `judge_replay.py`
 reported `ok` with `0.00s per step` when Ollama was down: every `judge` call
 returned `None`, no verdict was written, and the "judged" row was the vocabulary

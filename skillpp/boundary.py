@@ -1,10 +1,11 @@
 """Did the task end at this step? Asked of every tool call, as it happens.
 
-`segment.is_marker` answers the same question from a fixed vocabulary, and that
+`segment.is_marker` answered the same question from a fixed vocabulary, and that
 vocabulary is entirely code: `git commit`, `gh pr create`, `glab mr create`.
 Work done through tools has no entry in it, so a productivity session never ends
-anything — which is why `_absorb_before_commit` can never fire on one, and why
-9 of 24 benchmark cases hold no ending signal of any kind.
+anything, and 9 of 24 benchmark cases hold no ending signal at all. That
+vocabulary no longer decides boundaries anywhere — it survives as the trailing
+flag's test and as the suite's stand-in judge.
 
 This asks a small local model instead, once per tool call, and records the
 verdict on the step. Recording rather than re-deriving is what makes the rest
