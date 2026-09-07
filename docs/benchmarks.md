@@ -687,8 +687,14 @@ records no decision, leaves the queue byte-identical, and returns in 0.10s.
 
 ## The boundary judge: nine configurations, measured
 
-The proposal, again: replace `is_marker`'s vocabulary of git verbs with a local
-model asked, on every tool call, whether the task ended there. `6ca48a5` above
+**Historical**, like the section that follows it: this measures the judge that
+was asked on every tool call. What ships now asks once per prompt gap — see
+*The question moved* at the end of this file. The configurations below are still
+the record of how the context, the goal and the span were sized, and several of
+those findings carried over.
+
+The proposal, at the time: replace `is_marker`'s vocabulary of git verbs with a
+local model asked, on every tool call, whether the task ended there. `6ca48a5` above
 recorded the first attempt and did not wire it in. This is the second, wired in
 behind `SKILLPP_JUDGE` and measured properly.
 
@@ -1074,9 +1080,13 @@ if the model answers none of a session's steps. This is the same failure as the
 `--verbose` note above — a success indicator that cannot tell *finished* from
 *never started*.
 
-## The judge on `241955c7`: what has been ruled out
+## The per-step judge on `241955c7`: what was ruled out
 
-The last remaining gap. Two unrelated jobs in one sitting — investigate why some
+**Historical.** This is the judge that asked, once per tool call, whether the
+request was finished. It was replaced — see *The question moved* below. Kept
+because everything here was measured and none of it should be retried.
+
+The last remaining gap at the time. Two unrelated jobs in one sitting — investigate why some
 walkthrough cards render blank (read-only, nothing written), then separately add
 the missing `atlas` eval case and commit. Truth is 2 episodes; the pipeline
 banks 1, because the judge marks no ending anywhere.
@@ -1089,8 +1099,9 @@ The boundary the judge has to find is after step 6, the last step of task one.
 
 ### The prompt at the boundary, and what is fixed versus inserted
 
-`skillpp/prompts/task_end.md` is 16 lines with three slots. Lines 1, 5, the
-words "Just now, they", and 10-16 are constant on all 357 judgements ever made.
+`skillpp/prompts/task_end.md` — since deleted, replaced by `new_job.md` — was 16
+lines with three slots. Lines 1, 5, the words "Just now, they", and 10-16 were
+constant on all 357 judgements ever made.
 `{GOAL}` is every prompt in the span, `{PRIOR}` the last 20 steps rendered by
 `render_step`, `{STEP}` the step being judged.
 
@@ -1207,18 +1218,115 @@ Measured separately: contamination is *not* why step 6 is missed. Step 6's
 context is clean — one goal bullet, five prior lines, all task one — and it is
 missed anyway. The ratchet is a second, downstream problem that begins at step 8.
 
-### Where to look next
+### Where it went next
 
-Not another model: the constraint is deliberate, this one should be capable.
+Not another model: the constraint was deliberate and this one turned out to be
+capable — of a different question. Two of the three directions listed here were
+taken, and the third was not needed.
 
-* **Re-judging a span at session end**, when the whole shape is visible, rather
-  than only forward in real time. Every intervention above is forward-only, and
-  the one formulation that has ever answered `yes` at step 6 — asking, when the
-  next prompt arrives, whether it starts a new task — needs information that
-  does not exist yet at step 6.
-* **Whether an ending must be closable only by the judge.** It fires 3 times in
-  357 steps. A span that never closes is not a rare edge case at that rate.
-* That prompt-pair formulation scored **5/11** on the corpus in a first,
-  untuned form — it over-fires on continuations, cutting `fb505861` at "Write
-  that list to COVERAGE.md" and shattering `263d65ce` into 9. Not usable as
-  measured, but it is the only signal that has ever fired in the right place.
+**Re-judging at session end** was the unlock. Every intervention above is
+forward-only, and the one formulation that ever answered `yes` at step 6 —
+asking, when the next prompt arrives, whether it starts a new task — needs
+information that does not exist yet at step 6.
+
+**A first, untuned prompt-pair form scored 5/11**, over-firing on continuations:
+it cut `fb505861` at "Write that list to COVERAGE.md" and shattered `263d65ce`
+into nine. That was the starting point, not the answer.
+
+**Whether an ending must be closable only by the judge** never had to be
+answered. It stopped mattering once the judge fired where it should.
+
+## The question moved
+
+Asked in a different place, of a different thing, the same model gets the corpus
+right. **Only ask where a boundary can be** — a gap between two tool calls that
+an instruction landed in — and make it a comparison rather than an assessment:
+here is what they asked for, here is what they just said, here is what they did
+next; is that a new job?
+
+```
+                                              correct   model calls
+per-step "is the request done"                 10/11        357
+gated, {NEXT} = 1 step                          7/11         33
+gated, {NEXT} = 3 steps                        11/11         33
+gated, {NEXT} = 5 steps                         8/11         33
+gated, majority of 5 at temperature 0.7        10/11        165
+```
+
+`{NEXT}` is a window, not a knob. One step cannot tell two jobs apart — `find
+cases.json` belongs to either. Five reaches far enough into the next task to
+echo the old one. `{PRIOR}` at 3 beats the old 20: a long history made every
+late gap read as a continuation, proved by swapping the prompt text between an
+early and a late gap while holding everything else — **the verdict followed the
+position, not the words.**
+
+Temperature buys nothing. Voting scores the same and, at `{NEXT}`=2, abandons
+the correct boundary in `241955c7` (2/5) to cut in the middle of task two, while
+still scoring 2/2.
+
+### Every slot earns its place
+
+Ablated across all eleven sessions:
+
+| | correct |
+| --- | --- |
+| full | **11/11** |
+| without the `Then they say: {PROMPT}` block | 8/11 |
+| prompt and goal only, no steps at all | 4/11 |
+| `{GOAL}` cut to the latest prompt | 10/11, `1c3c9422` splits into three |
+
+The signal is a conjunction. The instruction says what the developer *intends*;
+the following steps say what actually *happened*. Without the instruction,
+`241955c7` cuts at "Regenerate the evalset" as well as at "Separate job:" — it
+cannot tell which gap matters. Without the steps, it fires in 25 of 33 gaps.
+
+An empty `{PRIOR}` must render `(nothing yet)` rather than a blank block: on
+`95b6bde7` that alone flips the verdict. Deleting the section entirely fails the
+same way. A session with nothing behind it reads as one that has not started.
+
+Note the tension with the ratchet above — the accumulated goal helps here and
+ruins the per-step judge. The difference is that this is asked three times a
+session, not 357, so the goal never grows far.
+
+### Two bugs the score could not see
+
+**The old judge cut `263d65ce` at step 98** — deep inside the article work — and
+scored 2/2 for it, because the count was right and both `must_contain` needles
+landed in the larger half. The first task ends at **step 9**. On placement the
+per-step judge was 1/2 and the gated one is 2/2, so "10/11 either way" was
+flattering it.
+
+`score.py` now pins `truth.boundary_after` on the two multi-task fixtures. It
+is the fourth measurement this year that agreed with a wrong answer, after
+counting pre-fold episodes, the harness printing `ok` with Ollama down, and a
+`min_steps` guard silently swallowing a bad cut in `95b6bde7`.
+
+**`gaps()` showed only the first prompt in a gap.** `1c3c9422` is the only gap
+in the corpus holding two, and it was the only gap that failed:
+
+```
+1. "did you call MCP for this?"
+2. "Use the adk-docs MCP tool to look up how ADK eval cases and evalsets are
+    structured — don't answer from memory, actually fetch the docs first."
+```
+
+Only the first reached the model, which read it as a new job. Measured on that
+gap: first alone → new job (wrong); last alone, or both in order → same job.
+That session is the *before* of the procedure `2095a8af` and `71448e61` record —
+the agent answered from sixteen local `grep`/`Read` calls without touching MCP,
+was challenged, and the request was restated. Both later sessions open with the
+restated wording. Provenance that is not recoverable from the steps, and without
+it those two prompts look like a topic change rather than one correction.
+
+### What it costs and what it gives up
+
+One call per prompt instead of one per tool call, and **off the hot path**: the
+judge runs at `SessionEnd`, because the question needs the steps that came after
+a gap. That removes a synchronous ~1.5s model call from every tool call a
+developer makes. `skillpp keep` folds mid-session, so it judges the buffer first,
+and banks the work as one task if no model answered — an explicit save is a
+person saying "save this", not a detector guessing.
+
+Given up: **a boundary with no prompt in the gap** — a task ending where the
+developer says nothing. No live session shows that shape, and the per-step judge
+could see it in principle, so this is a trade rather than a free win.
