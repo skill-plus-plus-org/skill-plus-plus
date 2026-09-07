@@ -186,24 +186,37 @@ def _reply_text(response, limit: int | None = _RESPONSE_CHARS) -> str:
     return flat if limit is None else flat[:limit]
 
 
-def _narration(payload: dict) -> str:
-    """What the assistant said just before this step, from the transcript.
+def _narration(payload: dict) -> tuple[str, str]:
+    """What the assistant said around this step: `(lead_in, closes_previous)`.
 
     The command stream only implies completion; the narration around it states
     it in plain language — `tests/benchmarks/boundaries.py` relies on exactly
     this when a person is asked to label a boundary, and capture never had it.
+
+    Two pieces, because text written between two tool calls does not all belong
+    to the second one. A *prompt* arriving in the gap splits it: what came
+    before the prompt reports the work that just finished, and what came after
+    introduces the work about to start.
+
+    Merging them put every completion report on the wrong task. Measured on
+    `241955c7`, three times in one 24-step session — "Scan done. All 4
+    walkthrough-variant TOPICS...", "Added `atlas_card_staged`...",
+    "Regenerated. 40 cases (was 39)..." — each filed on the first step *after*
+    the next prompt, describing work that had not happened when it was written.
+    The first of those is an investigation's entire deliverable, stored inside
+    the next task.
 
     The hook payload carries `transcript_path`. Everything here is best effort:
     a missing or unreadable transcript costs the narration and nothing else.
     """
     path = payload.get("transcript_path")
     if not path:
-        return ""
+        return "", ""
     try:
         with open(path, encoding="utf-8", errors="ignore") as fh:
             rows = fh.readlines()[-40:]
     except OSError:
-        return ""
+        return "", ""
     # The text *preceding* the most recent tool call, which is this one — the
     # hook fires after the call, so the transcript already holds it. Taking the
     # text that follows instead returns nothing live, and on a finished
@@ -212,12 +225,23 @@ def _narration(payload: dict) -> str:
     # written long after the first of them ran.
     pending: list[str] = []
     before_last_call: list[str] = []
+    # Text that was already closed off by a prompt before this call ran. Held
+    # separately so it can be attributed backwards rather than to this step.
+    closing: list[str] = []
+    closes_previous: list[str] = []
     for line in rows:
         try:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
         message = row.get("message") or {}
+        # A real prompt, not an envelope the harness injected. Everything said
+        # before it belongs to the step that preceded it.
+        if row.get("type") == "user" and isinstance(message.get("content"), str):
+            text = message["content"].strip()
+            if text and not text.startswith(_ENVELOPE_PREFIXES):
+                closing, pending = pending, []
+            continue
         if row.get("type") != "assistant" or not isinstance(
                 message.get("content"), list):
             continue
@@ -232,9 +256,58 @@ def _narration(payload: dict) -> str:
             if kind in ("text", "thinking") and (block.get(kind) or "").strip():
                 pending.append(block[kind])
             elif kind == "tool_use":
-                before_last_call = pending
+                before_last_call, pending = pending, []
+                # Only the *first* call after the prompt carries the closing
+                # text back; by the second, the hook for the first has already
+                # attributed it. Captured before clearing, because this call may
+                # be the last one in the window and is the one being reported.
+                closes_previous, closing = closing, []
+    return _clip(before_last_call), _clip(closes_previous)
+
+
+def _trailing_narration(payload: dict) -> str:
+    """Everything said after the last tool call, for a session that is ending.
+
+    `_narration` attributes closing words backwards when a *prompt* closes them
+    off, which is what happens mid-session. A task that ends the session has no
+    following prompt and no following tool call, so its completion report would
+    be dropped — the same defect at the other boundary.
+
+    Best effort in the same way, and doubly so: `SessionEnd` may not carry
+    `transcript_path` at all, in which case this costs the note and nothing
+    else.
+    """
+    path = payload.get("transcript_path")
+    if not path:
+        return ""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as fh:
+            rows = fh.readlines()[-40:]
+    except OSError:
+        return ""
+    pending: list[str] = []
+    for line in rows:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        message = row.get("message") or {}
+        if row.get("type") != "assistant" or not isinstance(
+                message.get("content"), list):
+            continue
+        for block in message["content"]:
+            if not isinstance(block, dict):
+                continue
+            kind = block.get("type")
+            if kind in ("text", "thinking") and (block.get(kind) or "").strip():
+                pending.append(block[kind])
+            elif kind == "tool_use":
                 pending = []
-    text = " ".join(" ".join(before_last_call).split())
+    return _clip(pending)
+
+
+def _clip(parts: list[str]) -> str:
+    text = " ".join(" ".join(parts).split())
     if len(text) > _RESPONSE_CHARS:
         text = text[:_RESPONSE_CHARS].rsplit(" ", 1)[0] + " …"
     return text
@@ -339,9 +412,19 @@ def handle_tool(config: Config, payload: dict) -> None:
     returned = scrub(_reply_text(payload.get("tool_response")))
     if returned:
         step["tool_returned"] = returned
-    note = scrub(_narration(payload))
+    note, closes_previous = _narration(payload)
+    note = scrub(note)
     if note:
         step["assistant_note"] = note
+    # What was said after the previous step and before the prompt that follows
+    # it — that step's own completion report, not this one's lead-in. Written
+    # backwards onto the step it describes. `setdefault`, because the hook may
+    # fire again for the same gap and the first attribution is the right one.
+    closes_previous = scrub(closes_previous)
+    if closes_previous:
+        earlier = [s for s in session["steps"] if not is_prompt(s)]
+        if earlier:
+            earlier[-1].setdefault("closing_note", closes_previous)
     # One sentence saying what this step did and the part it plays, written now
     # while the reply and the narration are still here. Everything downstream —
     # `is_marker`'s git verbs, `is_read_only`'s command list, `render_step`'s
@@ -394,6 +477,14 @@ def handle_session_end(config: Config, payload: dict) -> dict:
         return {"status": "no-session"}
 
     session = _load_session(config, session_id)
+    # The last task's own completion report, said after its final tool call.
+    # Attached before folding so the episode carries it.
+    trailing = scrub(_trailing_narration(payload))
+    if trailing:
+        work = [s for s in session.get("steps", []) if not is_prompt(s)]
+        if work:
+            work[-1].setdefault("closing_note", trailing)
+            _save_session(config, session)
     try:
         result = fold_session(config, session)
     except Exception:

@@ -1586,6 +1586,101 @@ class TestChainedMarkers(unittest.TestCase):
         self.assertFalse(is_marker(_lb("cd /repo && ls -la && cat README.md")))
 
 
+class TestNarrationIsAttributedToTheRightStep(TempRoot):
+    """A task's completion report belongs to the task that finished.
+
+    `_narration` collected everything said between two tool calls and gave it
+    all to the second one. When a prompt fell in that gap, the first half was
+    the *previous* task's conclusion and it was filed under the next task's
+    first step. Measured on `241955c7`, three times in one 24-step session.
+    """
+
+    def _transcript(self, rows):
+        path = self.root / "transcript.jsonl"
+        path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+        return {"transcript_path": str(path)}
+
+    def _assistant(self, *blocks):
+        return {"type": "assistant", "message": {"content": list(blocks)}}
+
+    def _text(self, body):
+        return {"type": "text", "text": body}
+
+    def _call(self, name="Bash"):
+        return {"type": "tool_use", "name": name, "input": {}}
+
+    def _prompt_row(self, body):
+        return {"type": "user", "message": {"content": body}}
+
+    def test_text_between_two_calls_leads_in_to_the_second(self):
+        from skillpp.capture import _narration
+        payload = self._transcript([
+            self._assistant(self._call()),
+            self._assistant(self._text("now check the other file"), self._call()),
+        ])
+        lead_in, closes_previous = _narration(payload)
+        self.assertEqual(lead_in, "now check the other file")
+        self.assertEqual(closes_previous, "")
+
+    def test_a_prompt_in_the_gap_sends_the_first_half_backwards(self):
+        """The shape this fixes: report, new prompt, next task's first call."""
+        from skillpp.capture import _narration
+        payload = self._transcript([
+            self._assistant(self._call()),
+            self._assistant(self._text("Scan done. All 4 resolve to keys.")),
+            self._prompt_row("Separate job: add the missing case"),
+            self._assistant(self._text("starting on that now"), self._call()),
+        ])
+        lead_in, closes_previous = _narration(payload)
+        self.assertEqual(closes_previous, "Scan done. All 4 resolve to keys.")
+        self.assertEqual(lead_in, "starting on that now")
+
+    def test_the_report_lands_on_the_step_it_describes(self):
+        """End to end through the hook, not just the parser."""
+        from skillpp.capture import handle_prompt, handle_tool
+        self.config.describe_steps = False
+        handle_prompt(self.config, {"session_id": "s", "cwd": "/r",
+                                    "prompt": "work out which ones"})
+        rows = [self._assistant(self._call())]
+        handle_tool(self.config, {"session_id": "s", "cwd": "/r",
+                                  "tool_name": "Read",
+                                  "tool_input": {"file_path": "/book.py"},
+                                  **self._transcript(rows)})
+        rows += [self._assistant(self._text("Scan done. All 4 resolve.")),
+                 self._prompt_row("Separate job: add the case")]
+        handle_prompt(self.config, {"session_id": "s", "cwd": "/r",
+                                    "prompt": "Separate job: add the case"})
+        rows += [self._assistant(self._call())]
+        handle_tool(self.config, {"session_id": "s", "cwd": "/r",
+                                  "tool_name": "Bash",
+                                  "tool_input": {"command": "grep -n atlas"},
+                                  **self._transcript(rows)})
+
+        from skillpp.capture import _load_session
+        steps = [s for s in _load_session(self.config, "s")["steps"]
+                 if not is_prompt(s)]
+        self.assertEqual(steps[0]["tool"], "Read")
+        self.assertTrue(steps[0]["closing_note"].startswith("Scan done"),
+                        "the report belongs to the step that finished the task")
+        self.assertNotIn("Scan done", steps[1].get("assistant_note", ""))
+
+    def test_a_missing_transcript_costs_the_note_and_nothing_else(self):
+        from skillpp.capture import _narration
+        self.assertEqual(_narration({}), ("", ""))
+        self.assertEqual(_narration({"transcript_path": "/no/such/file"}), ("", ""))
+
+    def test_the_live_session_carries_its_investigation_report(self):
+        """`241955c7`, the session this was found on."""
+        import glob
+        doc = json.loads(Path(glob.glob(
+            "tests/fixtures/sessions/241955c7*.json")[0]).read_text())
+        work = [s for s in doc["steps"] if not is_prompt(s)]
+        last_of_task_one = work[5]           # the Read that ends the investigation
+        self.assertEqual(last_of_task_one["tool"], "Read")
+        self.assertTrue(last_of_task_one["closing_note"].startswith("Scan done"))
+        self.assertNotIn("Scan done", work[6].get("assistant_note", ""))
+
+
 class TestOfflineWithoutAModel(TempRoot):
     """No verdicts, no candidates — and no lost work.
 

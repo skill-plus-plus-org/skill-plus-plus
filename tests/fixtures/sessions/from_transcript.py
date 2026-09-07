@@ -70,12 +70,18 @@ def extract(path: Path) -> list[dict]:
     steps: list[dict] = []
     asks = 0
     pending: list[str] = []          # what the assistant said before the next call
+    closing: list[str] = []          # ... and what it said after the previous one
     for row in rows:
         message = row.get("message") or {}
         if row.get("type") == "user" and isinstance(message.get("content"), str):
             text = message["content"].strip()
             if text and not text.startswith(ENVELOPE):
                 asks += 1
+                # A prompt closes off whatever was said before it: that text
+                # reports the step that just finished, not the one about to run.
+                # Merging the two put every completion report on the next task —
+                # see `capture._narration`.
+                closing, pending = pending, []
                 steps.append({"tool": PROMPT_TOOL,
                               "input": {"text": scrub(text)[:2000]},
                               "failed": False})
@@ -114,8 +120,21 @@ def extract(path: Path) -> list[dict]:
             note = scrub(" ".join(" ".join(pending).split())[:_RESPONSE_CHARS])
             if note:
                 step["assistant_note"] = note
+            if closing:
+                back = scrub(" ".join(" ".join(closing).split())[:_RESPONSE_CHARS])
+                earlier = [s for s in steps if not is_prompt(s)]
+                if back and earlier:
+                    earlier[-1].setdefault("closing_note", back)
+                closing = []
             pending = []
             steps.append(step)
+    # Anything left ran out with the session: the last task's own completion
+    # report, with no prompt and no call after it. `capture` takes this at
+    # SessionEnd.
+    tail = scrub(" ".join(" ".join(pending).split())[:_RESPONSE_CHARS])
+    work = [s for s in steps if not is_prompt(s)]
+    if tail and work:
+        work[-1].setdefault("closing_note", tail)
     return json.loads(json.dumps(steps).replace(HOME, "${HOME}"))
 
 
