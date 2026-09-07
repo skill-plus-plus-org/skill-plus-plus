@@ -1073,3 +1073,152 @@ row printed twice. It now refuses to start without a reachable model, and aborts
 if the model answers none of a session's steps. This is the same failure as the
 `--verbose` note above — a success indicator that cannot tell *finished* from
 *never started*.
+
+## The judge on `241955c7`: what has been ruled out
+
+The last remaining gap. Two unrelated jobs in one sitting — investigate why some
+walkthrough cards render blank (read-only, nothing written), then separately add
+the missing `atlas` eval case and commit. Truth is 2 episodes; the pipeline
+banks 1, because the judge marks no ending anywhere.
+
+Every step was replayed through `gemma3n:e4b` at `_VALUE_CHARS=80`,
+`CONTEXT_STEPS=20`. **0 endings in 24 steps**, including step 24, which is
+`git add …cases.json …evalset.json && git commit -m "$(cat <<'EOF'`.
+
+The boundary the judge has to find is after step 6, the last step of task one.
+
+### The prompt at the boundary, and what is fixed versus inserted
+
+`skillpp/prompts/task_end.md` is 16 lines with three slots. Lines 1, 5, the
+words "Just now, they", and 10-16 are constant on all 357 judgements ever made.
+`{GOAL}` is every prompt in the span, `{PRIOR}` the last 20 steps rendered by
+`render_step`, `{STEP}` the step being judged.
+
+```
+- TOPICS in book.py can stage walkthrough cards whose body has no matching key
+  in toolWalkthroughs.ts … Work out which ones, and tell me before changing
+  anything.                                    <- inserted: forbids an artifact
+
+Just now, they read the file `… book.py`       <- inserted
+
+A task ends when everything the developer asked for has been produced — a change
+that outlasts the session.                     <- fixed: requires an artifact
+It has not ended while … they are gathering information, preparing, or
+checking their work.                           <- fixed: names this task exactly
+```
+
+The request asks to be *told* something before anything changes; the definition
+requires a change that outlasts the session and excludes gathering information.
+By the rule as written this task can never end.
+
+### Rewording the definition does not help
+
+Four definitions, tested on the steps that discriminate — 6 must be an ending,
+3, 5, 14 and 20 must not:
+
+| definition | 3 | 5 | 6 | 14 | 20 |
+| --- | --- | --- | --- | --- | --- |
+| current ("a change that outlasts the session") | no | no | **no** | no | no |
+| "where they asked to be told something, the answer is the deliverable" | no | no | **no** | no | no |
+| "the change they wanted made, or the question they asked answered" | no | no | **no** | no | no |
+| "working something out and reporting it is a complete task" | no | no | **no** | no | no |
+
+The reason no wording can work is visible in the rendered steps:
+
+```
+step 3: read the file `…/backend/acme_agent/book.py`
+step 6: read the file `…/backend/acme_agent/book.py`
+```
+
+Byte-identical. Step 3 is mid-investigation, step 6 finishes it. The only
+difference reaching the model is three extra lines in `{PRIOR}`.
+
+### Nor does more of the step
+
+`render_step` emits `step["input"]` only. Of 1024 characters stored on step 6,
+**85 reach the model** — the `tool_returned` (400) and the `closing_note` (400)
+are dropped. Supplying them changes nothing:
+
+| shown | 3 | 6 |
+| --- | --- | --- |
+| as today (8% of the step) | no | **no** |
+| + what the tool returned | no | **no** |
+| + the completion report ("Scan done. All 4 … resolve to keys") | no | **no** |
+| + both | no | **no** |
+
+Note also that the completion report is **not available** when its own step is
+judged: `handle_tool` writes `closing_note` onto step *N-1* (capture.py:427) and
+judges step *N* (capture.py:462). Showing it would require judging one step late.
+
+### Nor a different question, nor less context
+
+"Is this a finishing step", "Was that the last step of this task" — both score
+identically to the current question on all six steps. Removing `{PRIOR}`
+entirely, or trimming it to two steps, also changes nothing at step 6.
+
+### Polarity changes everything, which means it is not judging
+
+Same model, same context, same steps. Only the direction of the question
+differs — "is every part of the request done" against "is more work needed",
+with the second inverted:
+
+```
+endings: direct 0/24, inverted 17/24     (truth: 1, at step 6)
+```
+
+The inverted question answers "more work needed" for steps 1-7 and "no more work
+needed" for **every step from 8 to 24**, without reverting. Step 8 is where
+`{GOAL}` first holds two prompts and `{PRIOR}` first holds a finished task.
+
+Neither answer is a judgement of the step. Both are a constant response to the
+shape of the question against the shape of the context. This is not sampling
+noise: `local.ask` sends `temperature: 0`, and eight repeats of the identical
+prompt gave eight identical answers at steps 6 and 24.
+
+### The model is also not self-consistent
+
+Two of the three endings it has ever marked across the whole corpus are the same
+command shape as the one it refuses here:
+
+```
+a7be1ef5  end=True    git add …cases.json …evalset.json && git commit -m "$(cat <<'EOF'
+241955c7  end=False   git add …cases.json …evalset.json && git commit -m "$(cat <<'EOF'
+```
+
+Trimming `241955c7`'s goal to just "Commit both changes together." still gives
+`no`.
+
+### The ratchet, and the bootstrapping trap
+
+`window`'s docstring already records the cost of using every prompt in the span:
+*"miss one ending and the next prompt joins the same goal … That is why its
+failures are all `got 1`."* `241955c7` is that cost arriving.
+
+The span is *steps* since the last `end: True`, so with zero endings nothing
+ever resets. By step 8 the goal is both jobs welded into one request and
+`{PRIOR}` presents task one's six investigation steps as "what they have done on
+it so far"; by step 24 the goal is all four prompts.
+
+**Context reset is already implemented** — `window` starts the span after the
+last ending. What is missing is any way to recover once an ending is missed.
+The reset is gated on a verdict, and the verdict is the thing that fails.
+
+Measured separately: contamination is *not* why step 6 is missed. Step 6's
+context is clean — one goal bullet, five prior lines, all task one — and it is
+missed anyway. The ratchet is a second, downstream problem that begins at step 8.
+
+### Where to look next
+
+Not another model: the constraint is deliberate, this one should be capable.
+
+* **Re-judging a span at session end**, when the whole shape is visible, rather
+  than only forward in real time. Every intervention above is forward-only, and
+  the one formulation that has ever answered `yes` at step 6 — asking, when the
+  next prompt arrives, whether it starts a new task — needs information that
+  does not exist yet at step 6.
+* **Whether an ending must be closable only by the judge.** It fires 3 times in
+  357 steps. A span that never closes is not a rare edge case at that rate.
+* That prompt-pair formulation scored **5/11** on the corpus in a first,
+  untuned form — it over-fires on continuations, cutting `fb505861` at "Write
+  that list to COVERAGE.md" and shattering `263d65ce` into 9. Not usable as
+  measured, but it is the only signal that has ever fired in the right place.
