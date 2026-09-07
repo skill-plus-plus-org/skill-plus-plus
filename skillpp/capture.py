@@ -25,7 +25,8 @@ from .ledger import Entry, Ledger, make_id, STATUS_CANDIDATE
 from .normalize import parameterize, signature
 from .recurrence import find_match
 from .sanitize import scrub, scrub_obj
-from .segment import PROMPT_TOOL, feeds_a_write, is_prompt, segment
+from .segment import (PROMPT_TOOL, feeds_a_write, is_prompt, segment,
+                      was_judged)
 
 # Tool inputs worth keeping. Anything else is recorded by name only.
 #
@@ -395,11 +396,27 @@ def handle_session_end(config: Config, payload: dict) -> dict:
     session = _load_session(config, session_id)
     try:
         result = fold_session(config, session)
-    finally:
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    except Exception:
+        raise
+    else:
+        # Offline: the session was never folded, so this file is the only copy
+        # of the work. Losing the step is the one thing capture exists to
+        # prevent — being offline costs the candidate, never the record.
+        #
+        # Stamped rather than merely left behind: a live session has a file too,
+        # and counting those as held would report work lost from a session still
+        # being written. `skillpp stats` reads this key, not the glob.
+        if result.get("status") == "offline":
+            session["held"] = {
+                "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "reason": result.get("reason", ""),
+            }
+            _save_session(config, session)
+        else:
+            try:
+                path.unlink()
+            except OSError:
+                pass
     return result
 
 
@@ -416,6 +433,16 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
     episode's result — with an added ``episodes`` key listing every outcome. A
     session that segments into one episode returns exactly what it always did.
     """
+    # No verdicts means no local model answered, which means skillpp is offline
+    # for this session. Banking anyway would mean guessing the boundaries from
+    # git verbs — measured worse than making no cuts at all, and worse again
+    # than the judge. Reported rather than returned empty, because a silent
+    # nothing is indistinguishable from a session that held no work.
+    if not was_judged(session.get("steps", [])) and not force:
+        return {"status": "offline", "steps": len(session.get("steps", [])),
+                "episodes": [], "flagged": 0,
+                "reason": f"no verdicts: {config.local_model} did not answer"}
+
     episodes = segment(session.get("steps", []), config.min_episode_steps)
 
     # An episode with no completion marker, in a session that did segment, is a

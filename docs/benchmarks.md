@@ -951,3 +951,83 @@ cases drop from two to one; the surviving shape, work that concluded nothing
 from cutting, so there was one episode and the retrieval survived. The defect
 was on the vocabulary path, which is what runs when the local model is
 unreachable.
+
+### The vocabulary stops being a segmenter
+
+`skillpp` segmented two different ways depending on whether a local model
+answered. With verdicts, the judge decided. Without them a **parallel** system
+took over: cut at every new prompt following two substantive steps, and at every
+git completion verb.
+
+That parallel system produced the cuts three separate passes existed to undo —
+`_absorb_before_commit`, `_absorb_read_only_preamble`, and
+`trim_leading_exploration`'s MCP exemption — each added after a real session lost
+work to a boundary nobody wanted. **Now, when nothing judged the steps, skillpp
+is offline: it does not segment and does not bank.**
+
+**Measured across the eleven live sessions:**
+
+| | correct |
+| --- | --- |
+| keep the vocabulary fallback | 7/11 |
+| no verdicts, no cuts (one episode) | 9/11 |
+| no verdicts, nothing banked, fixtures unjudged | 0/11 |
+| **no verdicts, nothing banked, fixtures carrying verdicts** | **10/11** |
+
+The 0/11 row is an artefact, not a result. Every fixture is a projection of a
+Claude Code transcript, and a transcript has no `end` field — so the corpus was
+"unjudged" by construction and scored zero against a pipeline that requires
+verdicts. `judge_replay.py --write` bakes real verdicts in, which is what the
+last row measures and what a live capture would have carried all along.
+
+**Baking alone moved the board from 7 correct to 10.** No behaviour changed —
+the fixtures simply stopped exercising the fallback and started exercising the
+path that ships. Three of the four gaps under investigation that morning were
+never defects in shipping code; they were the vocabulary failing on recordings
+production would never produce.
+
+What closed:
+
+- `5c7b0f81` and `fb505861` — the same procedure recorded twice. The prompt rule
+  cut at *"Write that list to COVERAGE.md"*, severing the deliverable from the
+  investigation that produced it. Two symptoms from one cut, decided only by how
+  many steps followed the prompt: one banked a single episode missing the file,
+  the other banked two and `must_contain` read the larger one.
+- `263d65ce` — 110 steps, never scored against the judge before because every
+  replay skipped it for cost. E4B marks exactly **one** ending in 110 steps and
+  puts it in the right place: 2/2.
+
+**What stays: 3 endings in 357 steps.** The judge is sparse. That is not by
+itself wrong — nine of eleven truths are a single episode — but it is why
+`241955c7` remains open, and why `two-chores-one-sitting`,
+`two-chores-then-nothing` and two `TestSegmentBeforeAfter` tests are now
+recorded as needing a verdict that does not exist yet. Each is the same shape:
+two pieces of work with nothing observable between them.
+
+**`has_marker` stays verdict-based.** Making it observational —
+`any(is_marker(...))` instead of `any(is_end(...))` — was planned and dropped on
+measurement: it breaks `263d65ce` from 2/2 back to 1/2. Under verdicts that
+session's first episode counts as concluded because the judge said so; under
+observation it has no git commit, so `_absorb_before_commit` folds it into the
+one that does. `_absorb_before_commit` asks whether an episode *concluded*, not
+whether a commit happened, and a verdict is the better answer to that question.
+
+**Accepted costs.**
+
+- A commit alone never ends an episode; only a verdict does. Measured neutral —
+  cutting on verdicts *plus* observed markers scores an identical 9/11, because
+  `_absorb_before_commit` re-merges the marker cuts anyway.
+- With no model, a session banks nothing. The session file is kept and stamped
+  `held` instead of deleted, so being offline costs the candidate and never the
+  record, and `skillpp stats` reports what is waiting. Ollama was down twice
+  during the day this landed, so the path is not hypothetical.
+- The marker vocabulary survives as a **test double**, standing in for a
+  reachable model across the suite. That is where a hardcoded heuristic belongs.
+
+**A harness that scored green while measuring nothing.** `judge_replay.py`
+reported `ok` with `0.00s per step` when Ollama was down: every `judge` call
+returned `None`, no verdict was written, and the "judged" row was the vocabulary
+row printed twice. It now refuses to start without a reachable model, and aborts
+if the model answers none of a session's steps. This is the same failure as the
+`--verbose` note above — a success indicator that cannot tell *finished* from
+*never started*.

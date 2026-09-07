@@ -28,7 +28,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from skillpp.segment import COMPLETION_MARKERS, PROMPT_TOOL  # noqa: F401
+from skillpp.segment import (COMPLETION_MARKERS,  # noqa: F401
+                             PROMPT_TOOL, is_marker, is_prompt)
 
 BASE = 1_760_000_000.0  # arbitrary epoch anchor; only deltas matter
 
@@ -241,6 +242,21 @@ def to_session_dict(name: str, cwd: str = "/proj/api") -> dict:
     }
 
 
+def _judged(steps: list[dict]) -> list[dict]:
+    """Stamp the verdicts a live capture would carry.
+
+    `segment` banks nothing from a stream no model judged — that is the offline
+    path, and these fixtures are built as dicts rather than driven through
+    `handle_tool`, so they would reach the fold unjudged and bank nothing. The
+    completion-marker vocabulary stands in for the model: deterministic, free,
+    and it reproduces the boundaries these fixtures were written against.
+    """
+    for step in steps:
+        if not is_prompt(step):
+            step["end"] = is_marker(step)
+    return steps
+
+
 def to_captured_session(name: str, cwd: str = "/proj/api") -> dict:
     """The same session in the **post-segmentation** buffer shape.
 
@@ -261,7 +277,7 @@ def to_captured_session(name: str, cwd: str = "/proj/api") -> dict:
         "session_id": name,
         "cwd": cwd,
         "prompts": [e["text"] for e in events if e["kind"] == "prompt"],
-        "steps": steps,
+        "steps": _judged(steps),
     }
 
 
@@ -272,5 +288,5 @@ def clean_session_dict(name: str, cwd: str = "/proj/api") -> dict:
         "session_id": f"{name}-clean",
         "cwd": cwd,
         "prompts": [DEPLOY_PROMPTS[name]],
-        "steps": deploy_steps(target, 0),
+        "steps": _judged(deploy_steps(target, 0)),
     }

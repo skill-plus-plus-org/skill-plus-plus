@@ -694,6 +694,26 @@ def cmd_stats(args: argparse.Namespace) -> int:
     print(f"  promoted  {stats['promoted']}")
     print(f"  dismissed {stats['dismissed']}")
     print(f"size        {stats['bytes'] / 1024:.1f} KB")
+
+    # Held sessions. `fold_session` refuses to bank a stream no model judged and
+    # keeps the file instead, so a stack of these means skillpp has been running
+    # offline and the work is waiting, not lost. Silence here would be the same
+    # trap as a harness that scores green with the model down.
+    # Only sessions `handle_session_end` stamped as held. A session still being
+    # written has a file too, and counting it would report work lost from one
+    # that is merely in flight.
+    held = []
+    for path in sorted(config.sessions_dir.glob("*.json")):
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("held"):
+                held.append(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+    if held:
+        print(f"held        {len(held)} session(s) not banked, kept in "
+              f"{config.sessions_dir}")
+        print(f"            no local model answered ({config.local_model} at "
+              f"{config.ollama_url}); the work is there, the candidates are not")
     return 0
 
 

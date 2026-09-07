@@ -20,7 +20,8 @@ from skillpp.lifecycle import check_staleness, parse_frontmatter, record_use, sc
 from skillpp.normalize import normalize_command, parameterize, signature
 from skillpp.recurrence import find_match, similarity
 from skillpp.sanitize import scrub
-from skillpp.segment import segment
+from skillpp.segment import is_marker, is_prompt
+from skillpp.segment import segment as _real_segment
 from skillpp.signals import detect, effects
 from skillpp.summary import check_dependencies, scaffold_skill
 
@@ -46,16 +47,25 @@ def setUpModule() -> None:
     capture are not all `TempRoot` subclasses — `TestBenchmarkSegmentation` is a
     plain `TestCase` and is exactly the one that hurt.
 
-    The stub answers `None`, "no opinion", which is what a step captured before
-    the judge existed carries. So every test written against the marker and
-    prompt rules goes on measuring them, and a test of the judged path opts in
-    with `TempRoot._stub_judge`.
+    The stub stands in for a model that is *reachable*, answering every step
+    from the completion-marker vocabulary. It used to answer `None`, meaning "no
+    opinion" — which was fine while `None` made `segment` fall back to that same
+    vocabulary. Now `None` means offline and nothing is banked, so a `None` stub
+    would test the offline path in 53 places that mean to test capture.
+
+    The vocabulary is a good test double precisely because it is no longer a
+    product: deterministic, free, and it reproduces the boundaries these tests
+    were written against. A test of the real judge opts in with
+    `TempRoot._stub_judge`; a test of the offline path builds a session with no
+    verdicts on purpose.
     """
     global _REAL_JUDGE, _REAL_DESCRIBE
     import skillpp.boundary as boundary
+    from skillpp.segment import is_marker
     _REAL_JUDGE = boundary.judge_in_session
     _REAL_DESCRIBE = boundary.describe_in_session
-    boundary.judge_in_session = lambda config, session, step: None
+    boundary.judge_in_session = (
+        lambda config, session, step: is_marker(step))
     # Same reasoning for the describer, which runs on the same hot path and is
     # slower still — it writes a sentence where the judge writes one word.
     boundary.describe_in_session = (
@@ -72,13 +82,41 @@ def bash(command: str, failed: bool = False) -> dict:
     return {"tool": "Bash", "input": {"command": command}, "failed": failed}
 
 
+def judged(steps: list[dict]) -> list[dict]:
+    """Stamp a hand-built session with the verdicts a live capture would carry.
+
+    `segment` banks nothing from a stream no model judged, so a session assembled
+    as literal dicts — rather than driven through `handle_tool` — reaches the
+    fold with no verdicts and is treated as offline. The marker vocabulary is the
+    stand-in, for the same reason it is in `setUpModule`.
+    """
+    for step in steps:
+        if not is_prompt(step):
+            step["end"] = is_marker(step)
+    return steps
+
+
+def segment(steps, *args, **kwargs):
+    """`skillpp.segment.segment`, on a stream that carries verdicts.
+
+    Boundaries come from the judge now; a stream nothing judged banks nothing at
+    all, which is the offline path and not what these tests are about. Stamping
+    the marker vocabulary in reproduces the boundaries they were written against
+    without needing Ollama.
+
+    Tests of the offline path call `_real_segment` directly, with steps that
+    carry no verdicts on purpose — see `TestOfflineWithoutAModel`.
+    """
+    return _real_segment(judged([dict(s) for s in steps]), *args, **kwargs)
+
+
 class TempRoot(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.config = Config(self.root / "skillpp")
         self.config.ensure_dirs()
-        self.judged = self._stub_judge(None)
+        self.judged = self._stub_judge(is_marker)
 
     def _stub_judge(self, verdict):
         """Answer the boundary judge without a model.
@@ -88,10 +126,14 @@ class TempRoot(unittest.TestCase):
         so a test of the ledger becomes a test of the model, and a machine
         without Ollama sees hundreds of five-second timeouts instead of results.
 
-        The default is `None`, "no opinion", which is what a step recorded
-        before the judge existed carries — so every test written against the
-        marker and prompt rules keeps measuring them. Tests of the judged path
-        call this with `True`/`False`, or replace `calls` with their own script.
+        The default is `is_marker`, standing in for a model that is *reachable*
+        and answers every step. It used to be `None`, "no opinion", which was
+        fine while `None` made `segment` fall back to the same vocabulary. Now
+        `None` means offline and nothing is banked, so a `None` default would
+        quietly turn every ledger test into a test of the offline path.
+
+        Pass `True`/`False`, or a callable taking the step, to script a
+        different judge. Pass `None` deliberately to test being offline.
         """
         import skillpp.boundary as boundary
         real = boundary.judge_in_session
@@ -392,7 +434,7 @@ class TestSignals(unittest.TestCase):
 class TestCapture(TempRoot):
     def _session(self, commands, prompts=("do the thing",), sid="s1"):
         return {"session_id": sid, "cwd": "/proj", "prompts": list(prompts),
-                "steps": [bash(c) for c in commands]}
+                "steps": judged([bash(c) for c in commands])}
 
     def test_thin_session_is_ignored(self):
         result = fold_session(self.config, self._session(["ls"]))
@@ -1003,7 +1045,10 @@ class TestSegmentBoundaries(unittest.TestCase):
         episodes = segment([bash("npm test"), bash("git commit -m 'x'"),
                             bash("npm outdated"), bash("npm view pkg")])
         self.assertEqual(len(episodes), 2)
-        self.assertEqual(episodes[0].ended_by, "marker")
+        # "judged", not "marker": the boundary is a verdict now. The marker
+        # vocabulary reaches this test as the stand-in judge in `judged()`, not
+        # as a rule inside `segment`.
+        self.assertEqual(episodes[0].ended_by, "judged")
 
     def _mcp(self, name):
         return {"tool": f"mcp__{name}", "input": {}, "failed": False}
@@ -1038,7 +1083,7 @@ class TestSegmentBoundaries(unittest.TestCase):
                  bash("git commit -m 'test(eval): add desk-booking case'")]
         episodes = segment(steps)
         self.assertEqual(len(episodes), 1)
-        self.assertEqual(episodes[0].ended_by, "marker")
+        self.assertEqual(episodes[0].ended_by, "judged")
 
     def test_the_doc_fetch_survives_into_the_episode(self):
         """The step the procedure exists for. It was banked as its own orphan.
@@ -1125,13 +1170,26 @@ class TestSegmentBoundaries(unittest.TestCase):
                             bash("cd /tmp")])
         self.assertEqual(len(episodes), 1)
 
-    def test_a_new_prompt_ends_the_preceding_work(self):
+    def test_a_new_prompt_no_longer_ends_the_preceding_work(self):
+        """Deliberately the opposite of what this file asserted before.
+
+        A new prompt used to close the preceding episode once two substantive
+        steps had happened. It was a proxy for "the last thing must have
+        finished", and a poor one: it cuts on a step count, which measures that
+        work happened, not that a goal ended. Measured on the live sessions it
+        severed a deliverable from the investigation that produced it twice
+        (`5c7b0f81`, `fb505861`) and a doc retrieval from the comparison it fed
+        (`95b6bde7`).
+
+        Only a verdict cuts now. Nothing here says a task ended, so this is one
+        episode.
+        """
         episodes = segment([self._prompt("task one"), bash("npm test"),
                             bash("./deploy.sh staging"),
                             self._prompt("task two"), bash("npm outdated"),
                             bash("npm view pkg")])
-        self.assertEqual(len(episodes), 2)
-        self.assertEqual(episodes[0].ended_by, "prompt")
+        self.assertEqual(len(episodes), 1)
+        self.assertEqual(episodes[0].ended_by, "session-end")
 
     def test_a_mid_task_prompt_does_not_cut(self):
         """"continue" arriving before any work must not shred the episode."""
@@ -1329,7 +1387,6 @@ class TestReadsAndRetrievals(unittest.TestCase):
         being all reads and dropped — so the session banked the comparison with
         none of the material it compared.
         """
-        from skillpp.segment import segment
         steps = [{"tool": "UserPrompt", "input": {"text": "look up the docs"}, "failed": False},
                  {"tool": "mcp__adk-docs__list_doc_sources", "input": {}, "failed": False},
                  {"tool": "mcp__adk-docs__fetch_docs", "input": {"url": "a"}, "failed": False},
@@ -1349,7 +1406,6 @@ class TestReadsAndRetrievals(unittest.TestCase):
 
         nothing — the trailing rule, which the absorb pass does not replace.
         """
-        from skillpp.segment import segment
         steps = [{"tool": "UserPrompt", "input": {"text": "ship it"}, "failed": False},
                  {"tool": "Edit", "input": {"file_path": "/a.py"}, "failed": False},
                  bash("git commit -m 'x'"),
@@ -1516,6 +1572,74 @@ class TestChainedMarkers(unittest.TestCase):
         self.assertFalse(is_marker(_lb("cd /repo && ls -la && cat README.md")))
 
 
+class TestOfflineWithoutAModel(TempRoot):
+    """No verdicts, no candidates — and no lost work.
+
+    `segment` used to fall back to a vocabulary when nothing judged the steps:
+    cut at every new prompt following two substantive steps, and at every git
+    completion verb. Measured across the eleven live sessions that fallback
+    scored 7/11, against 9/11 for making no cuts at all and 10/11 for the judge.
+    It is not a degraded mode of the judge, it is a different and worse product.
+    """
+
+    def _unjudged(self):
+        return {"session_id": "off", "cwd": "/proj", "prompts": ["do it"],
+                "steps": [bash("npm test"), bash("git commit -m 'x'"),
+                          bash("npm outdated"), bash("npm view pkg")]}
+
+    def test_segment_cuts_nothing_without_verdicts(self):
+        self.assertEqual(_real_segment(self._unjudged()["steps"]), [])
+
+    def test_the_same_steps_segment_once_judged(self):
+        """The steps are not the problem — the missing verdicts are."""
+        self.assertEqual(len(segment(self._unjudged()["steps"])), 2)
+
+    def test_folding_reports_offline_rather_than_an_empty_success(self):
+        result = fold_session(self.config, self._unjudged())
+        self.assertEqual(result["status"], "offline")
+        self.assertEqual(Ledger(self.config).stats()["total"], 0)
+
+    def test_force_still_banks_for_a_person_who_asked(self):
+        """`force` is someone saying "save this", not a detector guessing."""
+        result = fold_session(self.config, self._unjudged(), force=True)
+        self.assertNotEqual(result["status"], "offline")
+
+    def test_the_session_file_survives_being_offline(self):
+        """Being offline costs the candidate, never the record.
+
+        The file is the only copy of the work, and `handle_session_end` unlinked
+        it unconditionally before this. Stamped `held` so `skillpp stats` can
+        tell it apart from a session still being written.
+        """
+        from skillpp.capture import (_session_file, handle_prompt,
+                                     handle_session_end, handle_tool)
+        self._stub_judge(None)                  # the model is not reachable
+        handle_prompt(self.config, {"session_id": "off", "cwd": "/r",
+                                    "prompt": "cut the release"})
+        for command in ("npm test", "git commit -m 'x'"):
+            handle_tool(self.config, {"session_id": "off", "cwd": "/r",
+                                      "tool_name": "Bash",
+                                      "tool_input": {"command": command}})
+        result = handle_session_end(self.config, {"session_id": "off"})
+
+        self.assertEqual(result["status"], "offline")
+        path = _session_file(self.config, "off")
+        self.assertTrue(path.exists(), "the only copy of the work was deleted")
+        held = json.loads(path.read_text(encoding="utf-8"))
+        self.assertTrue(held["held"]["at"])
+        self.assertEqual(len(held["steps"]), 3)
+
+    def test_a_live_session_is_not_reported_as_held(self):
+        """A session still being written has a file too."""
+        from skillpp.capture import handle_prompt
+        handle_prompt(self.config, {"session_id": "live", "cwd": "/r",
+                                    "prompt": "still going"})
+        files = list(self.config.sessions_dir.glob("*.json"))
+        self.assertEqual(len(files), 1)
+        self.assertNotIn(
+            "held", json.loads(files[0].read_text(encoding="utf-8")))
+
+
 class TestSegmentBeforeAfter(TempRoot):
     """The regression this exists to prevent, measured both ways.
 
@@ -1588,12 +1712,35 @@ class TestSegmentBeforeAfter(TempRoot):
         self.assertEqual(deploys[0].occurrences, EXPECTED_OCCURRENCES)
         self.assertTrue(deploys[0].ready(self.config.recurrence_threshold))
 
+    # Both of the following need a verdict that does not exist yet.
+    #
+    # The deploy ends in `./deploy.sh`, which is not a completion marker — no
+    # git verb, no artifact tool. The prompt rule used to close the episode
+    # there, and it was deleted for closing episodes wrongly on three live
+    # sessions. With nothing cutting, the deploy merges into whatever follows
+    # and `CLEAN_SIGNATURE` never appears.
+    #
+    # `_absorb_before_commit` already recorded this shape as a known cost — "a
+    # task that completes without committing, a deploy ending in
+    # ./scripts/deploy.sh, is absorbed into whatever commits next". It is now
+    # not merely absorbed but never separated. Same open problem as the live
+    # session `241955c7` and the `two-chores-*` cases: only a model can say a
+    # deploy finished, and this suite's stand-in judge is the marker vocabulary,
+    # which by design cannot.
+    #
+    # Marked expected rather than deleted, and rather than teaching the stand-in
+    # to recognise `deploy.sh` — that would be tuning the double until the test
+    # passes, which measures nothing. This fixture is hand-authored and no real
+    # captured session has yet shown the shape.
+
+    @unittest.expectedFailure
     def test_after_the_signature_matches_the_unpolluted_baseline(self):
         """Pollution must leave no trace in the recovered workflow."""
         self._fold_segmented(to_captured_session)
         signatures = {e.signature for e in Ledger(self.config).all()}
         self.assertIn(self.CLEAN_SIGNATURE, signatures)
 
+    @unittest.expectedFailure
     def test_after_the_deploy_is_titled_after_the_deploy(self):
         self._fold_segmented(to_captured_session)
         deploy = next(e for e in Ledger(self.config).all()
@@ -2097,7 +2244,6 @@ class TestLeadingExplorationTrim(unittest.TestCase):
         self.assertFalse(is_read_only(self.bash("vim $(grep -l x .)")))
 
     def test_segment_records_what_it_trimmed(self):
-        from skillpp.segment import segment
         episodes = segment([self.prompt("fix the export"),
                             self.bash("grep -rn export src/"),
                             self.bash("cat src/export.py"),
@@ -2177,14 +2323,22 @@ class TestBenchmarkSegmentation(unittest.TestCase):
     # exploration stops being recognised as exploration. At the real 92%
     # chaining rate that rule is effectively dead. Deliberately left broken here
     # so the fix, when it lands, is attributable to the fix.
-    CHAINED_READS = {"investigation-that-goes-nowhere",
-                     "a-procedure-then-a-dead-end"}
+    # `a-procedure-then-a-dead-end` left this set when the prompt rule was
+    # deleted: it was two episodes only because a prompt cut them, and the
+    # chaining bug then swallowed the second. One episode is the right answer.
+    CHAINED_READS = {"investigation-that-goes-nowhere"}
 
     def _score(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
         from benchmarks.run import score
         from benchmarks.cases import CASES
         return score(CASES, use_model=False)
+
+    # Two unrelated chores in one sitting, no marker between them. The prompt
+    # rule used to cut here and was deleted for cutting wrongly on three live
+    # sessions; nothing observable separates these halves, so only a verdict
+    # can. Same open problem as `241955c7`.
+    NEEDS_A_VERDICT = {"two-chores-one-sitting", "two-chores-then-nothing"}
 
     def test_every_case_segments_as_expected(self):
         """Excluding the two whose fix is a later stage, not the segmenter."""
@@ -2193,7 +2347,8 @@ class TestBenchmarkSegmentation(unittest.TestCase):
                  for r in self._score()["rows"]
                  if not r["segmentation"]
                  and not self.DOWNSTREAM & set(r["tags"])
-                 and r["name"] not in self.CHAINED_READS]
+                 and r["name"] not in self.CHAINED_READS
+                 and r["name"] not in self.NEEDS_A_VERDICT]
         self.assertEqual(wrong, [], "\n" + "\n".join(wrong))
 
     def test_the_known_gaps_are_still_exactly_the_known_gaps(self):
@@ -2216,9 +2371,20 @@ class TestBenchmarkSegmentation(unittest.TestCase):
         # The other two are the `is_read_only` chaining bug described on
         # `CHAINED_READS` — a pipeline defect the corpus could not see until its
         # commands were shaped like real ones.
+        #
+        # `two-chores-*` joined when the prompt rule was deleted. Both are two
+        # unrelated chores in one sitting with no completion marker between
+        # them, so nothing observable separates the halves and only a verdict
+        # can. That is the same open problem as the live session `241955c7`,
+        # whose eighth prompt begins "Separate job:" and which E4B still reads
+        # as one task across all 24 steps. Recorded here rather than repaired by
+        # bringing the prompt rule back: it cut correctly on these two and
+        # wrongly on three live sessions.
         expected = {"deploy-then-status-email",
                     "the-same-release-different-runner",
-                    "the-same-release-two-steps-different"} | self.CHAINED_READS
+                    "the-same-release-two-steps-different",
+                    "two-chores-one-sitting",
+                    "two-chores-then-nothing"} | self.CHAINED_READS
         self.assertEqual(failing, expected)
 
     def test_recurrence_is_measured_at_all(self):
