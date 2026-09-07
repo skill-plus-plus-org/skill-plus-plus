@@ -1,4 +1,4 @@
-"""Did the task end at this step? Asked of every tool call, as it happens.
+"""Did the developer start a new job here? Asked once per prompt, at session end.
 
 `segment.is_marker` answered the same question from a fixed vocabulary, and that
 vocabulary is entirely code: `git commit`, `gh pr create`, `glab mr create`.
@@ -7,10 +7,26 @@ anything, and 9 of 24 benchmark cases hold no ending signal at all. That
 vocabulary no longer decides boundaries anywhere — it survives as the trailing
 flag's test and as the suite's stand-in judge.
 
-This asks a small local model instead, once per tool call, and records the
-verdict on the step. Recording rather than re-deriving is what makes the rest
-testable: the judgement is made once with the live context, and `segment`,
+This asks a small local model instead, and records the verdict on the step.
+Recording rather than re-deriving is what makes the rest testable: `segment`,
 the fixtures and the tests all read a plain boolean afterwards.
+
+**It used to ask, once per tool call, whether the whole request was finished.**
+Measured across the eleven live sessions that answered 3 endings in 357 steps,
+declined a completed `git commit` it accepted in a neighbouring session, and
+missed `241955c7` entirely. `docs/benchmarks.md` lists what was ruled out —
+four rewordings of the definition, the tool output, the completion report, two
+other phrasings, both polarities, three context sizes. The polarity test settled
+it: 0/24 endings asking "is the request done" against 17/24 asking "is more work
+needed", same steps, same context, temperature 0. It was answering the shape of
+the question, not reading the step.
+
+So the question moved to where a boundary can actually be — a gap between two
+tool calls that a prompt landed in — and became a comparison rather than an
+assessment: here is what they asked for, here is what they just said, here is
+what they did next; is that a new job? 10/11 on the corpus at **33 calls
+instead of 357**, and it finds `241955c7` and `263d65ce` in the right places
+where the old one found only `263d65ce`.
 
 **Every failure is a `None`.** No local model, a timeout, an answer that is
 neither yes nor no — all return `None`, and `segment` treats `None` as "not an
@@ -61,7 +77,25 @@ from .local import PROMPTS, LocalModelUnavailable, ask, yes_no
 # Cost is bounded. The widest prompt across the live sessions is 8.5 KB, about
 # 2.1k tokens, still under `local._CTX_FLOOR` — so `num_ctx` does not grow and
 # nothing is truncated.
-CONTEXT_STEPS = 20
+# How many steps of context each slot carries. Both are windows, not knobs, and
+# both were measured across the eleven live sessions.
+#
+# `NEXT_STEPS` is the sharp one: 1 step scores 7/11, 3 scores 10/11, 5 scores
+# 8/11. One step is too little to tell two jobs apart — `find cases.json` could
+# belong to either. Five reaches far enough into the next task to echo the old
+# one, and sessions start failing again.
+#
+# `PRIOR_STEPS` at 3 beat the old 20: a long history made a late gap look like a
+# continuation whatever it said. Proved by swapping the text between an early
+# and a late gap, holding everything else — the verdict followed the position,
+# not the words.
+NEXT_STEPS = 3
+PRIOR_STEPS = 3
+
+# How much of the developer's instruction to show. It is the load-bearing slot:
+# removing it drops the corpus from 10/11 to 8/11, and `241955c7` starts cutting
+# at "Regenerate the evalset" as well as at "Separate job:".
+_PROMPT_CHARS = 400
 
 # Short on purpose. This runs inside `PostToolUse`, so the developer waits for
 # it. A model that has not answered in this long is not going to answer usefully.
@@ -161,24 +195,98 @@ def render_step(step: dict) -> str:
     return core
 
 
-def build_prompt(goal: str, prior: list[str], step: dict) -> str:
-    template = (PROMPTS / "task_end.md").read_text(encoding="utf-8")
+def build_prompt(goal: str, prior: list[str], step: dict,
+                 said: str, follow: list[str]) -> str:
+    """The question, filled in. Every slot in it was measured.
+
+    `{PRIOR}` falls back to "(nothing yet)" rather than rendering an empty
+    section, and that is load-bearing rather than tidiness: on `95b6bde7` a
+    blank block under the header flips the verdict from "no" to "yes" on its
+    own, because a session with nothing behind it reads as one that has not
+    started. Removing the section entirely fails the same way.
+    """
+    template = (PROMPTS / "new_job.md").read_text(encoding="utf-8")
     lines = "\n".join(f"    {p}" for p in prior) or "    (nothing yet)"
+    nxt = "\n".join(f"    {p}" for p in follow) or "    (nothing yet)"
     return (template
             .replace("{GOAL}", goal.strip() or "(not stated)")
             .replace("{PRIOR}", lines)
-            .replace("{STEP}", render_step(step)))
+            .replace("{STEP}", render_step(step))
+            .replace("{PROMPT}", said.strip()[:_PROMPT_CHARS] or "(nothing)")
+            .replace("{NEXT}", nxt))
 
 
 def judge(step: dict, *, goal: str = "", prior: list[str] | None = None,
+          said: str = "", follow: list[str] | None = None,
           model: str, host: str, timeout: float = DEFAULT_TIMEOUT) -> bool | None:
-    """Did *step* end the task? ``None`` means no opinion — treat as "no"."""
-    prompt = build_prompt(goal, list(prior or []), step)
+    """Did the developer start a new job after *step*?
+
+    ``None`` means no opinion — no model, a timeout, an answer that is neither
+    yes nor no — and `segment` treats it as "not a boundary".
+    """
+    prompt = build_prompt(goal, list(prior or []), step, said, list(follow or []))
     try:
         reply = ask(model, prompt, host=host, timeout=timeout, think=False)
     except LocalModelUnavailable:
         return None
     return yes_no(reply)
+
+
+def gaps(steps: list[dict]) -> list[tuple[int, dict, list[dict]]]:
+    """Every place a boundary could be: `(index, the prompt, what follows)`.
+
+    A gap is a prompt sitting between two tool calls. That is the only shape
+    this asks about, which is why it costs one call per prompt rather than one
+    per step — 33 against 357 across the live sessions.
+
+    KNOWN LIMIT: a task that ends where the developer says nothing is invisible
+    here. No live session shows that shape, and the per-step judge it replaced
+    could see it in principle, so this is a trade rather than a free win.
+    """
+    from .segment import is_prompt
+
+    out = []
+    for index, step in enumerate(steps):
+        if is_prompt(step):
+            continue
+        after = steps[index + 1:]
+        nxt = next((i for i, s in enumerate(after) if not is_prompt(s)), None)
+        if nxt is None:
+            continue
+        said = next((s for s in after[:nxt] if is_prompt(s)), None)
+        if said is not None:
+            out.append((index, said,
+                        [s for s in after[nxt:] if not is_prompt(s)][:NEXT_STEPS]))
+    return out
+
+
+def judge_session(config, session: dict) -> int:
+    """Mark the boundaries in a finished session. Returns how many it found.
+
+    Every substantive step gets a verdict — `False` where nothing was asked —
+    so `segment.was_judged` is satisfied and the session is not read as offline.
+    A step whose question failed keeps no key, and defaults to "not a boundary".
+    """
+    from .segment import is_prompt
+
+    steps = session.get("steps", [])
+    for step in steps:
+        if not is_prompt(step):
+            step["end"] = False
+
+    found = 0
+    for index, said, follow in gaps(steps):
+        goal, prior = window(steps[:index])
+        verdict = judge(steps[index], goal=goal, prior=prior[-PRIOR_STEPS:],
+                        said=str((said.get("input") or {}).get("text", "")),
+                        follow=[render_step(s) for s in follow],
+                        model=config.local_model, host=config.ollama_url)
+        if verdict is None:
+            steps[index].pop("end", None)
+            continue
+        steps[index]["end"] = verdict
+        found += verdict
+    return found
 
 
 # How much of a field to show the describer. Long enough that a `Write` is
@@ -326,11 +434,5 @@ def window(steps: list[dict]) -> tuple[str, list[str]]:
         earlier = [text(s) for s in steps[:start] if is_prompt(s) and text(s)]
         asked = earlier[-1:]
     done = [render_step(s) for s in span if not is_prompt(s)]
-    return "\n".join(f"- {a}" for a in asked), done[-CONTEXT_STEPS:]
-
-
-def judge_in_session(config, session: dict, step: dict) -> bool | None:
-    """`judge`, with the task read out of the live session buffer."""
-    goal, done = window(session.get("steps", []))
-    return judge(step, goal=goal, prior=done,
-                 model=config.local_model, host=config.ollama_url)
+    # Sliced by the caller: `judge_session` shows PRIOR_STEPS of it.
+    return "\n".join(f"- {a}" for a in asked), done

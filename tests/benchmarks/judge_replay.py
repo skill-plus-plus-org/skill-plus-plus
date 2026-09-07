@@ -30,8 +30,9 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tests" / "fixtures" / "sessions"))
 
 import score as live_score                                    # noqa: E402
-from skillpp.boundary import (describe, judge, render_step,   # noqa: E402
-                              window)
+import skillpp.boundary as boundary                           # noqa: E402
+from skillpp.boundary import (describe, gaps, judge,          # noqa: E402
+                              render_step, window)
 from skillpp.config import Config                             # noqa: E402
 from skillpp.local import LocalModelUnavailable, ask          # noqa: E402
 from skillpp.segment import is_prompt                         # noqa: E402
@@ -60,24 +61,28 @@ def judged_copy(doc: dict, config: Config, *, verbose: bool = False,
                 summarise: bool = False) -> dict:
     """A copy of *doc* whose steps carry the model's verdicts.
 
-    Goal and span come from `boundary.window`, the same one `judge_in_session`
-    assembles from the live buffer — every prompt in the current task, and the
-    last `CONTEXT_STEPS` steps taken on it.
+    One question per prompt gap, exactly as `boundary.judge_session` asks it at
+    `SessionEnd` — the goal, the last `PRIOR_STEPS` steps, the instruction that
+    landed in the gap, and the `NEXT_STEPS` steps that followed it.
+
+    The per-step judge this replaced was replayed forward, growing the stream
+    the way the hook did. This question needs what came *after* a gap, so there
+    is no forward-only version of it — which is why the live hook also runs at
+    session end rather than per tool call.
     """
     # deepcopy, not a json round trip: `score.load` stashes a `Path` on the doc.
     out = copy.deepcopy(doc)
-    # Judge against the stream built so far, verdicts included — `window` reads
-    # its own earlier answers to find where the current task started, so replay
-    # has to grow the list the way the hook does rather than pass the whole
-    # session in. Feeding it the finished stream would let a step be judged
-    # against boundaries found after it.
-    seen: list[dict] = []
-    answered = 0
-    for step in out["steps"]:
-        if is_prompt(step):
-            seen.append(step)
-            continue
-        if summarise:
+    steps = out["steps"]
+    for step in steps:
+        if not is_prompt(step):
+            step["end"] = False
+
+    if summarise:
+        seen: list[dict] = []
+        for step in steps:
+            if is_prompt(step):
+                seen.append(step)
+                continue
             asks = [str((s.get("input") or {}).get("text", "")).strip()
                     for s in seen if is_prompt(s)]
             note = describe(step, asks=[a for a in asks if a],
@@ -86,22 +91,33 @@ def judged_copy(doc: dict, config: Config, *, verbose: bool = False,
                             model=config.local_model, host=config.ollama_url)
             if note:
                 step["summary"] = note
-        goal, done = window(seen)
-        verdict = judge(step, goal=goal,
-                        prior=done, model=config.local_model,
-                        host=config.ollama_url, timeout=30.0)
-        if verdict is not None:
-            step["end"] = verdict
-            answered += 1
+            seen.append(step)
+
+    asked = answered = 0
+    for index, said, follow in gaps(steps):
+        goal, prior = window(steps[:index])
+        asked += 1
+        verdict = judge(steps[index], goal=goal,
+                        prior=prior[-boundary.PRIOR_STEPS:],
+                        said=str((said.get("input") or {}).get("text", "")),
+                        follow=[render_step(s) for s in follow],
+                        model=config.local_model, host=config.ollama_url,
+                        timeout=30.0)
+        if verdict is None:
+            steps[index].pop("end", None)
+            continue
+        answered += 1
+        steps[index]["end"] = verdict
         if verbose and verdict:
-            print(f"       end: {render_step(step)[:70]}")
-        seen.append(step)
-    work = sum(1 for s in out["steps"] if not is_prompt(s))
-    if work and not answered:
+            print(f"       new job after: {render_step(steps[index])[:58]}")
+            print(f"          they said: "
+                  f"{str((said.get('input') or {}).get('text', ''))[:58]!r}")
+    if asked and not answered:
         raise SystemExit(
-            f"{out['tag']}: the model answered none of {work} steps. That is a "
-            f"blank, not a result — nothing was measured.")
+            f"{out['tag']}: the model answered none of {asked} questions. That "
+            f"is a blank, not a result — nothing was measured.")
     out["_answered"] = answered
+    out["_asked"] = asked
     return out
 
 
@@ -127,7 +143,8 @@ def save_verdicts(doc: dict, judged: dict, config: Config, boundary) -> None:
             stored["summary"] = replayed["summary"]
     on_disk["judged"] = {
         "model": config.local_model,
-        "context_steps": boundary.CONTEXT_STEPS,
+        "prior_steps": boundary.PRIOR_STEPS,
+        "next_steps": boundary.NEXT_STEPS,
         "value_chars": boundary._VALUE_CHARS,
         "send_description": boundary.SEND_DESCRIPTION,
         "endings": sum(1 for s in judged["steps"] if s.get("end") is True),
@@ -142,8 +159,14 @@ def main(argv: list[str]) -> int:
     ap.add_argument("tag", nargs="?", help="score one session")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="print every step the model called an ending")
-    ap.add_argument("--context", type=int, default=None,
-                    help="how many prior steps to show (default boundary.CONTEXT_STEPS)")
+    ap.add_argument("--prior", type=int, default=None,
+                    help="steps of history to show (default boundary.PRIOR_STEPS). "
+                         "20 was the old default and scored worse: a long history "
+                         "made every late gap read as a continuation.")
+    ap.add_argument("--next", dest="next_steps", type=int, default=None,
+                    help="steps after the gap to show (default boundary.NEXT_STEPS). "
+                         "A window, not a knob: 1 scores 7/11, 3 scores 10/11, "
+                         "5 scores 8/11.")
     ap.add_argument("--describe", action="store_true",
                     help="also send the developer's description (default: withheld)")
     ap.add_argument("--value-chars", type=int, default=None,
@@ -166,9 +189,10 @@ def main(argv: list[str]) -> int:
                          "so without this the judge is measured on the old input.")
     args = ap.parse_args(argv)
 
-    import skillpp.boundary as boundary
-    if args.context is not None:
-        boundary.CONTEXT_STEPS = args.context
+    if args.prior is not None:
+        boundary.PRIOR_STEPS = args.prior
+    if args.next_steps is not None:
+        boundary.NEXT_STEPS = args.next_steps
     boundary.SEND_DESCRIPTION = args.describe
     if args.value_chars is not None:
         boundary._VALUE_CHARS = args.value_chars
@@ -181,7 +205,8 @@ def main(argv: list[str]) -> int:
     config = Config()
     require_model(config)
     print(f"value_chars {boundary._VALUE_CHARS}, "
-          f"context {boundary.CONTEXT_STEPS} steps, "
+          f"prior {boundary.PRIOR_STEPS} steps, "
+          f"next {boundary.NEXT_STEPS} steps, "
           f"description {'sent' if args.describe else 'withheld'}, "
           f"summaries {'generated' if args.summarise else 'absent'}")
     docs = [d for d in live_score.load(args.tag)
@@ -216,10 +241,10 @@ def main(argv: list[str]) -> int:
         better += ok_after and not ok_before
         worse += ok_before and not ok_after
         print(f"{verdict:<12} {doc['tag']}  {doc['name']}")
-        print(f"       vocabulary  {line(before)}")
-        print(f"       judged      {line(after)}")
-        print(f"       {steps} steps judged in {took:.1f}s "
-              f"({took / max(steps, 1):.2f}s per step)\n")
+        print(f"       as stored   {line(before)}")
+        print(f"       replayed    {line(after)}")
+        asked = after_doc.get("_asked", 0)
+        print(f"       {asked} question(s) over {steps} steps in {took:.1f}s\n")
 
     print(f"{better} fixed, {worse} broken")
     return 1 if worse else 0

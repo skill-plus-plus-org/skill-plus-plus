@@ -61,11 +61,9 @@ def setUpModule() -> None:
     """
     global _REAL_JUDGE, _REAL_DESCRIBE
     import skillpp.boundary as boundary
-    from skillpp.segment import is_marker
-    _REAL_JUDGE = boundary.judge_in_session
+    _REAL_JUDGE = boundary.judge_session
     _REAL_DESCRIBE = boundary.describe_in_session
-    boundary.judge_in_session = (
-        lambda config, session, step: is_marker(step))
+    boundary.judge_session = _marker_judge
     # Same reasoning for the describer, which runs on the same hot path and is
     # slower still — it writes a sentence where the judge writes one word.
     boundary.describe_in_session = (
@@ -74,8 +72,32 @@ def setUpModule() -> None:
 
 def tearDownModule() -> None:
     import skillpp.boundary as boundary
-    boundary.judge_in_session = _REAL_JUDGE
+    boundary.judge_session = _REAL_JUDGE
     boundary.describe_in_session = _REAL_DESCRIBE
+
+
+def _marker_judge(config, session, verdict=is_marker):
+    """Stand in for `boundary.judge_session` without a model.
+
+    The real one asks a question per prompt gap. This answers per step from
+    *verdict*, defaulting to the completion-marker vocabulary — deterministic,
+    free, and it reproduces the boundaries this suite was written against.
+
+    Every substantive step gets a key, because `segment.was_judged` is what
+    separates a judged session from an offline one. `verdict=None` means the
+    model is unreachable: no keys, and the session is offline.
+    """
+    found = 0
+    for step in session.get("steps", []):
+        if is_prompt(step):
+            continue
+        answer = verdict(step) if callable(verdict) else verdict
+        if answer is None:
+            step.pop("end", None)
+            continue
+        step["end"] = bool(answer)
+        found += bool(answer)
+    return found
 
 
 def bash(command: str, failed: bool = False) -> dict:
@@ -119,7 +141,7 @@ class TempRoot(unittest.TestCase):
         self.judged = self._stub_judge(is_marker)
 
     def _stub_judge(self, verdict):
-        """Answer the boundary judge without a model.
+        """Answer the boundary judge without a model, recording what it saw.
 
         `handle_tool` asks a local model whether each step ended a task. Left
         real, the suite needs Ollama running and pays ~0.7s per captured step —
@@ -136,15 +158,15 @@ class TempRoot(unittest.TestCase):
         different judge. Pass `None` deliberately to test being offline.
         """
         import skillpp.boundary as boundary
-        real = boundary.judge_in_session
+        real = boundary.judge_session
         calls: list[dict] = []
 
-        def fake(config, session, step):
-            calls.append(step)
-            return verdict(step) if callable(verdict) else verdict
+        def fake(config, session):
+            calls.extend(s for s in session.get("steps", []) if not is_prompt(s))
+            return _marker_judge(config, session, verdict)
 
-        boundary.judge_in_session = fake
-        self.addCleanup(lambda: setattr(boundary, "judge_in_session", real))
+        boundary.judge_session = fake
+        self.addCleanup(lambda: setattr(boundary, "judge_session", real))
         return calls
 
     def tearDown(self) -> None:

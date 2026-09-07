@@ -34,7 +34,7 @@ sys.path.insert(0, str(REPO))
 from skillpp.capture import fold_session  # noqa: E402
 from skillpp.config import Config  # noqa: E402
 from skillpp.ledger import Ledger  # noqa: E402
-from skillpp.segment import is_marker  # noqa: E402
+from skillpp.segment import is_marker, is_prompt  # noqa: E402
 
 
 def load(tag: str | None = None) -> list[dict]:
@@ -104,6 +104,24 @@ def check(doc: dict) -> dict:
     got_markers = sum(1 for s in steps if is_marker(s))
     markers_ok = True if want_markers is None else got_markers == want_markers
 
+    # WHERE the cut fell, not just how many there were. The count alone cannot
+    # see a boundary in the wrong place: a run that split `241955c7` in the
+    # middle of its second task still banked 2 episodes and scored a pass. Only
+    # pinned where a session has more than one task, since that is the only
+    # place a cut can be wrong rather than absent.
+    want_at = truth.get("boundary_after")
+    got_at = [i for i, s in enumerate(steps)
+              if not is_prompt(s) and s.get("end") is True]
+    # 1-based over substantive steps, which is how the fixtures read.
+    work_index = {}
+    n = 0
+    for i, s in enumerate(steps):
+        if not is_prompt(s):
+            n += 1
+            work_index[i] = n
+    got_at = [work_index[i] for i in got_at]
+    at_ok = True if want_at is None else got_at == want_at
+
     return {
         "tag": doc["tag"],
         "name": doc["name"],
@@ -115,6 +133,8 @@ def check(doc: dict) -> dict:
                  "ok": not missing},
         "markers": {"want": want_markers, "got": got_markers,
                     "ok": markers_ok, "n/a": want_markers is None},
+        "boundary": {"want": want_at, "got": got_at, "ok": at_ok,
+                     "n/a": want_at is None},
     }
 
 
@@ -127,7 +147,9 @@ def main(argv: list[str]) -> int:
     failed = 0
     for doc in docs:
         row = check(doc)
-        ok = all(row[k]["ok"] for k in ("episodes", "title", "kept", "markers"))
+        ok = all(row[k]["ok"]
+                 for k in ("episodes", "title", "kept", "markers",
+                           "boundary"))
         # A fixture can record a gap the pipeline is known not to close. Those
         # are not failures of the run; they are the reason the fixture exists.
         known = doc.get("expected_fail")
@@ -151,6 +173,10 @@ def main(argv: list[str]) -> int:
         if not m["n/a"]:
             print(f"       markers   {m['got']}/{m['want']}"
                   f"{'' if m['ok'] else '   <-- wrong'}")
+        b = row["boundary"]
+        if not b["n/a"]:
+            print(f"       cut after step {b['got']} / want {b['want']}"
+                  f"{'' if b['ok'] else '   <-- wrong place'}")
 
     gaps = sum(1 for d in docs if d.get("expected_fail"))
     print(f"\n{len(docs) - failed - gaps}/{len(docs) - gaps} sessions pass"

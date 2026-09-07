@@ -444,27 +444,10 @@ def handle_tool(config: Config, payload: dict) -> None:
                 session["summarised_by"] = config.local_model
         except Exception as exc:  # noqa: BLE001 - a hook never raises at a dev
             log_error(config, f"describe failed: {type(exc).__name__}: {exc}")
-    # Did this end the task? Asked now, while the span behind it is still what
-    # the developer was doing, and recorded so `segment` reads a boolean instead
-    # of re-deriving an ending from a vocabulary of git verbs.
-    #
-    # The `try` wraps the judgement only. A model that is missing, slow or
-    # incoherent costs the verdict, never the step — losing the step would lose
-    # the work, which is the one thing capture exists to prevent.
-    # The key is written only when the model actually answered. `end: None` on
-    # every step would read downstream as "this stream was judged, and nothing
-    # ended" — a session with no boundaries at all — when what happened is that
-    # nothing was asked. Absent means unjudged, and `segment` falls back to the
-    # vocabulary rules for the whole stream, which is the right behaviour when
-    # Ollama is not running.
-    if config.judge_boundaries:
-        try:
-            from .boundary import judge_in_session
-            verdict = judge_in_session(config, session, step)
-            if verdict is not None:
-                step["end"] = verdict
-        except Exception as exc:  # noqa: BLE001 - a hook never raises at a dev
-            log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
+    # No judging here any more. Boundaries are asked about once per prompt at
+    # session end (`handle_session_end`), because the question needs the steps
+    # that came *after* the gap and those do not exist yet. That also takes a
+    # synchronous model call off every single tool call.
     session["steps"].append(step)
     _save_session(config, session)
 
@@ -477,6 +460,17 @@ def handle_session_end(config: Config, payload: dict) -> dict:
         return {"status": "no-session"}
 
     session = _load_session(config, session_id)
+    # Where the tasks divide. One question per prompt, asked now because it
+    # needs the steps that followed each gap. A model that is missing, slow or
+    # incoherent costs the verdicts, never the steps — and a session with no
+    # verdicts is offline, kept rather than banked.
+    if config.judge_boundaries:
+        try:
+            from .boundary import judge_session
+            judge_session(config, session)
+        except Exception as exc:  # noqa: BLE001 - a hook never raises at a dev
+            log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
+
     # The last task's own completion report, said after its final tool call.
     # Attached before folding so the episode carries it.
     trailing = scrub(_trailing_narration(payload))
@@ -942,6 +936,23 @@ def keep_current(config: Config, session_id: str | None = None) -> dict:
     from .segment import is_prompt
     if not [s for s in session.get("steps", []) if not is_prompt(s)]:
         return {"status": "nothing-yet"}
+    # Boundaries are normally found at `SessionEnd`; this folds mid-session, so
+    # ask now for whatever gaps the buffer already holds.
+    if config.judge_boundaries:
+        try:
+            from .boundary import judge_session
+            judge_session(config, session)
+        except Exception as exc:  # noqa: BLE001 - never raise at a developer
+            log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
+    # Still unjudged means no model answered. An explicit keep is a person
+    # saying "save this", so it banks the work as one task rather than nothing —
+    # the offline rule exists to stop a *detector* guessing, not to overrule
+    # someone who has read the work and asked for it. Same reasoning as `force`.
+    if not was_judged(session.get("steps", [])):
+        for step in session.get("steps", []):
+            if not is_prompt(step):
+                step["end"] = False
+
     result = fold_session(config, session, force=True, source="kept")
     try:
         path.unlink()
