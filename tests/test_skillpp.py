@@ -3609,6 +3609,23 @@ class TestLiveSessions(unittest.TestCase):
         cls.score = score
         cls.docs = score.load()
 
+    def test_every_banked_episode_has_a_family(self):
+        """`recurrence.py` refuses to score if labels and episodes disagree.
+
+        A family label per banked episode is the ground truth for whether
+        repeated work becomes one candidate. If segmentation changes how many
+        episodes a session banks, the labels must be rewritten, not silently
+        misaligned.
+        """
+        import recurrence
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config(Path(tmp) / "skillpp")
+            config.ensure_dirs()
+            rows = recurrence.fold_all(config)
+        sizes = recurrence.evaluate(rows)["sizes"]
+        self.assertEqual(sizes.get("add-eval-case"), 7)
+        self.assertEqual(sizes.get("coverage-writeup"), 2)
+
     def test_there_are_live_sessions_to_score(self):
         """A silently empty directory would make every test below vacuous."""
         self.assertGreaterEqual(len(self.docs), 2)
