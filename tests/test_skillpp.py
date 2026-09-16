@@ -13,12 +13,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from skillpp.capture import (_fold_steps, fold_session, handle_prompt, handle_tool,
-                             handle_session_end, note_pending_check)
+                             handle_session_end)
 from skillpp.config import Config
-from skillpp.ledger import STATUS_CANDIDATE, Entry, Ledger, make_id
+from skillpp.ledger import STATUS_CANDIDATE, Entry, Ledger
 from skillpp.lifecycle import check_staleness, parse_frontmatter, record_use, scan
-from skillpp.normalize import normalize_command, parameterize, signature
-from skillpp.recurrence import find_match, similarity
+from skillpp.normalize import normalize_command, parameterize, step_shape
 from skillpp.sanitize import scrub
 from skillpp.segment import is_marker, is_prompt
 from skillpp.segment import segment as _real_segment
@@ -32,6 +31,60 @@ from fixtures.messy_session import (EXPECTED_OCCURRENCES, LEAKED_TOKEN,
 
 _REAL_JUDGE = None
 _REAL_DESCRIBE = None
+_REAL_EMBED = None
+
+
+def _shapes(steps):
+    """What a workflow's steps did, arguments thrown away — for assertions."""
+    return [step_shape(s) for s in steps]
+
+
+def _sig(steps):
+    """The steps as one string of shapes, consecutive repeats collapsed.
+
+    What `normalize.signature` used to return. It no longer decides anything —
+    matching is an embedding — but it is still a compact way for a test to say
+    which steps a fold kept.
+    """
+    out = []
+    for shape in _shapes(steps):
+        if shape and (not out or out[-1] != shape):
+            out.append(shape)
+    return " | ".join(out)
+
+
+def _stub_embed(text, **kw):
+    """A deterministic stand-in for the embedding model.
+
+    `matching.as_text` renders an entry as its first prompt, then one line per
+    step, `tool: body`. This embeds only the *kind* of each step — the prompt is
+    skipped and a Bash command is reduced to `normalize_command` — as a bag of
+    hashed tokens. So two runs of the same workflow with different arguments or
+    different wording score 1.0, and different workflows score lower, which is
+    the behaviour the suite was written against. It says nothing about how well
+    a real embedding separates procedures; `tests/fixtures/sessions/
+    recurrence.py` measures that.
+    """
+    import hashlib
+    lines = text.splitlines()[1:] or text.splitlines()
+    vector = [0.0] * 256
+    for line in lines:
+        tool, _, body = line.partition(": ")
+        # A multi-line command continues on lines of its own; only a line that
+        # opens with a tool name is a step.
+        if not re.fullmatch(r"(mcp__[\w-]+|[A-Z][A-Za-z]+)", tool):
+            continue
+        if tool == "Bash":
+            token = "bash:" + normalize_command(body)
+        elif tool in ("Edit", "Write", "NotebookEdit"):
+            token = f"{tool.lower()}:{Path(body).suffix}"
+        elif tool.startswith("mcp__") or tool in ("Read", "Glob", "Grep"):
+            token = tool.lower()
+        else:
+            token = f"{tool.lower()}:{body.strip().lower()}"
+        slot = int(hashlib.sha256(token.encode()).hexdigest(), 16) % len(vector)
+        vector[slot] += 1.0
+    return vector if any(vector) else [1.0] + [0.0] * 255
 
 
 def setUpModule() -> None:
@@ -59,11 +112,16 @@ def setUpModule() -> None:
     `TempRoot._stub_judge`; a test of the offline path builds a session with no
     verdicts on purpose.
     """
-    global _REAL_JUDGE, _REAL_DESCRIBE
+    global _REAL_JUDGE, _REAL_DESCRIBE, _REAL_EMBED
     import skillpp.boundary as boundary
+    import skillpp.matching as matching
     _REAL_JUDGE = boundary.judge_session
     _REAL_DESCRIBE = boundary.describe_in_session
+    _REAL_EMBED = matching.embed
     boundary.judge_session = _marker_judge
+    # Same reasoning for the embedding that decides "same procedure": the suite
+    # must pass without Ollama.
+    matching.embed = _stub_embed
     # Same reasoning for the describer, which runs on the same hot path and is
     # slower still — it writes a sentence where the judge writes one word.
     boundary.describe_in_session = (
@@ -72,8 +130,10 @@ def setUpModule() -> None:
 
 def tearDownModule() -> None:
     import skillpp.boundary as boundary
+    import skillpp.matching as matching
     boundary.judge_session = _REAL_JUDGE
     boundary.describe_in_session = _REAL_DESCRIBE
+    matching.embed = _REAL_EMBED
 
 
 def _marker_judge(config, session, verdict=is_marker):
@@ -257,9 +317,9 @@ class TestNormalize(unittest.TestCase):
         self.assertEqual(normalize_command("./scripts/deploy.sh prod"), "deploy.sh")
         self.assertEqual(normalize_command("FOO=1 terraform apply"), "terraform apply")
 
-    def test_arguments_do_not_change_signature(self):
-        a = signature([bash("pytest -k auth"), bash("git push")])
-        b = signature([bash("pytest -k billing"), bash("git push")])
+    def test_arguments_do_not_change_step_shapes(self):
+        a = _shapes([bash("pytest -k auth"), bash("git push")])
+        b = _shapes([bash("pytest -k billing"), bash("git push")])
         self.assertEqual(a, b)
 
     def test_normalize_links_reads_every_link_of_a_chain(self):
@@ -269,20 +329,20 @@ class TestNormalize(unittest.TestCase):
         self.assertEqual(normalize_links(""), [])
 
     def test_the_chain_fix_does_not_move_normalize_command(self):
-        """`step_shape` calls it, so any drift here moves every signature."""
+        """`step_shape` calls it, so any drift here moves every step shape."""
         self.assertEqual(normalize_command("cd /repo && git commit -m x"), "cd")
         self.assertEqual(normalize_command("git commit -m 'x'"), "git commit")
         self.assertEqual(normalize_command("npm run test -- --watch"), "npm run")
 
-    def test_a_description_does_not_change_the_signature(self):
+    def test_a_description_does_not_change_the_step_shape(self):
         """The guard on rendering.
 
-        `signature` is the entry id and the recurrence match key, and it is
-        built to be maximally stable. A `description` is the opposite: free
-        text the agent rewrites every run — the same `./assemble.sh` was
-        described "Assemble after tone pass" once and "Assemble and measure
-        section 6" the next time. If that reached `step_shape`, two runs of one
-        procedure would fingerprint differently and never reach the threshold.
+        `step_shape` is compared across a candidate's runs to find the steps
+        every run shares (`signals.recurring_steps`), so it is built to be
+        stable. A `description` is the opposite: free text the agent rewrites
+        every run — the same `./assemble.sh` was described "Assemble after tone
+        pass" once and "Assemble and measure section 6" the next time. If that
+        reached `step_shape`, two runs of one procedure would share no steps.
         """
         plain = [bash("pytest -k auth"), bash("git push")]
         described = [
@@ -291,12 +351,7 @@ class TestNormalize(unittest.TestCase):
              "failed": False},
             {"tool": "Bash", "input": {"command": "git push",
                                        "description": "Ship it"}, "failed": False}]
-        self.assertEqual(signature(plain), signature(described))
-
-    def test_consecutive_duplicates_collapse(self):
-        self.assertEqual(
-            signature([bash("pytest"), bash("pytest"), bash("git push")]),
-            signature([bash("pytest"), bash("git push")]))
+        self.assertEqual(_shapes(plain), _shapes(described))
 
     def test_parameterize_paths(self):
         out = parameterize("/proj/app/main.py and /proj/app/x", "/proj/app")
@@ -305,25 +360,6 @@ class TestNormalize(unittest.TestCase):
 
     def test_parameterize_ids(self):
         self.assertIn("${ID}", parameterize("aws s3 ls bucket-1234567", None))
-
-
-class TestRecurrence(unittest.TestCase):
-    def test_identical_signatures_match(self):
-        self.assertEqual(similarity("a | b", "a | b"), 1.0)
-
-    def test_unrelated_signatures_do_not_match(self):
-        self.assertLess(similarity("bash:git commit | bash:git push",
-                                   "bash:docker build | bash:kubectl apply"), 0.5)
-
-    def test_one_extra_step_still_matches(self):
-        a = "bash:npm run | bash:git add | bash:git commit | bash:git push"
-        b = "bash:npm run | bash:git add | bash:git commit | bash:git push | bash:gh pr"
-        self.assertGreater(similarity(a, b), 0.85)
-
-    def test_find_match_respects_threshold(self):
-        entries = [Entry(id="x", signature="bash:git commit | bash:git push")]
-        self.assertIsNotNone(find_match("bash:git commit | bash:git push", entries, 0.85))
-        self.assertIsNone(find_match("bash:terraform apply", entries, 0.85))
 
 
 class TestLedger(TempRoot):
@@ -581,7 +617,7 @@ class TestCapture(TempRoot):
                                       "tool_response": {"exit_code": 0}})
         handle_session_end(self.config, {"session_id": "rw"})
         entry = list(Ledger(self.config).all())[0]
-        self.assertIn("read", entry.signature.split(" | "))
+        self.assertIn("read", _sig(entry.steps).split(" | "))
 
     def test_a_captured_read_that_leads_nowhere_is_still_dropped(self):
         """The other half of the rule. Keeping the path must not keep the
@@ -598,7 +634,7 @@ class TestCapture(TempRoot):
                                       "tool_response": {"exit_code": 0}})
         handle_session_end(self.config, {"session_id": "ro"})
         entry = list(Ledger(self.config).all())[0]
-        self.assertNotIn("read", entry.signature.split(" | "))
+        self.assertNotIn("read", _sig(entry.steps).split(" | "))
 
     def test_the_describer_sees_more_reply_than_the_step_stores(self):
         """The describer must not read the reply back off the step.
@@ -1503,11 +1539,11 @@ class TestStripScaffolding(unittest.TestCase):
         """The guard. Stripping *would* move fingerprints — `cd /r && npm test`
         shapes as `bash:cd` raw and `bash:npm test` stripped — so `step_shape`
         must keep reading the raw command and this must stay rendering-only."""
-        from skillpp.normalize import signature, strip_scaffolding
+        from skillpp.normalize import strip_scaffolding
         raw = [bash("cd /r && npm test 2>&1 | tail -5"), bash("cd /r && git commit -m x")]
         stripped = [bash(strip_scaffolding(s["input"]["command"])) for s in raw]
-        self.assertEqual(signature(raw), "bash:cd")
-        self.assertNotEqual(signature(raw), signature(stripped))
+        self.assertEqual(_sig(raw), "bash:cd")
+        self.assertNotEqual(_sig(raw), _sig(stripped))
 
     def test_describe_step_still_emits_a_runnable_command(self):
         """`render_step` feeds a model; `describe_step` writes the SKILL.md a
@@ -1803,17 +1839,6 @@ class TestSegmentBeforeAfter(TempRoot):
             self.assertEqual(entry.occurrences, 1)
             self.assertFalse(entry.ready(self.config.recurrence_threshold))
 
-    def test_before_the_sessions_score_far_below_the_threshold(self):
-        entries = self._fold_whole(to_session_dict)
-        scores = [similarity(a.signature, b.signature)
-                  for i, a in enumerate(entries) for b in entries[i + 1:]]
-        self.assertTrue(scores)
-        for score in scores:
-            self.assertLess(score, self.config.similarity_threshold)
-        # Not a near miss: loosening the threshold this far would merge
-        # genuinely unrelated work.
-        self.assertLess(max(scores), 0.6)
-
     def test_before_every_title_names_the_pollution(self):
         entries = self._fold_whole(to_session_dict)
         self.assertFalse(any("deploy" in e.title.lower() for e in entries),
@@ -1845,7 +1870,7 @@ class TestSegmentBeforeAfter(TempRoot):
         """
         self._fold_segmented(to_captured_session)
         deploys = [e for e in Ledger(self.config).all()
-                   if e.signature == self.CLEAN_SIGNATURE]
+                   if _sig(e.steps) == self.CLEAN_SIGNATURE]
         self.assertEqual(len(deploys), 1, "the deploy must be one entry, not three")
         self.assertEqual(deploys[0].occurrences, EXPECTED_OCCURRENCES)
         self.assertTrue(deploys[0].ready(self.config.recurrence_threshold))
@@ -1875,14 +1900,14 @@ class TestSegmentBeforeAfter(TempRoot):
     def test_after_the_signature_matches_the_unpolluted_baseline(self):
         """Pollution must leave no trace in the recovered workflow."""
         self._fold_segmented(to_captured_session)
-        signatures = {e.signature for e in Ledger(self.config).all()}
+        signatures = {_sig(e.steps) for e in Ledger(self.config).all()}
         self.assertIn(self.CLEAN_SIGNATURE, signatures)
 
     @unittest.expectedFailure
     def test_after_the_deploy_is_titled_after_the_deploy(self):
         self._fold_segmented(to_captured_session)
         deploy = next(e for e in Ledger(self.config).all()
-                      if e.signature == self.CLEAN_SIGNATURE)
+                      if _sig(e.steps) == self.CLEAN_SIGNATURE)
         self.assertIn("deploy", deploy.title.lower())
 
     def test_the_clean_baseline_is_unaffected(self):
@@ -1890,7 +1915,7 @@ class TestSegmentBeforeAfter(TempRoot):
         entries = self._fold_segmented(clean_session_dict)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].occurrences, 3)
-        self.assertEqual(entries[0].signature, self.CLEAN_SIGNATURE)
+        self.assertEqual(_sig(entries[0].steps), self.CLEAN_SIGNATURE)
 
     def test_secrets_survive_segmentation(self):
         """Scrubbing happens upstream, but the step lists are now sliced."""
@@ -1917,7 +1942,7 @@ class TestFixtureIntegrity(unittest.TestCase):
                      if str((s.get("input") or {}).get("command", ""))
                      .startswith(("npm run build", "export DEPLOY", "terraform",
                                   "./scripts/deploy.sh"))]
-            shapes.add(signature(steps))
+            shapes.add(_sig(steps))
         self.assertEqual(len(shapes), 1, "the deploy must recur unchanged")
 
     def test_the_decoys_are_still_present(self):
@@ -2617,264 +2642,6 @@ class TestOccurrencesCountSessionsInCaptureToo(TempRoot):
                                  f"than sessions")
 
 
-class TestTheQueuedNearMissPass(TempRoot):
-    """The same check as `skillpp merge`, moved off the SessionEnd path.
-
-    No model is contacted and no process is spawned: `embed` and
-    `subprocess.Popen` are both replaced. What is pinned is that SessionEnd
-    decides nothing, that SessionStart never waits, that the wider floor reaches
-    the pairs the live command cannot, and that nothing folds without `--apply`.
-    """
-
-    # 0.531 lexically once parameterised — under `near_miss_floor`, over
-    # `queued_near_miss_floor`. The whole point of the pass in one pair.
-    RELEASE = ["git checkout main", "git pull --ff-only", "npm test",
-               "npm version 2.4.0", "git tag -s v2.4.0 -m rel",
-               "git push --follow-tags"]
-    RELEASE_FAR = ["git checkout main", "git fetch --all", "pytest -q",
-                   "npm version 2.5.0", "git tag -s v2.5.0 -m rel",
-                   "git push --follow-tags"]
-
-    def _bank(self, sid, prompt, cmds):
-        from skillpp.capture import handle_prompt, handle_session_end, handle_tool
-        handle_prompt(self.config, {"session_id": sid, "cwd": "/w",
-                                    "prompt": prompt})
-        for cmd in cmds:
-            handle_tool(self.config, {"session_id": sid, "cwd": "/w",
-                                      "tool_name": "Bash",
-                                      "tool_input": {"command": cmd}})
-        return handle_session_end(self.config, {"session_id": sid})
-
-    def _two_releases(self):
-        self._bank("s1", "cut the 2.4 release", self.RELEASE)
-        self._bank("s2", "cut the 2.5 release", self.RELEASE_FAR)
-        return list(Ledger(self.config).all())
-
-    def _same_shape(self):
-        """Every embedding identical, so cosine is 1.0 for any pair."""
-        import skillpp.similar as sim
-        real, sim.embed = sim.embed, lambda text, **kw: [1.0, 0.0, 0.0]
-        self.addCleanup(lambda: setattr(sim, "embed", real))
-
-    def _no_model(self):
-        import skillpp.similar as sim
-        from skillpp.local import LocalModelUnavailable
-
-        def boom(text, **kw):
-            raise LocalModelUnavailable("no daemon")
-        real, sim.embed = sim.embed, boom
-        self.addCleanup(lambda: setattr(sim, "embed", real))
-
-    def _spy_popen(self):
-        import subprocess
-        calls = []
-
-        class Fake:
-            pid = 4242
-
-            def wait(self, *a, **kw):
-                raise AssertionError("SessionStart waited on the background pass")
-
-            def communicate(self, *a, **kw):
-                raise AssertionError("SessionStart waited on the background pass")
-
-        def fake(argv, **kw):
-            calls.append((argv, kw))
-            return Fake()
-        real, subprocess.Popen = subprocess.Popen, fake
-        self.addCleanup(lambda: setattr(subprocess, "Popen", real))
-        return calls
-
-    # -- SessionEnd decides nothing -------------------------------------------
-
-    def test_session_end_queues_the_entry_and_asks_no_model(self):
-        self._no_model()   # any embedding call here fails the test loudly
-        self._bank("s1", "cut the 2.4 release", self.RELEASE)
-        rows = [json.loads(l) for l in
-                self.config.pending_checks_file.read_text().splitlines() if l.strip()]
-        self.assertEqual(len(rows), 1)
-        self.assertTrue(rows[0]["entry_id"])
-        self.assertEqual(rows[0]["session_id"], "s1")
-
-    def test_every_touched_entry_is_queued_including_a_merged_one(self):
-        """A merged entry can still be a near-miss against a third."""
-        self._bank("s1", "cut the 2.4 release", self.RELEASE)
-        self._bank("s2", "cut the 2.5 release", self.RELEASE)   # merges lexically
-        rows = [json.loads(l) for l in
-                self.config.pending_checks_file.read_text().splitlines() if l.strip()]
-        self.assertEqual(len(rows), 2, "a lexical merge was not queued")
-        self.assertEqual({r["reason"] for r in rows}, {"created", "merged"})
-
-    # -- SessionStart spawns and returns --------------------------------------
-
-    def test_an_empty_queue_spawns_nothing(self):
-        from skillpp.similar import maybe_spawn_background_check
-        calls = self._spy_popen()
-        self.assertEqual(maybe_spawn_background_check(self.config),
-                         {"status": "empty"})
-        self.assertEqual(calls, [])
-
-    def test_a_queued_entry_spawns_one_detached_process_and_does_not_wait(self):
-        from skillpp.similar import maybe_spawn_background_check
-        self._bank("s1", "cut the 2.4 release", self.RELEASE)
-        calls = self._spy_popen()
-        result = maybe_spawn_background_check(self.config)
-        self.assertEqual(result["status"], "spawned")
-        self.assertEqual(len(calls), 1)
-        argv, kw = calls[0]
-        self.assertIn("background-merge-check", argv)
-        self.assertIn(str(self.config.root), argv)
-        self.assertTrue(kw["start_new_session"], "child stayed in the hook's group")
-        # Fake.wait/communicate raise, so reaching here proves neither was called.
-
-    def test_the_session_start_hook_prints_nothing_without_verbose(self):
-        import io
-        self._bank("s1", "cut the 2.4 release", self.RELEASE)
-        self._spy_popen()
-        from skillpp.cli import main
-        out, err = io.StringIO(), io.StringIO()
-        stdin, sys.stdin = sys.stdin, io.StringIO(json.dumps({"session_id": "x"}))
-        real_out, sys.stdout = sys.stdout, out
-        try:
-            code = main(["--root", str(self.config.root), "hook",
-                         "--event", "SessionStart"])
-        finally:
-            sys.stdin, sys.stdout = stdin, real_out
-        self.assertEqual(code, 0)
-        self.assertEqual(out.getvalue(), "", "a session start printed to context")
-
-    # -- the wider floor reaches what the live one cannot ---------------------
-
-    def test_the_live_floor_misses_this_pair_and_the_queued_floor_does_not(self):
-        from skillpp.similar import near_misses
-        entries = self._two_releases()
-        self.assertEqual(len(entries), 2, "these must not merge lexically")
-        live = near_misses(entries, floor=self.config.near_miss_floor,
-                           ceiling=self.config.similarity_threshold)
-        queued = near_misses(entries, floor=self.config.queued_near_miss_floor,
-                             ceiling=self.config.similarity_threshold)
-        self.assertEqual(live, [], "`merge`'s own floor changed")
-        self.assertEqual(len(queued), 1)
-        self.assertLess(queued[0][2], self.config.near_miss_floor)
-
-    def test_the_queued_pass_folds_and_drains_the_queue(self):
-        from skillpp.similar import run_background_check
-        self._two_releases()
-        self._same_shape()
-        result = run_background_check(self.config)
-        self.assertEqual(result["merged"], 1)
-        self.assertFalse(result["timed_out"])
-        self.assertFalse(result["model_unreachable"])
-        self.assertEqual(self.config.pending_checks_file.read_text(), "")
-
-    def test_the_queued_pass_folds_by_itself(self):
-        """No second command. The pass that finds it is the pass that folds it."""
-        from skillpp.similar import run_background_check
-        self._two_releases()
-        self._same_shape()
-        run_background_check(self.config)
-        entries = list(Ledger(self.config).all())
-        self.assertEqual(len(entries), 1)
-        # Union, not sum: two sightings in one session are still one occurrence.
-        self.assertEqual(entries[0].occurrences, 2)
-        self.assertEqual(len(entries[0].sessions), 2)
-        # The loser's evidence survives on the winner, which is what makes a
-        # wrong fold visible at review rather than silent.
-        self.assertEqual(len(entries[0].intents), 2)
-
-    def test_an_auto_fold_is_recorded_in_decisions(self):
-        """Once the dropped file is gone, this line is the only record of it."""
-        from skillpp import decisions
-        from skillpp.similar import AUTO_MERGED, run_background_check
-        self._two_releases()
-        dropped = {e.id for e in Ledger(self.config).all()}
-        self._same_shape()
-        run_background_check(self.config)
-        rows = [r for r in decisions.read(self.config)
-                if r["decision"] == AUTO_MERGED]
-        self.assertEqual(len(rows), 1)
-        survivor = list(Ledger(self.config).all())[0].id
-        gone = (dropped - {survivor}).pop()
-        self.assertIn(gone, rows[0]["note"])
-
-    def test_an_auto_fold_does_not_count_as_a_ranker_judgement(self):
-        """`skillpp accuracy` scores hint-against-person. A fold is neither."""
-        from skillpp import decisions
-        from skillpp.similar import run_background_check
-        self._two_releases()
-        self._same_shape()
-        run_background_check(self.config)
-        self.assertEqual(decisions.score(self.config)["scored"], 0)
-
-    def test_one_merge_per_entry_per_pass(self):
-        """Folds must not chain: a folded entry is gone and cannot absorb again."""
-        from skillpp.similar import run_background_check
-        self._bank("s1", "cut the 2.4 release", self.RELEASE)
-        self._bank("s2", "cut the 2.5 release", self.RELEASE_FAR)
-        self._bank("s3", "cut the 2.6 release",
-                   ["git switch main", "git fetch --all", "pytest -q",
-                    "npm version 2.6.0", "git tag -s v2.6.0 -m rel",
-                    "git push --follow-tags"])
-        before = len(list(Ledger(self.config).all()))
-        self.assertGreaterEqual(before, 3, "fixture did not bank three entries")
-        self._same_shape()   # every pair reads as the same procedure
-        result = run_background_check(self.config)
-        after = len(list(Ledger(self.config).all()))
-        self.assertEqual(result["merged"], before - after)
-        self.assertLess(result["merged"], before,
-                        "folded every entry into nothing")
-
-    # -- reading it, and the --apply gate ------------------------------------
-
-    def test_an_entry_a_person_decided_is_never_folded(self):
-        """Only candidates are compared, so a dismissal is not undone by a fold."""
-        from skillpp.ledger import STATUS_DISMISSED
-        from skillpp.similar import run_background_check
-        self._two_releases()
-        ledger = Ledger(self.config)
-        victim = list(ledger.all())[0]
-        victim.status = STATUS_DISMISSED
-        ledger.save(victim)
-        self._same_shape()
-        result = run_background_check(self.config)
-        self.assertEqual(result["merged"], 0)
-        self.assertEqual(len(list(Ledger(self.config).all())), 2,
-                         "folded an entry a person had already decided")
-
-    # -- fail-safe -----------------------------------------------------------
-
-    def test_an_unreachable_model_leaves_the_queue_and_the_ledger_alone(self):
-        from skillpp.similar import run_background_check
-        self._two_releases()
-        before = self.config.pending_checks_file.read_text()
-        self._no_model()
-        result = run_background_check(self.config)
-        self.assertTrue(result["model_unreachable"])
-        self.assertEqual(result["merged"], 0)
-        self.assertEqual(self.config.pending_checks_file.read_text(), before,
-                         "a dead model drained the queue")
-        self.assertEqual(len(list(Ledger(self.config).all())), 2)
-
-    def test_a_timeout_keeps_the_whole_backlog(self):
-        from skillpp.similar import run_background_check
-        self._two_releases()
-        before = self.config.pending_checks_file.read_text()
-        self._same_shape()
-        result = run_background_check(self.config, timeout=-1)
-        self.assertTrue(result["timed_out"])
-        self.assertEqual(result["pairs_checked"], 0)
-        self.assertEqual(self.config.pending_checks_file.read_text(), before,
-                         "a partial pass dropped what it never reached")
-
-    def test_a_corrupt_queue_line_is_skipped_not_fatal(self):
-        from skillpp.similar import run_background_check
-        self._two_releases()
-        with self.config.pending_checks_file.open("a") as fh:
-            fh.write("{not json at all\n\n")
-        self._same_shape()
-        self.assertEqual(run_background_check(self.config)["merged"], 1)
-
-
 class TestMatching(TempRoot):
     """`skillpp.matching`: same procedure, decided by an embedding.
 
@@ -2967,90 +2734,130 @@ class TestMatching(TempRoot):
         self.assertEqual(self.calls, [])
 
 
-class TestEmbeddingMatch(TempRoot):
-    """The one shape lexical similarity cannot see.
+class TestCaptureMatchesByEmbedding(TempRoot):
+    """What changed when capture stopped using a signature."""
 
-    No model is contacted: `embed` is replaced. What is pinned is the band, the
-    arithmetic and the fail-safe — the embedding's own accuracy is measured
-    separately and cannot be asserted here.
-    """
+    WORK = [bash("npm run build"), bash("./deploy.sh staging")]
 
-    def _entry(self, eid, cmds, intent="cut the release", **kw):
-        base = dict(id=eid, signature="", title=intent, intents=[intent],
-                    sessions=[eid],
-                    steps=[{"tool": "Bash", "input": {"command": c}} for c in cmds])
-        base.update(kw)
-        entry = Entry(**base)
-        from skillpp.normalize import signature as sig
-        entry.signature = sig(entry.steps)
-        return entry
+    def _session(self, sid):
+        return {"session_id": sid, "cwd": "", "prompts": [],
+                "steps": judged([dict(st) for st in self.WORK])}
 
-    def _vectors(self, mapping):
-        """Point `embed` at canned vectors keyed by a substring of its input."""
-        import skillpp.similar as sim
-
-        def fake(text, **kw):
-            for needle, vector in mapping.items():
-                if needle in text:
-                    return vector
-            return [0.0, 0.0, 1.0]
-        real, sim.embed = sim.embed, fake
-        self.addCleanup(lambda: setattr(sim, "embed", real))
-
-    RELEASE = ["git checkout main", "git pull --ff-only", "npm test",
-               "npm version 2.4.0", "git tag -s v2.4.0 -m rel",
-               "git push --follow-tags"]
-    RELEASE_PYTEST = ["git checkout main", "git pull --ff-only", "pytest -q",
-                      "npm version 2.5.0", "git tag -s v2.5.0 -m rel",
-                      "git push --follow-tags"]
-
-    def test_the_band_holds_only_the_ambiguous_pairs(self):
-        """Identical procedures match lexically and never reach a model."""
-        from skillpp.similar import near_misses
-        a = self._entry("a", self.RELEASE)
-        b = self._entry("b", self.RELEASE)
-        self.assertEqual(near_misses([a, b], floor=0.70, ceiling=0.85), [])
-
-    def test_a_substituted_step_lands_in_the_band(self):
-        from skillpp.similar import near_misses
-        pairs = near_misses([self._entry("a", self.RELEASE),
-                             self._entry("b", self.RELEASE_PYTEST)],
-                            floor=0.70, ceiling=0.85)
-        self.assertEqual(len(pairs), 1)
-
-    def test_a_high_embedding_reads_as_the_same_procedure(self):
-        from skillpp.similar import same_procedure
-        self._vectors({"npm test": [1.0, 0.0, 0.0], "pytest": [0.98, 0.2, 0.0]})
-        verdict, score, _ = same_procedure(
-            self._entry("a", self.RELEASE), self._entry("b", self.RELEASE_PYTEST),
-            model="x", floor=0.80)
-        self.assertIs(verdict, True)
-        self.assertGreater(score, 0.8)
-
-    def test_a_low_embedding_leaves_them_apart(self):
-        from skillpp.similar import same_procedure
-        self._vectors({"npm test": [1.0, 0.0, 0.0], "pytest": [0.0, 1.0, 0.0]})
-        verdict, _, _ = same_procedure(
-            self._entry("a", self.RELEASE), self._entry("b", self.RELEASE_PYTEST),
-            model="x", floor=0.80)
-        self.assertIs(verdict, False)
-
-    def test_an_unreachable_model_never_merges(self):
-        """Folding is irreversible — the second entry's evidence moves and it is
-        gone — so a failed call must leave both alone."""
-        import skillpp.similar as sim
+    def _down(self):
+        import skillpp.matching as matching
         from skillpp.local import LocalModelUnavailable
-        from skillpp.similar import same_procedure
 
-        def boom(text, **kw):
+        def refuse(*a, **k):
             raise LocalModelUnavailable("refused")
-        real, sim.embed = sim.embed, boom
-        self.addCleanup(lambda: setattr(sim, "embed", real))
-        verdict, _, why = same_procedure(
-            self._entry("a", self.RELEASE), self._entry("b", self.RELEASE_PYTEST),
-            model="x")
-        self.assertIsNone(verdict)
-        self.assertIn("leaving both", why)
+        real, matching.embed = matching.embed, refuse
+        self.addCleanup(lambda: setattr(matching, "embed", real))
+
+    def test_a_captured_session_with_no_embedding_model_is_held_whole(self):
+        """Checked before anything is saved, so no half-folded session."""
+        self._down()
+        result = fold_session(self.config, self._session("s1"))
+        self.assertEqual(result["status"], "offline")
+        self.assertIn("embed", result["reason"])
+        self.assertEqual(list(Ledger(self.config).all()), [])
+
+    def test_an_explicit_keep_with_no_model_banks_unmatched(self):
+        """A person said "save this"; it is kept, and marked for `skillpp merge`."""
+        self._down()
+        result = fold_session(self.config, self._session("s1"), force=True)
+        self.assertEqual(result["status"], "created")
+        self.assertTrue(Ledger(self.config).get(result["id"]).unmatched)
+
+    def test_a_miss_makes_a_duplicate_never_an_overwrite(self):
+        """Ids used to be the signature, so a miss on identical work rewrote the
+        existing file — status, parking and counts included."""
+        from skillpp.ledger import STATUS_DISMISSED
+        first = fold_session(self.config, self._session("s1"))
+        led = Ledger(self.config)
+        entry = led.get(first["id"])
+        entry.status = STATUS_DISMISSED
+        led.save(entry)
+
+        self.config.match_floor = 1.01          # nothing can match
+        second = fold_session(self.config, self._session("s2"))
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual(Ledger(self.config).get(first["id"]).status, STATUS_DISMISSED)
+
+    def test_ids_are_not_derived_from_the_work(self):
+        a = fold_session(self.config, self._session("s1"))["id"]
+        other = Config(self.root / "elsewhere")
+        other.ensure_dirs()
+        b = fold_session(other, self._session("s1"))["id"]
+        self.assertNotEqual(a, b)
+
+    def test_the_session_start_hook_does_nothing(self):
+        """It used to spawn a background merge pass; hooks installed then must
+        keep working."""
+        import io, contextlib
+        from skillpp.cli import main
+        out = io.StringIO()
+        real_stdin = sys.stdin
+        sys.stdin = io.StringIO('{"session_id": "s1"}')   # a hook reads its payload here
+        self.addCleanup(lambda: setattr(sys, "stdin", real_stdin))
+        with contextlib.redirect_stdout(out):
+            code = main(["--root", str(self.config.root), "hook",
+                         "--event", "SessionStart"])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue(), "")
+
+
+class TestMergeCommand(TempRoot):
+    """`skillpp merge`: folding what is already in the ledger."""
+
+    def _args(self, **kw):
+        import argparse
+        base = dict(root=self.config.root, apply=False, floor=None)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def _save(self, eid, sid):
+        Ledger(self.config).save(Entry(
+            id=eid, title=eid, sessions=[sid], occurrences=1, intents=[eid],
+            steps=[bash("npm run build"), bash("./deploy.sh staging")]))
+
+    def test_a_dry_run_changes_nothing(self):
+        from skillpp.cli import cmd_merge
+        self._save("a", "s1")
+        self._save("b", "s2")
+        cmd_merge(self._args())
+        self.assertEqual(len(list(Ledger(self.config).all())), 2)
+
+    def test_apply_folds_and_records_the_fold(self):
+        """The absorbed entry's file is gone; decisions.jsonl is its only record."""
+        from skillpp import decisions
+        from skillpp.cli import cmd_merge
+        self._save("a", "s1")
+        self._save("b", "s2")
+        cmd_merge(self._args(apply=True))
+        entries = list(Ledger(self.config).all())
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].occurrences, 2)
+        notes = [r["note"] for r in decisions.read(self.config)]
+        self.assertTrue(any("absorbed" in n for n in notes))
+
+    def test_nothing_below_the_floor_is_folded(self):
+        from skillpp.cli import cmd_merge
+        self._save("a", "s1")
+        self._save("b", "s2")
+        cmd_merge(self._args(apply=True, floor=1.01))
+        self.assertEqual(len(list(Ledger(self.config).all())), 2)
+
+
+class TestFoldInto(TempRoot):
+    """Moving one entry's evidence into another, as `skillpp merge` does."""
+
+    RELEASE = ["git checkout main", "npm test", "git push --follow-tags"]
+    RELEASE_PYTEST = ["git checkout main", "pytest -q", "git push --follow-tags"]
+
+    def _entry(self, eid, cmds, **kw):
+        base = dict(id=eid, title="cut the release", intents=["cut the release"],
+                    sessions=[eid], steps=[bash(c) for c in cmds])
+        base.update(kw)
+        return Entry(**base)
 
     def test_occurrences_count_sessions_not_sightings(self):
         """The correction this project already had to make once: two sightings
@@ -3528,16 +3335,18 @@ class TestWeb(TempRoot):
 
     def test_review_rows_show_what_a_reader_needs_to_judge(self):
         from skillpp.web import review_rows
-        self.ledger.save(Entry(id="a", signature="npm test", title="restart again",
-                               intents=["restart again", "still broken"],
-                               steps=[self._step("npm test")]))
-        self.ledger.save(Entry(id="b", signature="npm test|git commit",
-                               title="fix: the thing", intents=["please fix it"],
-                               steps=[self._step("npm test"),
-                                      self._step("git commit -m 'fix: the thing'")]))
-        self.ledger.save(Entry(id="c", signature="x", title="restart again",
-                               intents=["restart again"],
-                               steps=[self._step("git commit -m 'later'")]))
+        from skillpp.matching import remember
+        a = Entry(id="a", title="restart again",
+                  intents=["restart again", "still broken"],
+                  steps=[self._step("npm test"), self._step("npm run build")])
+        b = Entry(id="b", title="fix: the thing", intents=["please fix it"],
+                  steps=[self._step("npm test"),
+                         self._step("git commit -m 'fix: the thing'")])
+        c = Entry(id="c", title="restart again", intents=["restart again"],
+                  steps=[self._step("git commit -m 'later'")])
+        for e in (a, b, c):
+            self.ledger.save(e)
+            remember(e, self.config)       # the cache `skillpp merge` fills
         rows = {r["id"]: r for r in review_rows(self.config)}
         self.assertTrue(rows["a"]["title_from_prompt"])
         self.assertFalse(rows["b"]["title_from_prompt"], "titled from its commit")
@@ -3545,6 +3354,19 @@ class TestWeb(TempRoot):
                         "a later commit does not change where the title came from")
         self.assertEqual(rows["a"]["intents"], ["restart again", "still broken"])
         self.assertEqual(rows["a"]["closest"]["id"], "b")
+
+    def test_closest_never_waits_on_a_model(self):
+        """No cached vector, no closest — loading the page must not embed."""
+        import skillpp.matching as matching
+        from skillpp.web import review_rows
+        self.ledger.save(Entry(id="a", title="t", steps=[self._step("npm test")]))
+        self.ledger.save(Entry(id="b", title="u", steps=[self._step("npm test")]))
+
+        def refuse(*a, **k):
+            raise AssertionError("the review page embedded something")
+        real, matching.embed = matching.embed, refuse
+        self.addCleanup(lambda: setattr(matching, "embed", real))
+        self.assertTrue(all(r["closest"] is None for r in review_rows(self.config)))
 
     def test_a_review_tag_is_saved_cleared_and_validated(self):
         from skillpp.web import load_review, review_rows, save_review
@@ -3800,105 +3622,52 @@ class TestLiveSessions(unittest.TestCase):
 class TestPromotedSkillsStayMatchable(TempRoot):
     """A promoted skill used to become invisible the moment it was promoted.
 
-    Capture's `find_match` does see promoted entries, but decides lexically at
-    0.85, and measured over 5,995 real pairs nothing reaches 0.85 — the highest
-    is 0.814. The embedding pass then excluded them outright by filtering to
+    Lexical matching at capture never reached its 0.85 against one — over 5,995
+    real pairs the highest was 0.814 — and the embedding pass filtered to
     candidates. So the count froze at promotion and every later run of the same
-    work opened a fresh proposal for something a skill already did.
+    work opened a fresh proposal for something a skill already did. Embedding
+    matching compares every status.
     """
 
-    def _entry(self, eid, sig, title, status=STATUS_CANDIDATE, session="s1"):
-        from skillpp.ledger import Entry
-        return Entry(id=eid, signature=sig, title=title, status=status,
-                     sessions=[session], occurrences=1,
-                     steps=[bash("npm run build"), bash("./deploy.sh staging")],
-                     intents=[title])
+    DEPLOY = [bash("npm run build"), bash("./deploy.sh staging")]
 
-    def test_a_promoted_skill_is_compared_against(self):
+    def _skill(self):
         from skillpp.ledger import STATUS_PROMOTED
-        from skillpp.similar import near_misses
-        skill = self._entry("a", "bash:npm run | bash:deploy.sh", "deploy",
-                            status=STATUS_PROMOTED)
-        cand = self._entry("b", "bash:npm run | bash:deploy.sh | bash:curl",
-                           "deploy again", session="s2")
-        pairs = near_misses([skill, cand], floor=0.0, ceiling=1.0)
-        self.assertEqual(len(pairs), 1, "a promoted skill must be comparable")
+        skill = Entry(id="skill1", title="deploy", status=STATUS_PROMOTED,
+                      sessions=["s1"], occurrences=1, intents=["deploy"],
+                      steps=list(self.DEPLOY))
+        Ledger(self.config).save(skill)
+        return skill
 
-    def test_matching_a_skill_reinforces_it_and_covers_the_candidate(self):
-        """Reinforce, never delete: the skill exists, and this says it is used."""
-        from skillpp.ledger import STATUS_COVERED, STATUS_PROMOTED
-        from skillpp.similar import run_background_check
-        from skillpp import similar
-        # Signatures that land inside the near-miss band, as the real pair did
-        # at 0.583: identical ones score 1.0 and fall outside it entirely.
-        skill = self._entry("aaaa", "bash:npm run | bash:deploy.sh | bash:curl",
-                            "deploy", status=STATUS_PROMOTED)
-        cand = self._entry("bbbb", "bash:npm run | bash:deploy.sh | bash:kubectl",
-                           "deploy again", session="s2")
+    def test_a_new_run_of_a_skill_counts_toward_the_skill(self):
+        from skillpp.ledger import STATUS_PROMOTED
+        self._skill()
+        result = fold_session(self.config, {
+            "session_id": "s2", "cwd": "", "prompts": [],
+            "steps": judged([dict(st) for st in self.DEPLOY])})
+        self.assertEqual(result["status"], "merged")
         led = Ledger(self.config)
-        for e in (skill, cand):
-            led.save(e)
-        note_pending_check(self.config, "bbbb", "s2", "created")
+        self.assertEqual(led.get("skill1").status, STATUS_PROMOTED)
+        self.assertEqual(led.get("skill1").occurrences, 2, "the skill was used again")
+        self.assertEqual(len(list(led.all())), 1, "no fresh proposal for it")
 
-        real = similar.cosine
-        similar.cosine = lambda a, b: 0.99          # stand in for the model
-        similar.embed = lambda *a, **k: [0.0]
-        try:
-            run_background_check(self.config)
-        finally:
-            similar.cosine = real
+    def test_merge_covers_a_candidate_a_skill_already_does(self):
+        """Reinforce, never delete: the skill exists, and this says it is used."""
+        import argparse
+        from skillpp.cli import cmd_merge
+        from skillpp.ledger import STATUS_COVERED, STATUS_PROMOTED
+        self._skill()
+        # Banked before matching could see it, as an unmatched keep would be.
+        Ledger(self.config).save(Entry(
+            id="cand1", title="deploy again", sessions=["s2"], occurrences=1,
+            intents=["deploy again"], steps=list(self.DEPLOY), unmatched=True))
+        cmd_merge(argparse.Namespace(root=self.config.root, apply=True, floor=None))
 
-        led = Ledger(self.config)  # re-read from disk
-        self.assertEqual(led.get("aaaa").status, STATUS_PROMOTED)
-        self.assertEqual(led.get("aaaa").occurrences, 2, "the skill was used again")
-        covered = led.get("bbbb")
+        led = Ledger(self.config)
+        self.assertEqual(led.get("skill1").status, STATUS_PROMOTED)
+        self.assertEqual(led.get("skill1").occurrences, 2)
+        covered = led.get("cand1")
         self.assertIsNotNone(covered, "the candidate is evidence, not rubbish")
         self.assertEqual(covered.status, STATUS_COVERED)
-        self.assertNotIn("bbbb", [c.id for c in led.candidates()],
+        self.assertNotIn("cand1", [c.id for c in led.candidates()],
                          "work a skill already does is not a proposal")
-
-
-class TestThreeRealRunsRecur(TempRoot):
-    """Three real sessions of one procedure, replayed into one ledger.
-
-    The first thing in this project to reach the recurrence threshold from real
-    work rather than a fixture. Each session added the same kind of eval case to
-    the same repository against a different topic — desk booking, timesheet
-    timesheet, absence — so what they share is the method and what they do not
-    is that day's particulars.
-
-    Deliberately not run against a model: `run_background_check` needs an
-    embedding, so this pins the deterministic half — that all three fold, that
-    the queued pass has pairs to consider, and that nothing regresses the
-    segmentation those three depend on.
-    """
-
-    def _sessions(self):
-        path = Path(__file__).resolve().parent / "fixtures" / "sessions"
-        for f in sorted(path.glob("*.json")):
-            yield json.loads(f.read_text(encoding="utf-8"))
-
-    def test_each_run_folds_to_one_bankable_entry(self):
-        """A fragmented run cannot recur: three shapes never match each other."""
-        for doc in self._sessions():
-            with self.subTest(doc["tag"]):
-                result = fold_session(self.config, {
-                    "session_id": doc["tag"], "cwd": "/w", "prompts": [],
-                    "steps": doc["steps"]})
-                banked = [e for e in result.get("episodes", [])
-                          if e.get("status") in ("created", "matched")]
-                self.assertGreaterEqual(len(banked), 1, doc["name"])
-
-    def test_the_three_runs_are_near_misses_of_each_other(self):
-        """They do not match lexically — 0.583 on the pair measured — which is
-        why the embedding pass exists. What this pins is that they land inside
-        its band rather than below it, where nothing would ever look at them."""
-        from skillpp.similar import near_misses
-        for doc in self._sessions():
-            fold_session(self.config, {"session_id": doc["tag"], "cwd": "/w",
-                                       "prompts": [], "steps": doc["steps"]})
-        entries = list(Ledger(self.config).all())
-        self.assertGreaterEqual(len(entries), 3, "each run banks its own entry")
-        pairs = near_misses(entries, floor=self.config.queued_near_miss_floor,
-                            ceiling=self.config.similarity_threshold)
-        self.assertTrue(pairs, "the three runs must reach the embedding at all")

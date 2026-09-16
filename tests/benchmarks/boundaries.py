@@ -407,7 +407,6 @@ def cmd_score(args: argparse.Namespace) -> int:
     from skillpp.config import Config
     from skillpp.episode import is_reusable
     from skillpp.ledger import Entry
-    from skillpp.normalize import signature
 
     data = load_batch(args.batch)
     config = Config(args.root)
@@ -425,7 +424,7 @@ def cmd_score(args: argparse.Namespace) -> int:
             steps = [{"tool": "Bash", "input": {"command": line.lstrip("$! ")},
                       "failed": line.startswith("!")}
                      for line in episode["steps"]]
-            entry = Entry(id=episode["id"], signature=signature(steps),
+            entry = Entry(id=episode["id"],
                           title=episode["id"], steps=steps,
                           intents=[episode.get("evidence", "")[:200]])
             got, _ = is_reusable(entry, model=config.local_model,

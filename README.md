@@ -62,7 +62,7 @@ nothing real. See §12 for what is built and what is not.
                                 ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                          SYNTHESIS                           │
-│   Parameterize · dedup (>85% → merge into v1.x) · compose    │
+│   Parameterize · dedup (embedding match) · compose           │
 │   Emit: SKILL.md + scripts/ + declared deps in metadata      │
 └───────────────────────────────┬──────────────────────────────┘
                                 ▼
@@ -128,7 +128,7 @@ Nothing is written to the skill library without passing this gate.
 Only after approval is a `SKILL.md` generated.
 
 * **Parameterization:** Local paths (`/Users/dev/project/...`) and environment-specific values become template variables (`${PROJECT_PATH}`).
-* **Deduplication:** Semantic similarity check against the existing library; matches above 85% expand an existing skill's `v1.x` rather than spawning a near-duplicate.
+* **Deduplication:** Each saved episode is embedded and compared with every existing entry; a match at or above `SKILLPP_MATCH_FLOOR` (0.92) joins that entry rather than spawning a near-duplicate. The floor is set where wrong merges stop, not where merges are most numerous.
 * **Hierarchical composition:** Atomic sub-routines (e.g. `git-commit`) are extracted once and invoked as sub-skills by higher-level orchestrators, forming a DAG rather than a flat pile of prompts.
 
 ---
@@ -352,9 +352,10 @@ skillpp/
   config.py      paths and thresholds, all env-overridable
   sanitize.py    secret/PII scrubbing, applied on write
   segment.py     cuts a session into task episodes
-  normalize.py   parameterisation + workflow signatures
+  normalize.py   parameterisation + step shapes
   ledger.py      candidate entries: markdown body, JSON payload
-  recurrence.py  lexical similarity and merge
+  matching.py    same-procedure matching by embedding
+  similar.py     embedded text and folding one entry into another
   signals.py     gap detection, question generation, effect summaries
   capture.py     hook handlers (fail-safe: always exit 0)
   summary.py     review surface, SKILL.md scaffold, dependency check
@@ -407,7 +408,7 @@ worth reading. Neither half is useful alone.
 ### Built
 
 Capture with intent, segmentation into task episodes, sanitize-on-write (typed
-placeholders that keep signatures stable), the ledger with lexical dedup and
+placeholders that keep step shapes stable), the ledger with embedding dedup and
 TTL expiry, all five trace gap signals from §4 with the three-question cap and
 duplicate suppression, the dictation path with its completeness check and
 threshold bypass, effect-first proposals, scaffolding with declared deps and
@@ -421,7 +422,7 @@ it genuinely recurs, and surrounds each occurrence with different unrelated
 work. Folded as whole sessions, the deploy scores 0.358–0.475 against the 0.85
 threshold and is filed as three unrelated one-offs, each titled after whatever
 happened to come first. Segmented, it is recovered as a single candidate at
-three occurrences with a signature identical to the unpolluted baseline, and
+three occurrences with steps identical to the unpolluted baseline, and
 titled after the deploy. Both halves are asserted, because the whole-session
 path survives as `_fold_steps` and is still taken by single-episode sessions —
 so the regression is a live test rather than a git archaeology exercise.
@@ -432,10 +433,6 @@ Deliberately deferred — see §13 for phasing.
 
 * **Team PR sync.** Phase 2. Only the receiving half exists today: declared
   dependencies and `skillpp check`.
-* **Semantic deduplication.** Similarity is lexical — sequence and token
-  overlap over normalised step shapes. No embeddings, because this runs inside
-  a hook where a network round-trip is unacceptable. Semantic overlap is the
-  reviewing agent's job, and `/skillpp-review` instructs it accordingly.
 * **Script extraction.** The slash command tells the agent to lift
   deterministic pipelines into `scripts/run.sh`; the CLI does not do it
   automatically.

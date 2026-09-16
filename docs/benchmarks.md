@@ -1330,3 +1330,67 @@ person saying "save this", not a detector guessing.
 Given up: **a boundary with no prompt in the gap** — a task ending where the
 developer says nothing. No live session shows that shape, and the per-step judge
 could see it in principle, so this is a trade rather than a free win.
+
+## Same procedure, decided by embedding
+
+Whether a saved episode is a repeat of an existing candidate used to be decided
+by a lexical **signature** — the steps reduced to `read | edit:.json |
+bash:python3 | bash:git add` — compared with `SequenceMatcher`, with a background
+pass that let only pairs above 0.40 reach an embedding. On the real ledger:
+
+- Six entries a person tagged good, all adding eval cases, scored 0.12–0.66
+  against each other. Incidental steps — `ls`, `cd`, `source`, `git log` —
+  outweighed the procedure.
+- `similarity()` was asymmetric. The two "cover course reimbursement fact" entries
+  scored 0.365 in ledger order against the 0.40 filter, 0.410 the other way, so an
+  embedding that rates them 0.98 never saw them.
+- The background pass had not run since the day Ollama went down.
+- Ids were the signature, so a miss on identical work overwrote the existing
+  entry, parked or promoted status included.
+
+The reason given for lexical matching — no model inside a hook — stopped holding
+when `SessionEnd` began waiting on the boundary judge.
+
+**Now:** each episode is embedded once at fold time and compared by cosine with a
+cached vector for every entry of any status; at or above `SKILLPP_MATCH_FLOOR` it
+joins that entry. Ids are random. The background pass is gone.
+
+### The yardstick
+
+`tests/fixtures/sessions/recurrence.py` folds all eleven live sessions into one
+ledger in the order they started and scores where each banked episode lands
+against a hand-written family label:
+
+| family | runs |
+| --- | --- |
+| add-card-eval-case | 5 — the walkthrough-card sessions, `a8b61dae`, `241955c7` task 2 |
+| add-fact-eval-case | 2 — `d5fd2e59`, `a7be1ef5` |
+| coverage-writeup | 2 |
+
+Card and fact cases are two procedures: they share the mechanical half (edit
+`cases.json`, regenerate, commit) and differ in where the right answer comes from
+and how it is asserted.
+
+### Measured
+
+| matcher | card (5) | fact (2) | coverage (2) | merged / 12 | wrong |
+| --- | --- | --- | --- | --- | --- |
+| signature (before) | 5 entries | 2 | 2 | 0 | 0 |
+| embedding, 0.88 | 2 | 1 | 1 | 6 | 3 |
+| embedding, 0.90 | 3 | 1 | 1 | 5 | 3 |
+| **embedding, 0.92 (shipped)** | **3** | **2** | **1** | **4** | **0** |
+
+**The floor is set by wrong merges, not by merge count.** A wrong merge silently
+mixes two procedures into one skill; a missed merge leaves a duplicate a person
+can still see and fold. Every wrong merge below 0.92 is a card case joining
+`95b6bde7`, which performs the same ADK doc lookup for a different job.
+
+What was embedded matters. `as_text` — first prompt plus commands — separated
+best. Commands alone were worse, and a one-sentence summary was worst: it names
+the subject (course, timesheet), so different procedures on one subject matched.
+Comparing a new run against every run an entry holds, rather than its first,
+changed nothing.
+
+The remaining misses — card cases in three entries, fact cases in two — are the
+open question for a model confirmation step: embeddings to find the nearest few,
+the local model to say whether they are the same procedure.

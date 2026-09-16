@@ -58,7 +58,6 @@ class Config:
         # A workflow must recur this many times before it is proposed (README 3.3).
         self.recurrence_threshold = _int_env("SKILLPP_RECURRENCE", 3)
         # Lexical similarity above which two traces are considered the same workflow.
-        self.similarity_threshold = _float_env("SKILLPP_SIMILARITY", 0.85)
         # Unapproved candidates self-delete after this long (README 5).
         self.candidate_ttl_days = _int_env("SKILLPP_TTL_DAYS", 14)
         # Hard caps so a runaway session cannot bloat the ledger.
@@ -95,42 +94,15 @@ class Config:
             '--allowed-tools "Bash(python3 bin/skillpp *),Read,Write,Edit"')
         self.ollama_url = _str_env("SKILLPP_OLLAMA", "http://127.0.0.1:11434")
         self.local_model = _str_env("SKILLPP_LOCAL_MODEL", "gemma3n:e4b")
-        # Near-miss recurrence. Lexical similarity is robust to arguments,
-        # ordering, extra steps and leading noise — measured at 1.000,
-        # 0.880, 1.000 and (after trimming) 1.000. It fails on one shape:
-        # the same procedure with a step served by a different tool.
-        # `npm test` against `pytest -q` in an otherwise identical
-        # release scores 0.786, just under the 0.85 threshold, which is
-        # the worst place for it to land. An embedding separates that
-        # pair at 0.912 against 0.451 for an unrelated procedure.
+        # Which embedding model decides "same procedure" (`skillpp.matching`).
         self.embed_model = _str_env("SKILLPP_EMBED_MODEL", "nomic-embed-text")
-        self.near_miss_floor = _float_env("SKILLPP_NEAR_MISS_FLOOR", 0.70)
-        self.embed_floor = _float_env("SKILLPP_EMBED_FLOOR", 0.80)
-        # Cosine at or above which an episode joins an existing entry, in
-        # `matching.find_same`. Provisional: 0.92 is the lowest value with no
-        # wrong merge in a pairwise sweep over the live sessions. Calibrated on
-        # `tests/fixtures/sessions/recurrence.py`, which scores clusters.
+        # Cosine at or above which an episode joins an existing entry. Set where
+        # wrong merges stop, not where merges are most numerous: a wrong merge
+        # silently mixes two procedures into one skill, a missed one only leaves
+        # a duplicate a person can still see. Measured on the eleven live
+        # sessions (`tests/fixtures/sessions/recurrence.py`): 0.92 is the lowest
+        # floor with no wrong merge; 0.88-0.90 merge more and get three wrong.
         self.match_floor = _float_env("SKILLPP_MATCH_FLOOR", 0.92)
-        # The queued pass casts a far wider net than the floor above, because
-        # 0.70 was chosen when the only thing on the other side of it was a
-        # live command someone had typed and was waiting on. Measured failure:
-        # one procedure done three times scored 0.46-0.50 against itself, so
-        # the pairs that most needed an embedding never reached one. Nothing
-        # waits on the queued pass, and the embedding does the discriminating
-        # (0.912 against 0.451 on the pair that motivated it) — the floor only
-        # has to exclude what is obviously unrelated.
-        #
-        # `near_miss_floor` is deliberately left alone: a person who types
-        # `skillpp merge` wants a short list to read, and widening that would
-        # make every manual run noisy to fix a problem the manual run does not
-        # have.
-        self.queued_near_miss_floor = _float_env(
-            "SKILLPP_QUEUED_NEAR_MISS_FLOOR", 0.40)
-        # Wall-clock budget for one queued pass, checked between pairs. Local
-        # embedding calls are normally sub-second; this is a backstop against a
-        # pathological backlog, not an expected duration.
-        self.background_timeout_seconds = _int_env(
-            "SKILLPP_BACKGROUND_TIMEOUT", 120)
         self.min_episode_steps = _int_env("SKILLPP_MIN_EPISODE_STEPS", 2)
 
     @property
@@ -145,17 +117,6 @@ class Config:
         what hid three defects until real data arrived.
         """
         return self.root / "decisions.jsonl"
-
-    @property
-    def pending_checks_file(self) -> Path:
-        """Entries a session touched, waiting for a near-miss check.
-
-        Written by `SessionEnd` and by nothing else, one line per fold, with no
-        judgement attached: the check itself happens later, out of the hook. A
-        lost line costs that entry a check, never correctness — `skillpp merge`
-        still reaches the same pairs by hand.
-        """
-        return self.root / "pending_checks.jsonl"
 
     @property
     def ledger_dir(self) -> Path:

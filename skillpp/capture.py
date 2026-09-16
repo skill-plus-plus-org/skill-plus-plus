@@ -21,9 +21,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import Config
-from .ledger import Entry, Ledger, make_id, STATUS_CANDIDATE
-from .normalize import parameterize, signature
-from .recurrence import find_match
+from .ledger import Entry, Ledger, new_id, STATUS_CANDIDATE
+from .local import LocalModelUnavailable
+from .normalize import parameterize
 from .sanitize import scrub, scrub_obj
 from .segment import (PROMPT_TOOL, feeds_a_write, is_prompt, segment,
                       was_judged)
@@ -103,31 +103,6 @@ def log_error(config: Config, message: str) -> None:
         config.root.mkdir(parents=True, exist_ok=True)
         with config.log_file.open("a", encoding="utf-8") as fh:
             fh.write(f"{datetime.now(timezone.utc).isoformat()} {message}\n")
-    except OSError:
-        pass
-
-
-def note_pending_check(config: Config, entry_id: str, session_id: str,
-                       reason: str = "") -> None:
-    """Record that this entry was touched, for a near-miss check run later.
-
-    No judgement here, and deliberately so: the whole point of the queue is
-    that `SessionEnd` decides nothing. Whether this entry is the same procedure
-    as an existing one is asked at the start of a later session, by a process
-    nothing is waiting on, which is what lets that check use a floor far below
-    the one a live `skillpp merge` can afford.
-
-    One short append, never raises. Same shape as `decisions.record` for the
-    same reason — a hook that fails loudly is worse than a hook that forgets.
-    """
-    try:
-        config.root.mkdir(parents=True, exist_ok=True)
-        row = {"at": datetime.now(timezone.utc).replace(
-                   microsecond=0).isoformat(),
-               "entry_id": entry_id, "session_id": session_id,
-               "reason": reason}
-        with config.pending_checks_file.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     except OSError:
         pass
 
@@ -539,18 +514,22 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
     # work and asked for it. Same rule as dictation.
     foldable = episodes if force else [e for e in episodes if not e.flagged]
 
+    # Matching needs the embedding model. Checked once, before anything is
+    # saved, so an outage cannot leave half a session folded and the rest held.
+    # A captured session is held, the same as one with no boundary verdicts. An
+    # explicit keep is a person saying "save this", so it banks unmatched.
+    from .matching import model_reachable
+    can_match = bool(foldable) and model_reachable(config)
+    if foldable and not can_match and not force:
+        return {"status": "offline", "steps": len(session.get("steps", [])),
+                "episodes": [], "flagged": 0,
+                "reason": f"no embeddings: {config.embed_model} did not answer"}
+
     results = []
     for episode in foldable:
         result = _fold_steps(config, session, episode.steps,
-                             source=source)
+                             source=source, match=can_match)
         result["ended_by"] = episode.ended_by
-        # Queue every entry this session touched, merged or created alike. A
-        # merged one can still be a near-miss against a *third* entry the
-        # lexical pass never related to either.
-        if result.get("id"):
-            note_pending_check(config, result["id"],
-                               session.get("session_id", ""),
-                               result.get("status", ""))
         results.append(result)
 
     flagged = [e for e in episodes if e.flagged]
@@ -565,28 +544,35 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
 
 
 def _fold_steps(config: Config, session: dict, steps: list[dict],
-                source: str = "capture") -> dict:
-    """Fold one episode's steps into a new or updated ledger entry."""
+                source: str = "capture", *, match: bool = True) -> dict:
+    """Fold one episode's steps into a new or updated ledger entry.
+
+    *match* False banks a new entry without comparing it to anything, marked
+    `unmatched` — only for an explicit keep when no embedding model answered.
+    """
     cwd = session.get("cwd") or ""
     substantive = _substantive(steps)
     if len(substantive) < 2:
         return {"status": "too-thin", "steps": len(substantive)}
 
-    # Parameterise before fingerprinting so machine-specific paths do not
-    # fragment otherwise-identical workflows.
+    # Parameterise before matching so machine-specific paths do not make
+    # otherwise-identical workflows look different.
     for step in substantive:
         payload = step.get("input") or {}
         for key, value in list(payload.items()):
             if isinstance(value, str):
                 payload[key] = parameterize(value, cwd)
 
-    sig = signature(substantive)
-    if not sig:
-        return {"status": "no-signature"}
-
     ledger = Ledger(config)
-    existing = find_match(sig, list(ledger.all()), config.similarity_threshold)
     intents = _intents_for(session, steps)
+    # Same procedure or not, decided by an embedding against every entry of any
+    # status (`matching.find_same`). Raises if the model is unreachable; the
+    # caller has already checked it is up, so that is a mid-fold outage.
+    existing = None
+    if match:
+        from .matching import find_same
+        hit = find_same(substantive, intents, list(ledger.all()), config)
+        existing = hit[0] if hit else None
 
     deps_mcp = sorted({s["tool"] for s in substantive if s["tool"].startswith("mcp__")})
     deps_cli = sorted(_cli_dependencies(substantive))
@@ -633,8 +619,7 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
                 "ready": existing.ready(config.recurrence_threshold)}
 
     entry = Entry(
-        id=make_id(sig),
-        signature=sig,
+        id=new_id(config.ledger_dir),
         title=_title_for(intents, substantive),
         status=STATUS_CANDIDATE,
         occurrences=1,
@@ -646,8 +631,17 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
         deps_mcp=deps_mcp,
         deps_cli=deps_cli,
         source=source,
+        unmatched=not match,
     )
     ledger.save(entry)
+    if match:
+        # Cache its vector now, while the model is known to be up, so the next
+        # episode compares against it without embedding it again.
+        from .matching import remember
+        try:
+            remember(entry, config)
+        except LocalModelUnavailable:
+            pass
     return {"status": "created", "id": entry.id, "occurrences": 1,
             "ready": False, "source": source}
 
@@ -711,12 +705,22 @@ def fold_dictation(config: Config, text: str, title: str = "") -> dict:
     if not steps:
         return {"status": "empty"}
 
-    normalized = [re.sub(r"[^a-z0-9 ]+", "", s.lower()).strip() for s in steps]
-    sig = "dictated | " + " | ".join(n for n in normalized if n)
+    stated = [{"tool": "Stated", "input": {"text": s}} for s in steps]
+    intents = [cleaned[: config.max_field_chars]]
 
     ledger = Ledger(config)
-    existing = find_match(sig, [e for e in ledger.all() if e.source == "dictated"],
-                          config.similarity_threshold)
+    # Only against other dictated entries: a description and a captured run are
+    # different evidence, and folding one into the other would count a plan as
+    # a recurrence. No model means no comparison — the description is still
+    # banked, marked unmatched, because typing it was an explicit request.
+    from .matching import find_same
+    unmatched = False
+    try:
+        hit = find_same(stated, intents,
+                        [e for e in ledger.all() if e.source == "dictated"], config)
+    except LocalModelUnavailable:
+        hit, unmatched = None, True
+    existing = hit[0] if hit else None
     if existing:
         existing.occurrences += 1
         existing.last_seen = datetime.now(timezone.utc).replace(
@@ -725,17 +729,23 @@ def fold_dictation(config: Config, text: str, title: str = "") -> dict:
         return {"status": "merged", "id": existing.id, "ready": True}
 
     entry = Entry(
-        id=make_id(sig),
-        signature=sig,
+        id=new_id(config.ledger_dir),
         # The whole description makes a more useful title than its first step.
         title=(title or cleaned.replace("\n", " "))[:70],
         status=STATUS_CANDIDATE,
         occurrences=1,
         source="dictated",
-        intents=[cleaned[: config.max_field_chars]],
-        steps=[{"tool": "Stated", "input": {"text": s}} for s in steps],
+        intents=intents,
+        steps=stated,
+        unmatched=unmatched,
     )
     ledger.save(entry)
+    if not unmatched:
+        from .matching import remember
+        try:
+            remember(entry, config)
+        except LocalModelUnavailable:
+            pass
     return {"status": "created", "id": entry.id, "ready": True,
             "steps": len(entry.steps)}
 

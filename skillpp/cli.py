@@ -60,13 +60,11 @@ def cmd_hook(args: argparse.Namespace) -> int:
             if args.verbose:
                 print(json.dumps(result))
         elif event == "SessionStart":
-            # Spawns and returns. Nothing is printed without -v, which the
-            # installed hook command never passes, so a session start is never
-            # interrupted by output from this.
-            from .similar import maybe_spawn_background_check
-            result = maybe_spawn_background_check(config)
+            # Nothing to do. This used to spawn a background merge pass; matching
+            # now happens when an episode is saved. Accepted quietly so hooks
+            # installed before the change keep working.
             if args.verbose:
-                print(json.dumps(result))
+                print(json.dumps({"status": "nothing-to-do", "event": event}))
         elif args.verbose:
             print(json.dumps({"status": "ignored-event", "event": event}))
     except Exception as exc:  # noqa: BLE001 - deliberate catch-all
@@ -264,8 +262,7 @@ def cmd_split(args: argparse.Namespace) -> int:
     The original is kept as `split`, not deleted: the verdict came from a model
     and the steps are the only evidence there was.
     """
-    from .ledger import STATUS_CANDIDATE, STATUS_SPLIT, Entry, make_id
-    from .normalize import signature
+    from .ledger import STATUS_CANDIDATE, STATUS_SPLIT, Entry, new_id
 
     config = Config(args.root)
     ledger = Ledger(config)
@@ -285,13 +282,8 @@ def cmd_split(args: argparse.Namespace) -> int:
 
     made = []
     for steps in (head, tail):
-        sig = signature(steps)
-        if not sig:
-            print("Refusing: one half has no signature to match on.",
-                  file=sys.stderr)
-            return 1
         part = Entry(
-            id=make_id(sig), signature=sig, status=STATUS_CANDIDATE,
+            id=new_id(config.ledger_dir), status=STATUS_CANDIDATE,
             title=entry.title, steps=steps,
             # Provenance is shared: both halves were observed in the same
             # sessions, and occurrences count sessions.
@@ -313,58 +305,106 @@ def cmd_split(args: argparse.Namespace) -> int:
 
 
 def cmd_merge(args: argparse.Namespace) -> int:
-    """Merge candidates that are the same procedure worded differently.
+    """Fold existing candidates that are the same procedure.
 
-    Only pairs already in the near-miss band are considered — lexical
-    similarity below the merge threshold but above the floor — so almost every
-    comparison stays free and the model is asked where the cheap signal is
-    genuinely ambiguous.
+    Capture already matches each new episode as it is saved. This is for what
+    is already in the ledger: entries saved before matching used embeddings,
+    entries banked `unmatched` while no model answered, and a check after the
+    floor changes.
+
+    Every candidate is compared with every other candidate and with every
+    promoted skill, by cosine over cached vectors, at `match_floor` unless
+    `--floor` says otherwise. The floor is set where a wrong merge stops
+    happening, not where the most merges happen: a wrong merge silently mixes
+    two procedures into one skill, while a missed one only leaves a duplicate a
+    person can still see.
 
     Dry run unless ``--apply``, because folding is not symmetrical: the second
-    candidate's evidence moves into the first and the second is gone.
+    candidate's evidence moves into the first and the second is gone. Every
+    applied fold is written to decisions.jsonl, the only record that the
+    absorbed entry existed.
     """
-    from .ledger import STATUS_CANDIDATE
-    from .similar import fold_into, near_misses, same_procedure
+    from . import decisions
+    from .similar import AUTO_MERGED
+    from .ledger import STATUS_CANDIDATE, STATUS_COVERED, STATUS_PROMOTED
+    from .local import LocalModelUnavailable, cosine
+    from .matching import load_cache, save_cache, vector_for
+    from .similar import fold_into
 
     config = Config(args.root)
     ledger = Ledger(config)
-    entries = [e for e in ledger.all() if e.status == STATUS_CANDIDATE]
-    pairs = near_misses(entries, floor=args.floor or config.near_miss_floor,
-                        ceiling=config.similarity_threshold)
-    if not pairs:
-        print(f"No near-miss pairs between "
-              f"{args.floor or config.near_miss_floor:.2f} and "
-              f"{config.similarity_threshold:.2f}. Nothing a model could add.")
-        return 0
+    floor = args.floor if args.floor is not None else config.match_floor
+    entries = [e for e in ledger.all()
+               if e.status in (STATUS_CANDIDATE, STATUS_PROMOTED)]
+    cache = load_cache(config)
+    try:
+        vectors = {e.id: vector_for(e, config, cache) for e in entries}
+    except LocalModelUnavailable as exc:
+        print(f"No embedding model: {exc}. Nothing was compared.", file=sys.stderr)
+        return 1
+    finally:
+        save_cache(config, cache)
 
-    merges, seen = [], set()
-    for a, b, lex in pairs:
+    pairs = []
+    for i, a in enumerate(entries):
+        for b in entries[i + 1:]:
+            if a.status == STATUS_PROMOTED and b.status == STATUS_PROMOTED:
+                continue          # two skills: not ours to reconcile
+            score = cosine(vectors[a.id], vectors[b.id])
+            if score >= floor:
+                pairs.append((score, a, b))
+    # Entries banked without matching go first, then the most similar.
+    pairs.sort(key=lambda p: (not (p[1].unmatched or p[2].unmatched), -p[0]))
+
+    chosen, seen = [], set()
+    for score, a, b in pairs:
         if a.id in seen or b.id in seen:
-            continue          # one merge per entry per run, so folds cannot chain
-        verdict, score, why = same_procedure(
-            a, b, model=config.embed_model, host=config.ollama_url,
-            floor=config.embed_floor)
-        mark = {True: "same     ", False: "different", None: "no opinion"}[verdict]
-        print(f"{mark} lexical {lex:.3f} · embedding {score:.3f}")
-        print(f"          {a.id} {a.title[:44]}")
-        print(f"          {b.id} {b.title[:44]}")
-        print(f"          {why}")
-        if verdict:
-            merges.append((a, b))
-            seen.update({a.id, b.id})
+            continue              # one merge per entry per run, so folds cannot chain
+        chosen.append((score, a, b))
+        seen.update({a.id, b.id})
 
-    if not merges:
-        print("\nNothing to merge.")
+    if not chosen:
+        print(f"No pair at or above {floor:.2f}. Nothing to merge.")
         return 0
+    for score, a, b in chosen:
+        skill = a if a.status == STATUS_PROMOTED else b if b.status == STATUS_PROMOTED else None
+        what = "covered by skill" if skill else "same procedure  "
+        print(f"{what} embedding {score:.3f}")
+        print(f"          {a.id} {a.title[:56]}")
+        print(f"          {b.id} {b.title[:56]}")
     if not args.apply:
-        print(f"\nDry run. Re-run with --apply to fold {len(merges)} pair(s).")
+        print(f"\nDry run. Re-run with --apply to fold {len(chosen)} pair(s).")
         return 0
-    for keep, drop in merges:
+
+    for score, a, b in chosen:
+        skill = a if a.status == STATUS_PROMOTED else b if b.status == STATUS_PROMOTED else None
+        if skill is not None:
+            # A skill is never folded away; being matched means it was used again.
+            other = b if skill is a else a
+            for sid in other.sessions:
+                if sid not in skill.sessions:
+                    skill.sessions.append(sid)
+            skill.occurrences = max(len(skill.sessions), skill.occurrences)
+            other.status = STATUS_COVERED
+            other.unmatched = False
+            other.notes = (f"covered by promoted skill {skill.id} "
+                           f"(embedding {score:.3f})\n" + (other.notes or "")).strip()
+            ledger.save(skill)
+            ledger.save(other)
+            decisions.record(config, skill, AUTO_MERGED,
+                             note=f"used again — {other.id} ({other.title[:60]}) "
+                                  f"is covered by this skill; embedding {score:.3f}")
+            print(f"\n{other.id} is covered by skill {skill.id}")
+            continue
+        keep, drop = a, b
         fold_into(keep, drop)
+        keep.unmatched = False
         ledger.save(keep)
         ledger.delete(drop.id)
-        print(f"\nfolded {drop.id} into {keep.id} — now seen "
-              f"{keep.occurrences}x")
+        decisions.record(config, keep, AUTO_MERGED,
+                         note=f"absorbed {drop.id} ({drop.title[:80]}) — "
+                              f"embedding {score:.3f}")
+        print(f"\nfolded {drop.id} into {keep.id} — now seen {keep.occurrences}x")
     return 0
 
 
@@ -425,7 +465,7 @@ def cmd_ignored(args: argparse.Namespace) -> int:
     """List what has been parked, and what has happened since.
 
     Parked entries stay matched by recurrence — otherwise the next occurrence
-    rebuilds the same id and quietly undoes the decision. So their counts keep
+    opens a fresh candidate and quietly undoes the decision. So their counts keep
     moving, and a count that keeps moving is the one honest signal that a
     parking may have been wrong.
 
@@ -923,28 +963,6 @@ def cmd_bundle(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_background_merge_check(args: argparse.Namespace) -> int:
-    """Run the queued near-miss pass.
-
-    Normally spawned detached by `SessionStart`; runnable by hand to force a
-    check now rather than waiting for the next session. Writes a report and
-    folds nothing — `skillpp near-misses --apply` is what folds.
-    """
-    from .capture import log_error
-    from .similar import run_background_check
-
-    config = Config(args.root)
-    try:
-        result = run_background_check(config, timeout=args.timeout)
-    except Exception as exc:  # noqa: BLE001 - a detached pass must die quietly
-        log_error(config, f"background-merge-check: "
-                          f"{type(exc).__name__}: {exc}")
-        return 0
-    if args.verbose:
-        print(json.dumps(result, indent=2))
-    return 0
-
-
 def cmd_install(args: argparse.Namespace) -> int:
     from .install import apply_settings, hook_command, install_command_file, plan_settings
 
@@ -1029,16 +1047,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--apply", action="store_true",
                    help="actually fold them; the second entry is absorbed")
     p.add_argument("--floor", type=float,
-                   help="lowest lexical similarity worth a model call")
+                   help="cosine at or above which two entries fold "
+                        "(default: SKILLPP_MATCH_FLOOR)")
     p.set_defaults(func=cmd_merge)
-
-    p = sub.add_parser("background-merge-check",
-                       help="run the queued near-miss pass now (needs Ollama); "
-                            "normally spawned detached by SessionStart")
-    p.add_argument("--timeout", type=float,
-                   help="seconds to spend before stopping and keeping the queue")
-    p.add_argument("-v", "--verbose", action="store_true")
-    p.set_defaults(func=cmd_background_merge_check)
 
     p = sub.add_parser("keep",
                        help="save the work so far as a candidate, without "

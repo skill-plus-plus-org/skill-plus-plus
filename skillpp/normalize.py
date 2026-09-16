@@ -1,13 +1,15 @@
-"""Parameterisation and workflow signatures.
+"""Parameterisation and step shapes.
 
 Two jobs, both run *after* :mod:`skillpp.sanitize`:
 
 * :func:`parameterize` turns machine-specific values into template variables,
   so a captured trace can run on somebody else's laptop (README 3.5).
-* :func:`signature` reduces a sequence of steps to a stable fingerprint used
-  for recurrence matching (README 3.3). It deliberately throws away arguments
-  and keeps only the *shape* of the work, so ``pytest -k auth`` and
-  ``pytest -k billing`` count as the same workflow.
+* :func:`step_shape` reduces one step to a token describing what it *did*,
+  throwing away arguments, so ``pytest -k auth`` and ``pytest -k billing`` are
+  the same kind of step. `signals.py` compares these across a candidate's runs.
+
+A whole-workflow `signature` built from these used to decide whether two runs
+were the same procedure. That is now an embedding (`skillpp.matching`).
 """
 
 from __future__ import annotations
@@ -234,20 +236,3 @@ def step_shape(step: dict) -> str:
     if tool.startswith("mcp__"):
         return f"mcp:{tool}"
     return tool.lower() or "unknown"
-
-
-def signature(steps: list[dict]) -> str:
-    """Stable fingerprint for a whole workflow.
-
-    Consecutive duplicates collapse — running the tests four times in a row is
-    the same workflow as running them once.
-    """
-    shapes: list[str] = []
-    for step in steps:
-        shape = step_shape(step)
-        if not shape:
-            continue
-        if shapes and shapes[-1] == shape:
-            continue
-        shapes.append(shape)
-    return " | ".join(shapes)

@@ -65,6 +65,15 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+def cached_vector(entry: Entry, config, cache: dict) -> list[float] | None:
+    """The entry's vector if the cache still has a current one; never embeds."""
+    hit = cache.get(entry.id)
+    if (hit and hit.get("model") == config.embed_model
+            and hit.get("hash") == _digest(entry_text(entry))):
+        return hit["vector"]
+    return None
+
+
 def vector_for(entry: Entry, config, cache: dict) -> list[float]:
     """The entry's vector, from the cache when it still describes the entry.
 
@@ -108,6 +117,16 @@ def find_same(steps: list[dict], intents: list[str], entries: list[Entry],
     if best is not None and best_score >= config.match_floor:
         return best, best_score
     return None
+
+
+def model_reachable(config) -> bool:
+    """One cheap embedding, to learn whether matching can happen at all."""
+    from .local import LocalModelUnavailable
+    try:
+        embed("ping", model=config.embed_model, host=config.ollama_url)
+    except LocalModelUnavailable:
+        return False
+    return True
 
 
 def remember(entry: Entry, config) -> None:

@@ -217,10 +217,11 @@ def _title_is_a_prompt(title: str, intents: list[str]) -> bool:
 def review_rows(config: Config) -> list[dict]:
     """Every live candidate, with what a person needs to judge it.
 
-    `closest` is shown rather than used: lexical similarity does not see
-    near-duplicates reliably — four "restart the servers" candidates in the real
-    ledger sit 0.25-0.46 apart — so grouping behind a threshold would hide as
-    much as it showed. The score is there for the reader to weigh.
+    `closest` is the nearest other candidate by embedding, from the cache
+    `skillpp.matching` keeps — the same comparison that decides merging, shown
+    so a reader can see what the matcher saw. It never embeds: loading the page
+    must not wait on a model, so an entry with no cached vector shows no
+    closest. `skillpp merge` fills the cache.
 
     `title_from_prompt` marks a title that is just something the developer
     typed. Compared against the prompts themselves rather than inferred from
@@ -228,17 +229,19 @@ def review_rows(config: Config) -> list[dict]:
     later commit in the steps says nothing about where the title came from — a
     68-step debugging session titled "restart again" has a commit in it.
     """
-    from .normalize import signature
-    from .recurrence import similarity
+    from .local import cosine
+    from .matching import cached_vector, load_cache
 
     entries = [e for e in Ledger(config).all() if e.status == STATUS_CANDIDATE]
-    sigs = {e.id: (e.signature or signature(e.steps)) for e in entries}
+    cache = load_cache(config)
+    vectors = {e.id: cached_vector(e, config, cache) for e in entries}
     tags = load_review(config)
     summaries = load_summaries(config)
     rows = []
     for e in entries:
-        others = [(similarity(sigs[e.id], sigs[o.id]), o)
-                  for o in entries if o.id != e.id]
+        others = ([(cosine(vectors[e.id], vectors[o.id]), o)
+                   for o in entries if o.id != e.id and vectors[o.id]]
+                  if vectors[e.id] else [])
         score, near = max(others, key=lambda pair: pair[0]) if others else (0.0, None)
         rows.append({
             "id": e.id,
@@ -650,8 +653,8 @@ function render(){
   const rows=(S[tab]||[]).filter(matches);
   if(tab==="parked"){
     m.innerHTML = `<p class="note">Parked entries are still matched by
-      recurrence — otherwise the next occurrence would rebuild the same id and
-      undo the decision. So the counts keep moving, and a count that keeps
+      recurrence — otherwise the next occurrence would open a fresh candidate
+      and quietly undo the decision. So the counts keep moving, and a count that keeps
       moving is the only honest sign a parking was wrong.</p>` + search +
       (rows.length?rows.map(e=>card(e,
         `<p><button class="act" data-reopen="${esc(e.id)}">Put back in review</button></p>`

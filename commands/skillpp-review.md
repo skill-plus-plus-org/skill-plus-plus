@@ -42,8 +42,9 @@ candidate that is often zero.
 ## 4. Check for an existing skill first
 
 List the existing skills. If one already covers this workflow, propose
-**extending that skill** rather than creating a near-duplicate — the CLI's
-deduplication is lexical only, so semantic overlap is yours to catch.
+**extending that skill** rather than creating a near-duplicate. The CLI matches
+repeated runs by embedding, but its floor is deliberately strict — a wrong merge
+is worse than a missed one — so overlap it left apart is yours to catch.
 
 ## 5. Present it — effects first
 

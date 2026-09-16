@@ -10,8 +10,8 @@ Entries hold summaries, never raw traces (README 3.2).
 
 from __future__ import annotations
 
-import hashlib
 import json
+import secrets
 import re
 import time
 from dataclasses import dataclass, field, asdict
@@ -62,7 +62,10 @@ class Entry:
     """One candidate workflow in the ledger."""
 
     id: str
-    signature: str
+    # A lexical fingerprint of the steps, kept only on entries saved before
+    # matching moved to embeddings (`skillpp.matching`). Nothing reads it to
+    # decide anything, and new entries leave it empty.
+    signature: str = ""
     title: str = ""
     status: str = STATUS_CANDIDATE
     occurrences: int = 1
@@ -95,6 +98,11 @@ class Entry:
     # that point are the only evidence that the parking was wrong, and without
     # the mark there is nothing to measure from.
     parked_at_occurrences: int = 0
+    # Banked without being compared to anything, because no embedding model
+    # answered — only an explicit `skillpp keep` or dictation does that, since a
+    # captured session with no model is held instead. `skillpp merge` checks
+    # these first.
+    unmatched: bool = False
 
     # -- derived ---------------------------------------------------------
     @property
@@ -186,8 +194,18 @@ def describe_step(step: dict) -> str:
     return f"{tool}"
 
 
-def make_id(signature: str, salt: str = "") -> str:
-    return hashlib.sha256((signature + salt).encode("utf-8")).hexdigest()[:12]
+def new_id(ledger_dir: Path) -> str:
+    """A fresh entry id, never derived from content.
+
+    Ids used to be a hash of the signature. That made a matcher miss on an
+    identical signature silently overwrite the existing file — a parked
+    decision undone, a promoted skill reverted to candidate. A random id turns
+    the same miss into a visible duplicate, which a person can still fold.
+    """
+    while True:
+        candidate = secrets.token_hex(6)
+        if not (ledger_dir / f"{candidate}.md").exists():
+            return candidate
 
 
 class Ledger:

@@ -97,26 +97,10 @@ def play(case, root: Path, api, *, merge: bool = False) -> list:
                                             "error": "command failed"}
             handle_tool(config, payload)
         handle_session_end(config, {"session_id": sid + "-2"})
-    if merge:
-        _apply_queued_merges(config)
+    # `merge` is kept for callers but no longer does anything: runs are matched
+    # by embedding when each session is folded, so there is no later pass to
+    # apply.
     return list(Ledger(config).all())
-
-
-def _apply_queued_merges(config) -> None:
-    """Run the queued near-miss pass, which folds what it recognises.
-
-    Imported here rather than through `load()` so a branch without a queued pass
-    still scores: `load()`'s contract is three hook handlers and a Ledger, and
-    widening it would make this corpus unable to measure anything else.
-    """
-    try:
-        from skillpp.similar import run_background_check
-    except ImportError:
-        return
-    try:
-        run_background_check(config)
-    except Exception:  # noqa: BLE001 - a benchmark must not die on a dead host
-        return
 
 
 def score(cases, use_model: bool, repo=None) -> dict:
