@@ -3537,8 +3537,7 @@ class TestLiveSessions(unittest.TestCase):
             config.ensure_dirs()
             rows = recurrence.fold_all(config)
         sizes = recurrence.evaluate(rows)["sizes"]
-        self.assertEqual(sizes.get("add-card-eval-case"), 5)
-        self.assertEqual(sizes.get("add-fact-eval-case"), 2)
+        self.assertEqual(sizes.get("add-eval-case"), 7)
         self.assertEqual(sizes.get("coverage-writeup"), 2)
 
     def test_there_are_live_sessions_to_score(self):
