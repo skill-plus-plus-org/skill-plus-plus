@@ -96,6 +96,91 @@ def _entry_json(entry, threshold: int) -> dict:
     }
 
 
+REVIEW_TAGS = ("good", "duplicate", "fragment")
+
+
+def _review_path(config: Config) -> Path:
+    return config.root / "review.json"
+
+
+def load_review(config: Config) -> dict:
+    """Tags a person put on candidates while reading them. Never read by the
+    pipeline — this is for judging what detection produced, not steering it."""
+    try:
+        data = json.loads(_review_path(config).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_review(config: Config, entry_id: str, tag: str) -> dict:
+    """Record one tag. An empty tag clears it."""
+    if tag and tag not in REVIEW_TAGS:
+        return {"ok": False, "error": f"unknown tag {tag!r}"}
+    if not Ledger(config).get(entry_id):
+        return {"ok": False, "error": "no such entry"}
+    tags = load_review(config)
+    if tag:
+        tags[entry_id] = tag
+    else:
+        tags.pop(entry_id, None)
+    path = _review_path(config)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(tags, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+    return {"ok": True}
+
+
+def _title_is_a_prompt(title: str, intents: list[str]) -> bool:
+    head = (title or "").rstrip("…").strip()
+    if not head:
+        return False
+    return any(i.strip().splitlines()[0].startswith(head)
+               for i in intents if i and i.strip())
+
+
+def review_rows(config: Config) -> list[dict]:
+    """Every live candidate, with what a person needs to judge it.
+
+    `closest` is shown rather than used: lexical similarity does not see
+    near-duplicates reliably — four "restart the servers" candidates in the real
+    ledger sit 0.25-0.46 apart — so grouping behind a threshold would hide as
+    much as it showed. The score is there for the reader to weigh.
+
+    `title_from_prompt` marks a title that is just something the developer
+    typed. Compared against the prompts themselves rather than inferred from
+    whether a commit exists: a title is fixed when the entry is created, so a
+    later commit in the steps says nothing about where the title came from — a
+    68-step debugging session titled "restart again" has a commit in it.
+    """
+    from .normalize import signature
+    from .recurrence import similarity
+
+    entries = [e for e in Ledger(config).all() if e.status == STATUS_CANDIDATE]
+    sigs = {e.id: (e.signature or signature(e.steps)) for e in entries}
+    tags = load_review(config)
+    rows = []
+    for e in entries:
+        others = [(similarity(sigs[e.id], sigs[o.id]), o)
+                  for o in entries if o.id != e.id]
+        score, near = max(others, key=lambda pair: pair[0]) if others else (0.0, None)
+        rows.append({
+            "id": e.id,
+            "title": e.title,
+            "title_from_prompt": _title_is_a_prompt(e.title, e.intents),
+            "occurrences": e.occurrences,
+            "ready": e.ready(config.recurrence_threshold),
+            "step_count": len(e.steps),
+            "intents": list(e.intents),
+            "steps": [render_step(st) for st in e.steps[:200]],
+            "last_seen": e.last_seen[:10],
+            "closest": ({"id": near.id, "title": near.title,
+                         "score": round(score, 2)} if near else None),
+            "tag": tags.get(e.id, ""),
+        })
+    return sorted(rows, key=lambda r: (r["title"] or "").lower())
+
+
 def collect_state(config: Config, skills_dir: Path) -> dict:
     """Everything the page shows, in one read."""
     from . import decisions
@@ -133,6 +218,7 @@ def collect_state(config: Config, skills_dir: Path) -> dict:
                      if e.status == STATUS_PROMOTED],
         "split": [_entry_json(e, threshold) for e in entries
                   if e.status == STATUS_SPLIT],
+        "review": review_rows(config),
         "threshold": threshold,
         "accuracy": decisions.score(config),
         "drift": reconcile(ledger, config),
@@ -195,6 +281,11 @@ def make_handler(config: Config, skills_dir: Path):
                 return self._send(200, json.dumps(
                     save_skill(path, payload.get("body", ""))))
 
+            if self.path == "/api/review":
+                return self._send(200, json.dumps(save_review(
+                    config, str(payload.get("id", "")),
+                    str(payload.get("tag", "")))))
+
             if self.path == "/api/reopen":
                 return self._send(200, json.dumps(
                     reopen(config, payload.get("id", ""))))
@@ -255,6 +346,23 @@ PAGE = """<!doctype html>
  input[type=search]{font:inherit;padding:6px 10px;border:1px solid var(--line);
    border-radius:6px;background:var(--card);color:var(--fg);min-width:220px}
  .note{color:var(--dim);font-size:12.5px;margin:0 0 14px}
+ .counts{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
+ .rv{background:var(--card);border:1px solid var(--line);border-radius:8px;
+     margin:0 0 6px}
+ .rv.good{border-left:3px solid var(--ok)}
+ .rv.duplicate,.rv.fragment{border-left:3px solid var(--warn)}
+ .rvhead{display:flex;gap:10px;align-items:center;padding:9px 12px;cursor:pointer;
+     flex-wrap:wrap}
+ .rvhead .title{flex:1;min-width:220px}
+ .rvbody{display:none;padding:0 12px 12px}
+ .rv.open .rvbody{display:block}
+ .picks{display:flex;gap:4px}
+ .picks button{font:inherit;font-size:12px;padding:2px 9px;border-radius:99px;
+     border:1px solid var(--line);background:none;color:var(--dim);cursor:pointer}
+ .picks button[aria-pressed=true]{background:var(--fg);color:var(--bg);
+     border-color:var(--fg)}
+ .rvbody h4{margin:10px 0 4px;font-size:12px;color:var(--dim);font-weight:600}
+ .rvbody ol{margin:0;padding-left:20px;font-size:13px}
 </style>
 <header>
  <h1>Skill Plus Plus</h1>
@@ -265,10 +373,10 @@ PAGE = """<!doctype html>
 <script>
 const esc = s => String(s??"").replace(/[&<>"]/g, c =>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-let S=null, tab="candidates", q="";
+let S=null, tab="review", q="", open=new Set();
 
 const TABS = [
-  ["candidates","Candidates"], ["parked","Parked"], ["skills","Skills"],
+  ["review","Review"], ["candidates","Candidates"], ["parked","Parked"], ["skills","Skills"],
   ["promoted","Promoted"], ["accuracy","Accuracy"],
 ];
 
@@ -303,18 +411,81 @@ function matches(e){
   return hay.includes(q.toLowerCase());
 }
 
+const PICKS = [["good","good"],["duplicate","duplicate"],["fragment","fragment"]];
+
+function reviewRow(r){
+  const near = r.closest
+    ? `closest: ${esc(r.closest.title)} <b>${r.closest.score.toFixed(2)}</b>` : "";
+  const prompts = r.intents.length
+    ? `<ol>${r.intents.map(i=>`<li>${esc(i)}</li>`).join("")}</ol>`
+    : '<p class="desc"><em>no prompts recorded</em></p>';
+  const steps = `<ol>${r.steps.map(x=>`<li>${esc(x)}</li>`).join("")}</ol>${
+    r.step_count>r.steps.length?`<p class="meta">… +${r.step_count-r.steps.length} more</p>`:""}`;
+  return `<div class="rv ${esc(r.tag)} ${open.has(r.id)?"open":""}" data-id="${esc(r.id)}">
+    <div class="rvhead" data-toggle="${esc(r.id)}">
+      <span class="title">${esc(r.title)||"(untitled)"}</span>
+      ${r.title_from_prompt?'<span class="tag warn">title is a prompt</span>':""}
+      <span class="tag">×${r.occurrences}</span>
+      <span class="tag">${r.step_count} steps</span>
+      ${r.ready?'<span class="tag method">ready</span>':""}
+      <span class="picks">${PICKS.map(([k,l])=>
+        `<button data-tag="${k}" data-for="${esc(r.id)}" aria-pressed="${r.tag===k}">${l}</button>`
+      ).join("")}</span>
+    </div>
+    <div class="rvbody">
+      <div class="meta">${esc(r.id)} · last seen ${esc(r.last_seen)}${near?" · "+near:""}</div>
+      <h4>What was asked (${r.intents.length})</h4>${prompts}
+      <h4>What was done (${r.step_count})</h4>${steps}
+    </div></div>`;
+}
+
+function renderReview(m){
+  const rows = S.review.filter(r=>!q ||
+    (r.title+" "+r.intents.join(" ")+" "+r.steps.join(" ")).toLowerCase()
+      .includes(q.toLowerCase()));
+  const n = k => S.review.filter(r=>r.tag===k).length;
+  const done = S.review.filter(r=>r.tag).length;
+  m.innerHTML = `<p class="note">Judge what detection produced. Tags are stored in
+      <code>review.json</code> and never change the ledger. Click a row to see
+      every prompt and step.</p>
+    <div class="counts">
+      <span class="tag method">good ${n("good")}</span>
+      <span class="tag warn">duplicate ${n("duplicate")}</span>
+      <span class="tag warn">fragment ${n("fragment")}</span>
+      <span class="tag">unreviewed ${S.review.length-done}</span>
+    </div>
+    <p><input type="search" id="q" placeholder="filter…" value="${esc(q)}"></p>` +
+    (rows.length ? rows.map(reviewRow).join("") : '<p class="empty">No candidates.</p>');
+
+  m.querySelectorAll("[data-toggle]").forEach(h=>h.onclick=ev=>{
+    if(ev.target.closest(".picks")) return;
+    const id=h.dataset.toggle;
+    open.has(id)?open.delete(id):open.add(id);
+    h.parentElement.classList.toggle("open");
+  });
+  m.querySelectorAll("[data-tag]").forEach(b=>b.onclick=async()=>{
+    const id=b.dataset.for, row=S.review.find(r=>r.id===id);
+    const tag = row.tag===b.dataset.tag ? "" : b.dataset.tag;   // click again to clear
+    const r=await (await fetch("/api/review",{method:"POST",
+      body:JSON.stringify({id,tag})})).json();
+    if(r.ok){ row.tag=tag; render(); }
+  });
+}
+
 function render(){
   document.getElementById("where").textContent =
     `${S.skills_dir}  ·  ledger ${S.root}  ·  threshold ×${S.threshold}`;
   const nav = document.getElementById("tabs");
   nav.innerHTML = TABS.map(([k,label])=>{
-    const n = k==="accuracy" ? "" : ` (${(S[k]||[]).length})`;
+    const n = k==="accuracy" ? "" : ` (${(S[k]||[]).length})`;  // review is a list too
     return `<button role="tab" aria-selected="${k===tab}" data-tab="${k}">${label}${n}</button>`;
   }).join("");
   nav.querySelectorAll("button").forEach(b=>b.onclick=()=>{tab=b.dataset.tab;render()});
 
   const m = document.getElementById("main");
   const search = `<p><input type="search" id="q" placeholder="filter…" value="${esc(q)}"></p>`;
+
+  if(tab==="review"){ renderReview(m); bindSearch(); return; }
 
   if(tab==="accuracy"){
     const a=S.accuracy, d=S.drift;
@@ -378,8 +549,13 @@ function render(){
     m.innerHTML = note + search + (rows.length?rows.map(e=>card(e)).join("")
       : '<p class="empty">Nothing here.</p>');
   }
+  bindSearch();
+}
+
+function bindSearch(){
   const box=document.getElementById("q");
-  if(box){box.oninput=()=>{q=box.value;render();box.focus()};}
+  if(box){box.oninput=()=>{q=box.value;render();
+    const b=document.getElementById("q"); b.focus(); b.setSelectionRange(q.length,q.length)};}
 }
 
 async function load(){

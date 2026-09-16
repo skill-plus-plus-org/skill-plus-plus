@@ -3434,6 +3434,47 @@ class TestWeb(TempRoot):
         self.assertEqual([e["id"] for e in state["candidates"]], ["a"])
         self.assertEqual([e["id"] for e in state["parked"]], ["b"])
 
+    def test_review_rows_show_what_a_reader_needs_to_judge(self):
+        from skillpp.web import review_rows
+        self.ledger.save(Entry(id="a", signature="npm test", title="restart again",
+                               intents=["restart again", "still broken"],
+                               steps=[self._step("npm test")]))
+        self.ledger.save(Entry(id="b", signature="npm test|git commit",
+                               title="fix: the thing", intents=["please fix it"],
+                               steps=[self._step("npm test"),
+                                      self._step("git commit -m 'fix: the thing'")]))
+        self.ledger.save(Entry(id="c", signature="x", title="restart again",
+                               intents=["restart again"],
+                               steps=[self._step("git commit -m 'later'")]))
+        rows = {r["id"]: r for r in review_rows(self.config)}
+        self.assertTrue(rows["a"]["title_from_prompt"])
+        self.assertFalse(rows["b"]["title_from_prompt"], "titled from its commit")
+        self.assertTrue(rows["c"]["title_from_prompt"],
+                        "a later commit does not change where the title came from")
+        self.assertEqual(rows["a"]["intents"], ["restart again", "still broken"])
+        self.assertEqual(rows["a"]["closest"]["id"], "b")
+
+    def test_a_review_tag_is_saved_cleared_and_validated(self):
+        from skillpp.web import load_review, review_rows, save_review
+        self.ledger.save(Entry(id="a", signature="s", title="t",
+                               steps=[self._step("npm test")]))
+        self.assertTrue(save_review(self.config, "a", "fragment")["ok"])
+        self.assertEqual(load_review(self.config), {"a": "fragment"})
+        self.assertEqual(review_rows(self.config)[0]["tag"], "fragment")
+        self.assertFalse(save_review(self.config, "a", "brilliant")["ok"])
+        self.assertFalse(save_review(self.config, "nope", "good")["ok"])
+        save_review(self.config, "a", "")
+        self.assertEqual(load_review(self.config), {})
+
+    def test_review_tags_never_touch_the_ledger(self):
+        """Judging the output must not steer it."""
+        from skillpp.web import save_review
+        self.ledger.save(Entry(id="a", signature="s", title="t",
+                               steps=[self._step("npm test")]))
+        before = self.ledger.get("a").status
+        save_review(self.config, "a", "duplicate")
+        self.assertEqual(Ledger(self.config).get("a").status, before)
+
     def test_the_ranking_and_description_reach_the_page(self):
         """Both are new since the old UI, and both decide what a reader does."""
         from skillpp.web import collect_state
