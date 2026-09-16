@@ -10,8 +10,11 @@ sessions actually started, through the real `fold_session`, and compares where
 each banked episode landed against `truth.families`.
 
 Ground truth is one label per banked episode, written by hand. Same label, same
-procedure: "add a walkthrough-card eval case" and "add a handbook fact eval
-case" are both `add-eval-case`, with the kind of case as a variation.
+procedure. "Add a walkthrough-card eval case" and "add a handbook fact eval
+case" are two procedures: they share the mechanical half — edit `cases.json`,
+regenerate, commit — but differ in where the right answer comes from (`book.py`
+TOPICS against the handbook docs) and how it is asserted (`expect_card`
+against `expect_any`), which is the half that is hard to get right.
 
 Scored three ways, because each hides something the others show:
 
