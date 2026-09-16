@@ -3466,6 +3466,47 @@ class TestWeb(TempRoot):
         save_review(self.config, "a", "")
         self.assertEqual(load_review(self.config), {})
 
+    def test_a_summary_is_cached_and_redone_when_the_entry_grows(self):
+        import skillpp.local as local
+        from skillpp.web import review_rows, summarise
+        self.ledger.save(Entry(id="a", signature="s", title="option 1",
+                               intents=["option 1"],
+                               steps=[self._step("npm test")]))
+        calls = []
+        real = local.ask
+        def fake(model, prompt, **kw):
+            calls.append(prompt)
+            return "The developer ran the tests.\n\n**Concrete thing:** tests"
+        local.ask = fake
+        self.addCleanup(lambda: setattr(local, "ask", real))
+
+        out = summarise(self.config, "a")
+        self.assertEqual(out["summary"], "Ran the tests.",
+                         "first line only, no leading 'The developer'")
+        summarise(self.config, "a")
+        self.assertEqual(len(calls), 1, "cached, not asked twice")
+        self.assertEqual(review_rows(self.config)[0]["summary"], "Ran the tests.")
+
+        entry = self.ledger.get("a")
+        entry.steps.append(self._step("git commit -m x"))
+        self.ledger.save(entry)
+        self.assertEqual(review_rows(self.config)[0]["summary"], "",
+                         "a grown entry is not described by the old sentence")
+        summarise(self.config, "a")
+        self.assertEqual(len(calls), 2)
+
+    def test_a_summary_never_fills_the_skill_description(self):
+        """`description` decides whether a promoted skill loads."""
+        import skillpp.local as local
+        from skillpp.web import summarise
+        self.ledger.save(Entry(id="a", signature="s", title="t",
+                               steps=[self._step("npm test")]))
+        real = local.ask
+        local.ask = lambda *a, **k: "Ran the tests."
+        self.addCleanup(lambda: setattr(local, "ask", real))
+        summarise(self.config, "a")
+        self.assertEqual(Ledger(self.config).get("a").description, "")
+
     def test_review_tags_never_touch_the_ledger(self):
         """Judging the output must not steer it."""
         from skillpp.web import save_review

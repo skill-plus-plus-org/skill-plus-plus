@@ -32,6 +32,7 @@ from .ledger import (STATUS_CANDIDATE, STATUS_DISMISSED, STATUS_ONE_OFF,
                      STATUS_PROMOTED, STATUS_SPLIT, Ledger)
 from .lifecycle import parse_frontmatter
 
+PROMPTS = Path(__file__).resolve().parent / "prompts"
 _SAFE_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _PARKED = (STATUS_DISMISSED, STATUS_ONE_OFF)
 
@@ -131,6 +132,80 @@ def save_review(config: Config, entry_id: str, tag: str) -> dict:
     return {"ok": True}
 
 
+def _summaries_path(config: Config) -> Path:
+    return config.root / "review_summaries.json"
+
+
+def load_summaries(config: Config) -> dict:
+    try:
+        data = json.loads(_summaries_path(config).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _cached_summary(cache: dict, entry) -> str:
+    """The cached sentence, if it still describes the entry as it stands."""
+    hit = cache.get(entry.id) or {}
+    return hit.get("text", "") if hit.get("steps") == len(entry.steps) else ""
+
+
+def summarise(config: Config, entry_id: str) -> dict:
+    """One plain sentence saying what a candidate's work was about.
+
+    Titles cannot carry this: 24 of 28 real candidate titles are just something
+    the developer typed — "option 1", "i didnt stop anything" — and the latter
+    turned out to be generating a hero image. The sentence is written from the
+    prompts, the assistant's own completion reports, and the first steps.
+
+    Cached per entry and keyed on step count, so the page never waits on a model
+    to load and a candidate that grows is described again. Stored beside the
+    ledger rather than in `entry.description`, which decides whether a promoted
+    skill loads and must not be filled in by a review aid.
+    """
+    import re
+
+    from .boundary import render_step as step_line
+    from .local import LocalModelUnavailable, ask
+
+    entry = Ledger(config).get(entry_id)
+    if not entry:
+        return {"ok": False, "error": "no such entry"}
+    cache = load_summaries(config)
+    cached = _cached_summary(cache, entry)
+    if cached:
+        return {"ok": True, "summary": cached}
+
+    asks = "\n".join(f"- {i.strip()[:200]}" for i in entry.intents[:6] if i.strip())
+    reports = [st["closing_note"][:200] for st in entry.steps if st.get("closing_note")]
+    steps = "\n".join(f"- {step_line(st)[:140]}" for st in entry.steps[:12])
+    prompt = ((PROMPTS / "candidate_summary.md").read_text(encoding="utf-8")
+              .replace("{ASKS}", asks or "- (none recorded)")
+              .replace("{REPORTS}", "\n".join(f"- {r}" for r in reports[:4]) or "- (none)")
+              .replace("{STEPS}", steps or "- (none)"))
+    try:
+        reply = ask(config.local_model, prompt, host=config.ollama_url,
+                    timeout=90.0, think=False)
+    except LocalModelUnavailable as exc:
+        return {"ok": False, "error": f"no local model: {exc}"}
+
+    # The model sometimes appends labelled blocks after the sentence, and opens
+    # with "The developer" despite being told to start with a verb.
+    line = next((l for l in reply.strip().splitlines() if l.strip()), "")
+    text = re.sub(r"^(the )?developer\s+", "", line.strip().strip("*"),
+                  flags=re.IGNORECASE).strip()
+    if not text:
+        return {"ok": False, "error": "the model returned nothing"}
+    text = text[0].upper() + text[1:]
+
+    cache[entry.id] = {"steps": len(entry.steps), "text": text}
+    path = _summaries_path(config)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+    return {"ok": True, "summary": text}
+
+
 def _title_is_a_prompt(title: str, intents: list[str]) -> bool:
     head = (title or "").rstrip("…").strip()
     if not head:
@@ -159,6 +234,7 @@ def review_rows(config: Config) -> list[dict]:
     entries = [e for e in Ledger(config).all() if e.status == STATUS_CANDIDATE]
     sigs = {e.id: (e.signature or signature(e.steps)) for e in entries}
     tags = load_review(config)
+    summaries = load_summaries(config)
     rows = []
     for e in entries:
         others = [(similarity(sigs[e.id], sigs[o.id]), o)
@@ -177,6 +253,9 @@ def review_rows(config: Config) -> list[dict]:
             "closest": ({"id": near.id, "title": near.title,
                          "score": round(score, 2)} if near else None),
             "tag": tags.get(e.id, ""),
+            "summary": _cached_summary(summaries, e),
+            "reports": [st["closing_note"] for st in e.steps
+                        if st.get("closing_note")],
         })
     return sorted(rows, key=lambda r: (r["title"] or "").lower())
 
@@ -281,6 +360,10 @@ def make_handler(config: Config, skills_dir: Path):
                 return self._send(200, json.dumps(
                     save_skill(path, payload.get("body", ""))))
 
+            if self.path == "/api/review/summary":
+                return self._send(200, json.dumps(
+                    summarise(config, str(payload.get("id", "")))))
+
             if self.path == "/api/review":
                 return self._send(200, json.dumps(save_review(
                     config, str(payload.get("id", "")),
@@ -363,6 +446,9 @@ PAGE = """<!doctype html>
      border-color:var(--fg)}
  .rvbody h4{margin:10px 0 4px;font-size:12px;color:var(--dim);font-weight:600}
  .rvbody ol{margin:0;padding-left:20px;font-size:13px}
+ .rvsum{flex-basis:100%;font-size:13.5px;color:var(--fg);margin:2px 0 0}
+ .rvsum.pending{color:var(--dim);font-style:italic}
+ .rvbody ul{margin:0;padding-left:20px;font-size:13px}
 </style>
 <header>
  <h1>Skill Plus Plus</h1>
@@ -425,16 +511,21 @@ function reviewRow(r){
     <div class="rvhead" data-toggle="${esc(r.id)}">
       <span class="title">${esc(r.title)||"(untitled)"}</span>
       ${r.title_from_prompt?'<span class="tag warn">title is a prompt</span>':""}
-      <span class="tag">×${r.occurrences}</span>
+      <span class="tag" title="how many separate sessions did this same work">seen in ${r.occurrences} session${r.occurrences===1?"":"s"}</span>
       <span class="tag">${r.step_count} steps</span>
       ${r.ready?'<span class="tag method">ready</span>':""}
       <span class="picks">${PICKS.map(([k,l])=>
         `<button data-tag="${k}" data-for="${esc(r.id)}" aria-pressed="${r.tag===k}">${l}</button>`
       ).join("")}</span>
+      <p class="rvsum ${r.summary?"":"pending"}" data-sum="${esc(r.id)}">${
+        r.summary ? esc(r.summary) : "summarising…"}</p>
     </div>
     <div class="rvbody">
       <div class="meta">${esc(r.id)} · last seen ${esc(r.last_seen)}${near?" · "+near:""}</div>
       <h4>What was asked (${r.intents.length})</h4>${prompts}
+      <h4>What the assistant reported (${r.reports.length})</h4>${
+        r.reports.length ? `<ul>${r.reports.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`
+        : '<p class="desc"><em>no completion reports recorded</em></p>'}
       <h4>What was done (${r.step_count})</h4>${steps}
     </div></div>`;
 }
@@ -470,6 +561,34 @@ function renderReview(m){
       body:JSON.stringify({id,tag})})).json();
     if(r.ok){ row.tag=tag; render(); }
   });
+  fillSummaries();
+}
+
+let filling = false;
+async function fillSummaries(){
+  // One at a time: each is a local model call, and the page stays usable while
+  // they arrive. Rows are updated in place so an expanded row stays expanded.
+  if(filling) return;
+  filling = true;
+  try {
+    for(const r of S.review){
+      if(r.summary || r.summary_failed) continue;
+      let res;
+      try {
+        res = await (await fetch("/api/review/summary",{method:"POST",
+          body:JSON.stringify({id:r.id})})).json();
+      } catch(e){ res = {ok:false, error:String(e)}; }
+      const el = document.querySelector(`[data-sum="${CSS.escape(r.id)}"]`);
+      if(res.ok){
+        r.summary = res.summary;
+        if(el){ el.textContent = res.summary; el.classList.remove("pending"); }
+      } else {
+        r.summary_failed = true;
+        if(el){ el.textContent = "no summary — " + res.error; }
+        if(/no local model/.test(res.error||"")) break;   // do not hammer a dead model
+      }
+    }
+  } finally { filling = false; }
 }
 
 function render(){
