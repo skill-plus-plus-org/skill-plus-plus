@@ -106,6 +106,11 @@ class Config:
         self.embed_model = _str_env("SKILLPP_EMBED_MODEL", "nomic-embed-text")
         self.near_miss_floor = _float_env("SKILLPP_NEAR_MISS_FLOOR", 0.70)
         self.embed_floor = _float_env("SKILLPP_EMBED_FLOOR", 0.80)
+        # Cosine at or above which an episode joins an existing entry, in
+        # `matching.find_same`. Provisional: 0.92 is the lowest value with no
+        # wrong merge in a pairwise sweep over the live sessions. Calibrated on
+        # `tests/fixtures/sessions/recurrence.py`, which scores clusters.
+        self.match_floor = _float_env("SKILLPP_MATCH_FLOOR", 0.92)
         # The queued pass casts a far wider net than the floor above, because
         # 0.70 was chosen when the only thing on the other side of it was a
         # live command someone had typed and was waiting on. Measured failure:

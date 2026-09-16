@@ -2875,6 +2875,98 @@ class TestTheQueuedNearMissPass(TempRoot):
         self.assertEqual(run_background_check(self.config)["merged"], 1)
 
 
+class TestMatching(TempRoot):
+    """`skillpp.matching`: same procedure, decided by an embedding.
+
+    The embedder is stubbed with fixed vectors so these test the matcher's own
+    rules — what it compares, what it caches, where the floor sits — without a
+    model.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        import skillpp.matching as matching
+        self.matching = matching
+        self.calls: list[str] = []
+        self.vectors: dict[str, list[float]] = {}
+        real = matching.embed
+
+        def fake(text, **kw):
+            self.calls.append(text)
+            for needle, vector in self.vectors.items():
+                if needle in text:
+                    return vector
+            return [0.0, 0.0, 1.0]
+        matching.embed = fake
+        self.addCleanup(lambda: setattr(matching, "embed", real))
+        self.config.match_floor = 0.9
+
+    def _entry(self, eid, command, status="candidate"):
+        entry = Entry(id=eid, signature="", title=eid, status=status,
+                      intents=[f"do {command}"], steps=[bash(command)])
+        Ledger(self.config).save(entry)
+        return entry
+
+    def test_the_closest_entry_above_the_floor_is_the_match(self):
+        self.vectors = {"regenerate": [1.0, 0.0, 0.0], "restart": [0.0, 1.0, 0.0]}
+        a = self._entry("a", "regenerate evalset")
+        b = self._entry("b", "restart servers")
+        match = self.matching.find_same([bash("regenerate evalset")], ["again"],
+                                        [a, b], self.config)
+        self.assertEqual(match[0].id, "a")
+        self.assertAlmostEqual(match[1], 1.0)
+
+    def test_nothing_above_the_floor_is_no_match(self):
+        self.vectors = {"regenerate": [1.0, 0.0, 0.0], "restart": [0.6, 0.8, 0.0]}
+        a = self._entry("a", "regenerate evalset")
+        self.assertIsNone(self.matching.find_same(
+            [bash("restart servers")], [], [a], self.config))
+
+    def test_a_parked_entry_is_still_compared(self):
+        """Otherwise its next occurrence would rebuild it and undo the parking."""
+        self.vectors = {"regenerate": [1.0, 0.0, 0.0]}
+        a = self._entry("a", "regenerate evalset", status="dismissed")
+        match = self.matching.find_same([bash("regenerate evalset")], [], [a],
+                                        self.config)
+        self.assertEqual(match[0].id, "a")
+
+    def test_an_entry_is_embedded_once_and_again_only_when_it_changes(self):
+        self.vectors = {"regenerate": [1.0, 0.0, 0.0]}
+        a = self._entry("a", "regenerate evalset")
+        for _ in range(3):
+            self.matching.find_same([bash("regenerate evalset")], [], [a], self.config)
+        entry_embeds = [t for t in self.calls if t.startswith("do regenerate")]
+        self.assertEqual(len(entry_embeds), 1, "cached after the first time")
+
+        a.intents = ["do regenerate evalset, differently worded"]
+        self.matching.find_same([bash("regenerate evalset")], [], [a], self.config)
+        entry_embeds = [t for t in self.calls if t.startswith("do regenerate")]
+        self.assertEqual(len(entry_embeds), 2, "a changed text is embedded again")
+
+    def test_a_different_embedding_model_is_not_served_from_the_cache(self):
+        self.vectors = {"regenerate": [1.0, 0.0, 0.0]}
+        a = self._entry("a", "regenerate evalset")
+        self.matching.find_same([bash("regenerate evalset")], [], [a], self.config)
+        before = len(self.calls)
+        self.config.embed_model = "some-other-embedder"
+        self.matching.find_same([bash("regenerate evalset")], [], [a], self.config)
+        self.assertEqual(len(self.calls) - before, 2, "episode and entry both re-embedded")
+
+    def test_an_unreachable_model_raises_rather_than_guessing(self):
+        from skillpp.local import LocalModelUnavailable
+        a = self._entry("a", "regenerate evalset")
+
+        def down(text, **kw):
+            raise LocalModelUnavailable("down")
+        self.matching.embed = down
+        with self.assertRaises(LocalModelUnavailable):
+            self.matching.find_same([bash("regenerate evalset")], [], [a], self.config)
+
+    def test_no_entries_is_no_match_and_no_model_call(self):
+        self.assertIsNone(self.matching.find_same([bash("x")], [], [], self.config))
+        self.assertEqual(self.calls, [])
+
+
 class TestEmbeddingMatch(TempRoot):
     """The one shape lexical similarity cannot see.
 
