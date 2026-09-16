@@ -14,6 +14,13 @@ model could be waited on. That stopped being true when `SessionEnd` began waitin
 on the local model for the boundary judge; a session with no model is already
 held offline rather than guessed at.
 
+What is embedded is the steps alone, one numbered line each: `3. Bash git
+status --short`. No prompt. Prompts pulled matching toward wording rather than
+work: three card-case sessions opened with the same doc-lookup sentence, which
+held them together at 0.97 and pulled an unrelated run that opened the same way
+to 0.914, six thousandths under the floor. With the steps alone, measured on the
+eleven live sessions, 0.93 is the lowest floor with no wrong merge.
+
 Vectors are cached per entry in `<root>/embeddings.json`, keyed on the model and
 a hash of the embedded text, so an entry is embedded once and again only when
 either changes.
@@ -27,18 +34,39 @@ from pathlib import Path
 
 from .ledger import Entry
 from .local import cosine, embed
-from .similar import as_text
+
+# Each step's command or path is cut here, and the whole text at TEXT_CHARS on a
+# step boundary. nomic-embed-text reads about 2,048 tokens and refuses anything
+# longer rather than truncating; the longest live run, 85 steps, is 7,153
+# characters and is refused, while its first 69 steps (5,804) are not. Every
+# other live run is under 4,200 and is embedded whole.
+STEP_CHARS = 120
+TEXT_CHARS = 5000
+
+
+def steps_text(steps: list[dict]) -> str:
+    """The steps as numbered lines, `N. Tool command-or-path` — what is embedded.
+
+    Raw commands, not fingerprints: reducing `python3 -m unittest discover` to
+    `python3` removes the very token that makes it recognisable as a test run.
+    """
+    lines: list[str] = []
+    size = 0
+    for n, step in enumerate(steps, 1):
+        payload = step.get("input") or {}
+        body = (payload.get("command") or payload.get("file_path")
+                or ", ".join(f"{k}={v}" for k, v in list(payload.items())[:2]))
+        line = f"{n}. {step.get('tool', '?')} {str(body)[:STEP_CHARS]}"
+        if lines and size + len(line) + 1 > TEXT_CHARS:
+            break
+        lines.append(line)
+        size += len(line) + 1
+    return "\n".join(lines)
 
 
 def entry_text(entry: Entry) -> str:
-    """What is embedded for an entry: its first prompt, then its steps."""
-    return as_text(entry)
-
-
-def episode_text(steps: list[dict], intents: list[str]) -> str:
-    """The same text for an episode that is not an entry yet."""
-    return as_text(Entry(id="", signature="", title="", intents=list(intents),
-                         steps=list(steps)))
+    """What is embedded for an entry: the steps of its first run."""
+    return steps_text(entry.steps)
 
 
 def _cache_path(config) -> Path:
@@ -89,7 +117,7 @@ def vector_for(entry: Entry, config, cache: dict) -> list[float]:
     return vector
 
 
-def find_same(steps: list[dict], intents: list[str], entries: list[Entry],
+def find_same(steps: list[dict], entries: list[Entry],
               config) -> tuple[Entry, float] | None:
     """The existing entry this episode is a run of, or None.
 
@@ -105,7 +133,7 @@ def find_same(steps: list[dict], intents: list[str], entries: list[Entry],
         return None
     cache = load_cache(config)
     try:
-        query = embed(episode_text(steps, intents), model=config.embed_model,
+        query = embed(steps_text(steps), model=config.embed_model,
                       host=config.ollama_url)
         best, best_score = None, -1.0
         for entry in entries:

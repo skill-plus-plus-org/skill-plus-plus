@@ -1363,34 +1363,70 @@ against a hand-written family label:
 
 | family | runs |
 | --- | --- |
-| add-card-eval-case | 5 — the walkthrough-card sessions, `a8b61dae`, `241955c7` task 2 |
-| add-fact-eval-case | 2 — `d5fd2e59`, `a7be1ef5` |
+| add-eval-case | 7 — the three walkthrough-card sessions, `a8b61dae`, `241955c7` task 2, and the two handbook fact sessions `d5fd2e59`, `a7be1ef5` |
 | coverage-writeup | 2 |
 
-Card and fact cases are two procedures: they share the mechanical half (edit
-`cases.json`, regenerate, commit) and differ in where the right answer comes from
-and how it is asserted.
+Card and fact cases were two families for a while. Compared step by step
+(`d5fd2e59` against `241955c7`'s atlas case) they are the same work — read
+`cases.json`, edit it, check the JSON, regenerate, commit — and the steps that
+differ do the same job with other commands (`ls` and `head` against `find` and
+`grep`, both locating `generate_evalset.py`). What tells them apart is only in
+the prompt and in the JSON written, and two fact runs were too few to hold a
+family only the prompt could separate.
+
+Scored as **wrong runs** — a run placed in an entry started by a different
+procedure — and **missing merges** — how many extra entries a procedure is spread
+over. Wrong runs must be zero. Pair counts, used first, grew with the square of a
+family's size, so the eval-case family was most of every number.
+
+### What is embedded
+
+The first shipped text was `as_text`: the first prompt, then each step's command.
+The prompt was the problem. `_intents_for` puts first the last prompt before any
+work, which in three card-case sessions was the same scripted sentence, "Use the
+adk-docs MCP tool to look up how ADK eval cases…". That sentence held those three
+together at 0.97 and pulled `95b6bde7` — a docs comparison that edits nothing,
+opening with the same lookup — to 0.914, six thousandths under the floor.
+
+Now the steps alone, one numbered line each, cut at 120 characters:
+
+```
+1. Read ${HOME}/ai_projects/acme/backend/acme_agent/eval/cases.json
+2. Edit ${HOME}/ai_projects/acme/backend/acme_agent/eval/cases.json
+3. Bash python3 -c "import json; json.load(open('${HOME}/ai_projects/acme/backend/acme_agent/eval/cases.json')
+```
+
+nomic-embed-text refuses input past about 2,048 tokens instead of truncating; the
+85-step article run is refused whole and accepted at 69 steps, so the text is cut
+on a step boundary at 5,000 characters. No other live run reaches it.
 
 ### Measured
 
-| matcher | card (5) | fact (2) | coverage (2) | merged / 12 | wrong |
-| --- | --- | --- | --- | --- | --- |
-| signature (before) | 5 entries | 2 | 2 | 0 | 0 |
-| embedding, 0.88 | 2 | 1 | 1 | 6 | 3 |
-| embedding, 0.90 | 3 | 1 | 1 | 5 | 3 |
-| **embedding, 0.92 (shipped)** | **3** | **2** | **1** | **4** | **0** |
+Wrong runs / missing merges, eleven live sessions, one eval-case family:
 
-**The floor is set by wrong merges, not by merge count.** A wrong merge silently
+| floor | first prompt + commands | **numbered steps** | signature, embedded |
+| --- | --- | --- | --- |
+| 0.86 | 3 / 2 | 1 / 2 | 1 / 1 |
+| 0.90 | 1 / 3 | 1 / 2 | 1 / 4 |
+| 0.92 | 0 / 4 | 1 / 3 | 0 / 4 |
+| **0.93 (shipped)** | 0 / 4 | **0 / 4** | 0 / 4 |
+
+The wrong run left from 0.86 to 0.92 is `95b6bde7` joining the card cases at
+0.921. At 0.93 the eval cases sit in four entries: the three long card runs that
+open with the doc lookup (0.939–0.969 to each other), `241955c7` task 2 with the
+course case (0.930), and the holidays case and `a8b61dae` alone. The long and short
+eval-case runs never score above 0.822 against each other: the long ones carry a
+dozen lookups and searches the short ones do not. The two coverage write-ups
+score 0.846 and stay apart.
+
+**The floor is set by wrong runs, not by merge count.** A wrong merge silently
 mixes two procedures into one skill; a missed merge leaves a duplicate a person
-can still see and fold. Every wrong merge below 0.92 is a card case joining
-`95b6bde7`, which performs the same ADK doc lookup for a different job.
+can still see and fold.
 
-What was embedded matters. `as_text` — first prompt plus commands — separated
-best. Commands alone were worse, and a one-sentence summary was worst: it names
-the subject (course, timesheet), so different procedures on one subject matched.
-Comparing a new run against every run an entry holds, rather than its first,
-changed nothing.
-
-The remaining misses — card cases in three entries, fact cases in two — are the
-open question for a model confirmation step: embeddings to find the nearest few,
-the local model to say whether they are the same procedure.
+Tried and rejected on the same sessions: the signature string embedded (card and
+fact runs look identical, and `95b6bde7` shares its first three shapes with the
+card cases); structured steps without commands (anything nearly empty scores 1.0
+against anything else); padding short runs with placeholders (short runs grow
+alike, one more wrong run at 0.92 and 0.95); prompts in any selection (the
+prompt of the first edit did best, but 36 of 98 real prompts are five words or
+fewer — "option 1", "do it again" — which would embed identically).

@@ -1,7 +1,7 @@
 """Shared pieces for deciding and applying "same procedure".
 
-`as_text` is what gets embedded for an entry (`skillpp.matching`), and
-`fold_into` moves one entry's evidence into another (`skillpp merge`).
+`fold_into` moves one entry's evidence into another (`skillpp merge`). What is
+embedded to decide a merge lives in `skillpp.matching`.
 
 This module used to hold a background pass: signature similarity as a filter,
 then an embedding for the pairs that got through. The filter was lexical and
@@ -10,24 +10,6 @@ asymmetric, and hid pairs an embedding rates 0.98 alike behind a score of
 """
 
 from __future__ import annotations
-
-
-def as_text(entry) -> str:
-    """An entry as one line an embedding model can read.
-
-    Intent first because it says what the work was *for*, then the steps in
-    order. Raw commands, not fingerprints: reducing `python3 -m unittest
-    discover` to `python3` removes the very token that makes it recognisable as
-    a test run.
-    """
-    intent = (entry.intents or [entry.title or ""])[0]
-    steps = []
-    for step in entry.steps[:30]:
-        payload = step.get("input") or {}
-        body = (payload.get("command") or payload.get("file_path")
-                or ", ".join(f"{k}={v}" for k, v in list(payload.items())[:2]))
-        steps.append(f"{step.get('tool', '?')}: {str(body)[:120]}")
-    return f"{intent}\n" + "\n".join(steps)
 
 
 def fold_into(keep, drop) -> None:

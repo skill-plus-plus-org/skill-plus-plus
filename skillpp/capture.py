@@ -571,7 +571,7 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
     existing = None
     if match:
         from .matching import find_same
-        hit = find_same(substantive, intents, list(ledger.all()), config)
+        hit = find_same(substantive, list(ledger.all()), config)
         existing = hit[0] if hit else None
 
     deps_mcp = sorted({s["tool"] for s in substantive if s["tool"].startswith("mcp__")})
@@ -716,7 +716,7 @@ def fold_dictation(config: Config, text: str, title: str = "") -> dict:
     from .matching import find_same
     unmatched = False
     try:
-        hit = find_same(stated, intents,
+        hit = find_same(stated,
                         [e for e in ledger.all() if e.source == "dictated"], config)
     except LocalModelUnavailable:
         hit, unmatched = None, True

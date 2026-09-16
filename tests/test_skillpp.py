@@ -56,24 +56,23 @@ def _sig(steps):
 def _stub_embed(text, **kw):
     """A deterministic stand-in for the embedding model.
 
-    `matching.as_text` renders an entry as its first prompt, then one line per
-    step, `tool: body`. This embeds only the *kind* of each step — the prompt is
-    skipped and a Bash command is reduced to `normalize_command` — as a bag of
-    hashed tokens. So two runs of the same workflow with different arguments or
-    different wording score 1.0, and different workflows score lower, which is
-    the behaviour the suite was written against. It says nothing about how well
-    a real embedding separates procedures; `tests/fixtures/sessions/
-    recurrence.py` measures that.
+    `matching.steps_text` renders a run as one numbered line per step,
+    `N. Tool body`. This embeds only the *kind* of each step — a Bash command is
+    reduced to `normalize_command` — as a bag of hashed tokens. So two runs of
+    the same workflow with different arguments score 1.0, and different
+    workflows score lower, which is the behaviour the suite was written against.
+    It says nothing about how well a real embedding separates procedures;
+    `tests/fixtures/sessions/recurrence.py` measures that.
     """
     import hashlib
-    lines = text.splitlines()[1:] or text.splitlines()
     vector = [0.0] * 256
-    for line in lines:
-        tool, _, body = line.partition(": ")
+    for line in text.splitlines():
         # A multi-line command continues on lines of its own; only a line that
-        # opens with a tool name is a step.
-        if not re.fullmatch(r"(mcp__[\w-]+|[A-Z][A-Za-z]+)", tool):
+        # opens with a step number and a tool name is a step.
+        m = re.match(r"\d+\. (mcp__[\w-]+|[A-Z][A-Za-z]+) ?(.*)", line)
+        if not m:
             continue
+        tool, body = m.groups()
         if tool == "Bash":
             token = "bash:" + normalize_command(body)
         elif tool in ("Edit", "Write", "NotebookEdit"):
@@ -2674,12 +2673,28 @@ class TestMatching(TempRoot):
         Ledger(self.config).save(entry)
         return entry
 
+    def test_what_is_embedded_is_the_numbered_steps_and_no_prompt(self):
+        entry = Entry(id="a", signature="", title="a",
+                      intents=["Use the adk-docs MCP tool first"],
+                      steps=[{"tool": "Read", "input": {"file_path": "eval/cases.json"}},
+                             bash("git status --short")])
+        self.assertEqual(self.matching.entry_text(entry),
+                         "1. Read eval/cases.json\n2. Bash git status --short")
+
+    def test_a_long_run_is_cut_on_a_step_boundary_under_the_limit(self):
+        steps = [bash("x" * 200) for _ in range(100)]
+        text = self.matching.steps_text(steps)
+        self.assertLessEqual(len(text), self.matching.TEXT_CHARS)
+        last = text.splitlines()[-1]
+        self.assertEqual(len(last.split(" ", 2)[2]), self.matching.STEP_CHARS,
+                         "every kept step is whole, cut only at STEP_CHARS")
+
     def test_the_closest_entry_above_the_floor_is_the_match(self):
         self.vectors = {"regenerate": [1.0, 0.0, 0.0], "restart": [0.0, 1.0, 0.0]}
         a = self._entry("a", "regenerate evalset")
         b = self._entry("b", "restart servers")
-        match = self.matching.find_same([bash("regenerate evalset")], ["again"],
-                                        [a, b], self.config)
+        match = self.matching.find_same([bash("regenerate evalset")], [a, b],
+                                        self.config)
         self.assertEqual(match[0].id, "a")
         self.assertAlmostEqual(match[1], 1.0)
 
@@ -2687,13 +2702,13 @@ class TestMatching(TempRoot):
         self.vectors = {"regenerate": [1.0, 0.0, 0.0], "restart": [0.6, 0.8, 0.0]}
         a = self._entry("a", "regenerate evalset")
         self.assertIsNone(self.matching.find_same(
-            [bash("restart servers")], [], [a], self.config))
+            [bash("restart servers")], [a], self.config))
 
     def test_a_parked_entry_is_still_compared(self):
         """Otherwise its next occurrence would rebuild it and undo the parking."""
         self.vectors = {"regenerate": [1.0, 0.0, 0.0]}
         a = self._entry("a", "regenerate evalset", status="dismissed")
-        match = self.matching.find_same([bash("regenerate evalset")], [], [a],
+        match = self.matching.find_same([bash("regenerate evalset")], [a],
                                         self.config)
         self.assertEqual(match[0].id, "a")
 
@@ -2701,22 +2716,21 @@ class TestMatching(TempRoot):
         self.vectors = {"regenerate": [1.0, 0.0, 0.0]}
         a = self._entry("a", "regenerate evalset")
         for _ in range(3):
-            self.matching.find_same([bash("regenerate evalset")], [], [a], self.config)
-        entry_embeds = [t for t in self.calls if t.startswith("do regenerate")]
-        self.assertEqual(len(entry_embeds), 1, "cached after the first time")
+            self.matching.find_same([bash("regenerate evalset")], [a], self.config)
+        # Every call embeds the episode; only the entry's own embeds are counted.
+        self.assertEqual(len(self.calls), 3 + 1, "entry cached after the first time")
 
-        a.intents = ["do regenerate evalset, differently worded"]
-        self.matching.find_same([bash("regenerate evalset")], [], [a], self.config)
-        entry_embeds = [t for t in self.calls if t.startswith("do regenerate")]
-        self.assertEqual(len(entry_embeds), 2, "a changed text is embedded again")
+        a.steps = [bash("regenerate evalset --force")]
+        self.matching.find_same([bash("regenerate evalset")], [a], self.config)
+        self.assertEqual(len(self.calls), 4 + 2, "a changed text is embedded again")
 
     def test_a_different_embedding_model_is_not_served_from_the_cache(self):
         self.vectors = {"regenerate": [1.0, 0.0, 0.0]}
         a = self._entry("a", "regenerate evalset")
-        self.matching.find_same([bash("regenerate evalset")], [], [a], self.config)
+        self.matching.find_same([bash("regenerate evalset")], [a], self.config)
         before = len(self.calls)
         self.config.embed_model = "some-other-embedder"
-        self.matching.find_same([bash("regenerate evalset")], [], [a], self.config)
+        self.matching.find_same([bash("regenerate evalset")], [a], self.config)
         self.assertEqual(len(self.calls) - before, 2, "episode and entry both re-embedded")
 
     def test_an_unreachable_model_raises_rather_than_guessing(self):
@@ -2727,10 +2741,10 @@ class TestMatching(TempRoot):
             raise LocalModelUnavailable("down")
         self.matching.embed = down
         with self.assertRaises(LocalModelUnavailable):
-            self.matching.find_same([bash("regenerate evalset")], [], [a], self.config)
+            self.matching.find_same([bash("regenerate evalset")], [a], self.config)
 
     def test_no_entries_is_no_match_and_no_model_call(self):
-        self.assertIsNone(self.matching.find_same([bash("x")], [], [], self.config))
+        self.assertIsNone(self.matching.find_same([bash("x")], [], self.config))
         self.assertEqual(self.calls, [])
 
 

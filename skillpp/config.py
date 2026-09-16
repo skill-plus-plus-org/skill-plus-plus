@@ -100,9 +100,10 @@ class Config:
         # wrong merges stop, not where merges are most numerous: a wrong merge
         # silently mixes two procedures into one skill, a missed one only leaves
         # a duplicate a person can still see. Measured on the eleven live
-        # sessions (`tests/fixtures/sessions/recurrence.py`): 0.92 is the lowest
-        # floor with no wrong merge; 0.88-0.90 merge more and get three wrong.
-        self.match_floor = _float_env("SKILLPP_MATCH_FLOOR", 0.92)
+        # sessions (`tests/fixtures/sessions/recurrence.py`), embedding the
+        # steps alone: 0.93 is the lowest floor with no wrong merge; 0.86-0.92
+        # merge more and put an unrelated run in with the eval cases.
+        self.match_floor = _float_env("SKILLPP_MATCH_FLOOR", 0.93)
         self.min_episode_steps = _int_env("SKILLPP_MIN_EPISODE_STEPS", 2)
 
     @property
