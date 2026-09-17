@@ -36,10 +36,12 @@ from .ledger import Entry
 from .local import cosine, embed
 
 # Each step's command or path is cut here, and the whole text at TEXT_CHARS on a
-# step boundary. nomic-embed-text reads about 2,048 tokens and refuses anything
-# longer rather than truncating; the longest live run, 85 steps, is 7,153
-# characters and is refused, while its first 69 steps (5,804) are not. Every
-# other live run is under 4,200 and is embedded whole.
+# step boundary. This bounds what is embedded; it does not keep the text inside
+# the model's context. It used to be meant to — nomic-embed-text reads 2,048
+# tokens — but real runs cost 2.11 to 2.4 characters a token, so 5,000
+# characters can be 2,370 tokens, and two ledger entries at that length made
+# every fold after them fail. `local.embed` now truncates at the model's own
+# limit and `_log_truncation` says when it did.
 STEP_CHARS = 120
 TEXT_CHARS = 5000
 
@@ -102,6 +104,14 @@ def cached_vector(entry: Entry, config, cache: dict) -> list[float] | None:
     return None
 
 
+def _log_truncation(config, what: str):
+    """A callback for `embed` that records a match made on a cut text."""
+    def note(tokens: int) -> None:
+        from .capture import log_error
+        log_error(config, f"embedding truncated at {tokens} tokens: {what}")
+    return note
+
+
 def vector_for(entry: Entry, config, cache: dict) -> list[float]:
     """The entry's vector, from the cache when it still describes the entry.
 
@@ -112,7 +122,8 @@ def vector_for(entry: Entry, config, cache: dict) -> list[float]:
     hit = cache.get(entry.id)
     if hit and hit.get("model") == config.embed_model and hit.get("hash") == key:
         return hit["vector"]
-    vector = embed(text, model=config.embed_model, host=config.ollama_url)
+    vector = embed(text, model=config.embed_model, host=config.ollama_url,
+                   on_truncate=_log_truncation(config, f"entry {entry.id}"))
     cache[entry.id] = {"model": config.embed_model, "hash": key, "vector": vector}
     return vector
 
@@ -134,7 +145,8 @@ def find_same(steps: list[dict], entries: list[Entry],
     cache = load_cache(config)
     try:
         query = embed(steps_text(steps), model=config.embed_model,
-                      host=config.ollama_url)
+                      host=config.ollama_url,
+                      on_truncate=_log_truncation(config, "new episode"))
         best, best_score = None, -1.0
         for entry in entries:
             score = cosine(query, vector_for(entry, config, cache))

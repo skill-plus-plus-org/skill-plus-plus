@@ -24,6 +24,7 @@ import json
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Callable
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 
@@ -107,17 +108,33 @@ DEFAULT_EMBED_MODEL = "nomic-embed-text"
 
 
 def embed(text: str, *, model: str = DEFAULT_EMBED_MODEL,
-          host: str = DEFAULT_HOST, timeout: float = 60.0) -> list[float]:
+          host: str = DEFAULT_HOST, timeout: float = 60.0,
+          on_truncate: Callable[[int], None] | None = None) -> list[float]:
     """Embed *text* with a local embedding model.
 
     Separate from :func:`ask` because it is a different endpoint and a different
     kind of question. Embeddings answer "are these the same shape", which is the
     one thing lexical comparison cannot do — `npm test` and `pytest -q` play the
     same role in a release and share not one token.
+
+    `/api/embed` with `truncate`, not the legacy `/api/embeddings`. The legacy
+    endpoint refuses input past the model's context with an HTTP 500, which read
+    here as "could not reach" — so two long ledger entries (174 and 47 steps)
+    made every later fold in their project crash as if Ollama were down. A
+    character cap cannot prevent that: measured chars per token on real runs
+    went from 2.4 down to 2.11, and hash-like paths go lower. Truncating here
+    cuts at the model's own token limit, and keeps the head, which is what the
+    character cap in `matching` already kept. Same vectors either way — cosine
+    1.000000 between the two endpoints on the same text.
+
+    *on_truncate* is called with the token count when the model's limit was
+    reached, so the caller can say so instead of matching on a fragment
+    silently.
     """
-    body = json.dumps({"model": model, "prompt": text}).encode("utf-8")
+    body = json.dumps({"model": model, "input": text,
+                       "truncate": True}).encode("utf-8")
     request = urllib.request.Request(
-        f"{host.rstrip('/')}/api/embeddings", data=body,
+        f"{host.rstrip('/')}/api/embed", data=body,
         headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -127,10 +144,44 @@ def embed(text: str, *, model: str = DEFAULT_EMBED_MODEL,
             f"could not reach an embedding model at {host}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise LocalModelUnavailable(f"unreadable reply from {host}") from exc
-    vector = payload.get("embedding")
+    vectors = payload.get("embeddings")
+    vector = vectors[0] if isinstance(vectors, list) and vectors else None
     if not isinstance(vector, list) or not vector:
         raise LocalModelUnavailable(f"no embedding in the reply from {host}")
+    if on_truncate is not None:
+        used = payload.get("prompt_eval_count")
+        limit = _context_length(model, host)
+        if isinstance(used, int) and limit and used >= limit:
+            on_truncate(used)
     return [float(x) for x in vector]
+
+
+_CONTEXT_LENGTHS: dict[tuple[str, str], int | None] = {}
+
+
+def _context_length(model: str, host: str) -> int | None:
+    """The model's context in tokens, from `/api/show`; None if unknown.
+
+    Asked once per model and host. Only used to notice truncation, so any
+    failure means "don't know" and never costs the embedding itself.
+    """
+    key = (host, model)
+    if key not in _CONTEXT_LENGTHS:
+        length = None
+        try:
+            request = urllib.request.Request(
+                f"{host.rstrip('/')}/api/show",
+                data=json.dumps({"model": model}).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(request, timeout=10.0) as response:
+                info = json.loads(response.read().decode("utf-8")).get("model_info") or {}
+            length = next((int(v) for k, v in info.items()
+                           if k.endswith(".context_length")), None)
+        except (urllib.error.URLError, OSError, TimeoutError,
+                json.JSONDecodeError, AttributeError, TypeError, ValueError):
+            length = None
+        _CONTEXT_LENGTHS[key] = length
+    return _CONTEXT_LENGTHS[key]
 
 
 def cosine(a: list[float], b: list[float]) -> float:

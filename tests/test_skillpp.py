@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -3947,6 +3948,99 @@ class TestLiveSessions(unittest.TestCase):
                 blob = json.dumps(doc["steps"])
                 self.assertNotIn(str(Path.home()), blob)
                 self.assertIsNone(secret.search(blob))
+
+
+class TestEmbedEndpoint(TempRoot):
+    """`local.embed` truncates at the model's limit instead of failing.
+
+    The legacy endpoint answered an overlong text with HTTP 500, which read as
+    "model unreachable" and crashed every later fold in the project.
+    """
+
+    def setUp(self):
+        super().setUp()
+        import skillpp.local as local
+        self.local = local
+        local._CONTEXT_LENGTHS.clear()
+        self.requests = []
+
+    def _serve(self, embed_reply, show_reply=None, show_fails=False):
+        import io
+        import urllib.error
+
+        def fake_urlopen(request, timeout=None):
+            self.requests.append((request.full_url,
+                                  json.loads(request.data.decode("utf-8"))))
+            if request.full_url.endswith("/api/show"):
+                if show_fails:
+                    raise urllib.error.URLError("down")
+                body = show_reply
+            else:
+                body = embed_reply
+            return io.BytesIO(json.dumps(body).encode("utf-8"))
+        return mock.patch("urllib.request.urlopen", fake_urlopen)
+
+    def test_asks_the_embed_endpoint_to_truncate(self):
+        with self._serve({"embeddings": [[0.5, 0.25]], "prompt_eval_count": 12}):
+            vector = self.local.embed("1. Bash git status", model="m", host="http://h")
+        self.assertEqual(vector, [0.5, 0.25])
+        url, body = self.requests[0]
+        self.assertEqual(url, "http://h/api/embed")
+        self.assertEqual(body, {"model": "m", "input": "1. Bash git status",
+                                "truncate": True})
+
+    def test_reports_a_text_cut_at_the_context_length(self):
+        seen = []
+        show = {"model_info": {"nomic-bert.context_length": 2048}}
+        with self._serve({"embeddings": [[1.0]], "prompt_eval_count": 2048}, show):
+            self.local.embed("x", model="m", host="http://h", on_truncate=seen.append)
+        self.assertEqual(seen, [2048])
+
+    def test_a_text_that_fits_is_not_reported(self):
+        seen = []
+        show = {"model_info": {"nomic-bert.context_length": 2048}}
+        with self._serve({"embeddings": [[1.0]], "prompt_eval_count": 900}, show):
+            self.local.embed("x", model="m", host="http://h", on_truncate=seen.append)
+        self.assertEqual(seen, [])
+
+    def test_an_unknown_context_length_still_embeds(self):
+        seen = []
+        with self._serve({"embeddings": [[1.0]], "prompt_eval_count": 2048},
+                         show_fails=True):
+            vector = self.local.embed("x", model="m", host="http://h",
+                                      on_truncate=seen.append)
+        self.assertEqual((vector, seen), ([1.0], []))
+
+    def test_no_callback_asks_nothing_about_the_model(self):
+        with self._serve({"embeddings": [[1.0]], "prompt_eval_count": 2048}):
+            self.local.embed("x", model="m", host="http://h")
+        self.assertEqual([u for u, _ in self.requests], ["http://h/api/embed"])
+
+    def test_unreachable_is_still_unavailable(self):
+        import urllib.error
+
+        def down(request, timeout=None):
+            raise urllib.error.URLError("refused")
+        with mock.patch("urllib.request.urlopen", down):
+            with self.assertRaises(self.local.LocalModelUnavailable):
+                self.local.embed("x", model="m", host="http://h")
+
+    def test_find_same_logs_a_truncated_match(self):
+        import skillpp.matching as matching
+        from skillpp.ledger import Entry
+        entry = Entry(id="longentry123", title="restart the servers",
+                      signature="", steps=[{"tool": "Bash",
+                                            "input": {"command": "./start.sh"}}])
+
+        def cut(text, on_truncate=None, **kw):
+            if on_truncate:
+                on_truncate(2048)
+            return _stub_embed(text)
+        with mock.patch.object(matching, "embed", cut):
+            matching.find_same(entry.steps, [entry], self.config)
+        log = self.config.log_file.read_text(encoding="utf-8")
+        self.assertIn("embedding truncated at 2048 tokens: new episode", log)
+        self.assertIn("embedding truncated at 2048 tokens: entry longentry123", log)
 
 
 class TestPromotedSkillsStayMatchable(TempRoot):

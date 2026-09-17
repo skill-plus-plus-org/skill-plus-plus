@@ -1396,9 +1396,20 @@ Now the steps alone, one numbered line each, cut at 120 characters:
 3. Bash python3 -c "import json; json.load(open('${HOME}/ai_projects/acme/backend/acme_agent/eval/cases.json')
 ```
 
-nomic-embed-text refuses input past about 2,048 tokens instead of truncating; the
-85-step article run is refused whole and accepted at 69 steps, so the text is cut
-on a step boundary at 5,000 characters. No other live run reaches it.
+The text is cut on a step boundary at 5,000 characters. That was meant to keep it
+inside nomic-embed-text's 2,048 tokens, and did not: real runs cost 2.11 to 2.4
+characters a token, and two ledger entries of 4,886 and 4,979 characters (174 and
+47 steps before the cut) were refused. The legacy `/api/embeddings` endpoint
+answered HTTP 500, read as "model unreachable", so every fold after them in the
+same project crashed. Embeddings now go through `/api/embed` with `truncate`,
+which cuts at the model's own limit and keeps the head, and the log records each
+truncation. Same vectors on the same text: cosine 1.000000 between the two
+endpoints, and a real pair scores 0.563799 on both.
+
+Over the full uncapped text, 4 of 52 texts exceed the limit (30 ledger entries,
+11 held session files, 11 fixtures): three ledger entries whose sessions were
+banked as one long episode, and the 99-step fixture. At least the first 43 steps
+of each fit.
 
 ### Measured
 
