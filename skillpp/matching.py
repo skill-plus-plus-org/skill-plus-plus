@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from .ledger import Entry
@@ -86,14 +87,45 @@ def steps_text(steps: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# What a run is *about* rather than what was *done* in it: the file names it
+# names, and the body of what the agent produced. Both were measured to pull
+# matching toward the material — `tests/benchmarks/merge_ladder.py` scores one
+# such change at a time over every live session.
+_FILE = re.compile(r"\b[\w./-]+\.(md|py|json|pptx|ts|tsx|js|yaml|yml|txt|pdf|docx|xlsx)\b")
+# How much of each reply is read. The opening is the agent saying what it is
+# doing — "Read article first. Here proposed deck, 10 slides…", "Claim audit —
+# draft vs <file>:" — and the rest is the deliverable.
+REPLY_HEAD = 300
+
+
 def turns_text(turns: list[dict]) -> str:
     """The run as it was said: `User: <prompt>` and `Agent: <reply>` per turn.
 
-    Its length is left to `embed`, which cuts at the model's token limit and
-    keeps the head — the opening request and the first replies.
+    File names are masked and each reply is cut to its opening, because two
+    procedures run over one document scored *higher* against each other (0.852,
+    a talk deck and a LinkedIn post from the same article) than two runs of one
+    procedure over different documents (0.831). Measured over 19 live sessions,
+    23 episodes, one change at a time:
+
+    | rendering | danger | safe floor | merged | 2-procedures-2-files gap |
+    |---|---|---|---|---|
+    | prompts and whole replies | 0.854 | 0.86 | 10/46 | -0.021 |
+    | + file names masked | 0.848 | 0.85 | 12/46 | +0.022 |
+    | **+ replies cut to 300** | 0.849 | **0.85** | **12/46** | **+0.057** |
+    | prompts only | 0.837 | 0.84 | 19/46 | +0.161 |
+
+    Prompts alone score best and are not used: every merge they added was a
+    presentation pair whose prompts were scripted and pasted word for word,
+    while the unscripted coding sessions gained nothing. Removing the
+    deliverable by its markdown shape was also measured and dropped — coding
+    replies carry their topic in plain sentences, so the danger line moved onto
+    a coding pair instead.
     """
-    return "\n\n".join(f"User: {t.get('prompt', '')}\nAgent: {t.get('reply', '')}"
-                       for t in turns)
+    lines = []
+    for turn in turns:
+        reply = " ".join(str(turn.get("reply", "")).split())[:REPLY_HEAD]
+        lines.append(f"User: {turn.get('prompt', '')}\nAgent: {reply}")
+    return _FILE.sub("<file>", "\n\n".join(lines))
 
 
 def has_conversation(turns: list[dict] | None) -> bool:

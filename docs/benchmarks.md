@@ -1458,10 +1458,48 @@ score between two different procedures:
 | **prompts and replies** | **0.854** | **0.84–0.88** | **6–7** | **3 / 2 / 2** |
 | descriptions and prompts | 0.868 | 0.88 | 5 | 2 / 2 / 2 |
 
-Shipped: prompts and replies at **0.88**, for runs that carry a reply; steps at
-0.93 otherwise. Only like is compared with like — the two texts score on
+Shipped: prompts and replies at **0.85**, for runs that carry a reply; steps at
+0.93 otherwise. What is embedded was then narrowed further — see *One change at
+a time* below. Only like is compared with like — the two texts score on
 different scales. The real fold reproduces the replay: 6 of 32 merged, 0 wrong,
 the coverage write-ups in one entry for the first time, an eval-case entry at 3.
+
+### One change at a time: what the conversation text keeps
+
+Five more live runs (two talk decks, three LinkedIn posts, over ARTICLE.md,
+HANDOFF.md and LEARNINGS.md) made the failure measurable: **two procedures over
+one document scored higher against each other (0.852) than two runs of one
+procedure over different documents (0.831).** The text was following the
+material.
+
+`tests/benchmarks/merge_ladder.py` scores one change at a time over every live
+session — 23 episodes from 19 sessions — at the *safe floor*, the first floor
+above the highest score between two different procedures:
+
+| step | rendering | danger | safe | merged | 2-proc-2-file gap | kept |
+| --- | --- | --- | --- | --- | --- | --- |
+| R0 | prompts and whole replies | 0.854 | 0.86 | 10/46 | -0.021 | baseline |
+| R1 | + file names → `<file>` | 0.848 | 0.85 | 12/46 | +0.022 | ✅ |
+| R2 | R1 + deliverable blocks removed by markdown shape | 0.854 | 0.86 | 10/46 | +0.098 | ✗ |
+| R3 | R1 + each reply cut to 300 chars | 0.849 | 0.85 | 12/46 | +0.057 | ✅ shipped |
+| R4 | R3 without replies | 0.837 | 0.84 | 19/46 | +0.161 | ✗ |
+
+**R2** moved the danger line onto a coding pair (`add-eval-case` ~
+`compare-adk-docs`, 0.854): coding replies carry their topic in plain sentences,
+which a markdown-shape filter cannot see, so removing bullets and drafts only
+un-diluted the topic where it was already invisible.
+
+**R4** looked best and measures the test, not the procedure: all seven added
+merges were `create-presentation` pairs whose prompts were scripted and pasted
+word for word, while the unscripted coding sessions gained nothing (4/21 either
+way). Two later runs phrased by the developer scored 0.882 and 0.837 against the
+same candidate — the spread prompts alone cannot survive.
+
+**R3 shipped.** The lowest floor with no wrong merge now equals the safe floor,
+so no merge survives on fold order; the text is 73% shorter (104k → 28k
+characters over 19 sessions), so nothing reaches the embedding's token limit;
+and the real fold unifies the three LinkedIn runs and the two coverage
+write-ups with no wrong merge.
 
 Why commands lost here: three runs of the presentation procedure scored
 0.66–0.83 on them — scratchpad paths, `sed` against `Read`, and a run that also

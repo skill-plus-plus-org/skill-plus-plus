@@ -4332,6 +4332,17 @@ class TestConversationMatching(TempRoot):
         self.assertEqual(entry_text(self._entry("aaaaaaaaaaaa", turns)), turns_text(turns))
         self.assertIn("npm test", entry_text(self._entry("bbbbbbbbbbbb")))
 
+    def test_the_material_is_kept_out_of_the_text(self):
+        """File names and the body of a reply say what a run was *about*."""
+        from skillpp.matching import REPLY_HEAD, turns_text
+        text = turns_text([{"prompt": "turn ARTICLE.md into slides for the team",
+                            "reply": "Reading ARTICLE.md. " + "slide bullet " * 200,
+                            "used": []}])
+        self.assertIn("turn <file> into slides", text)
+        self.assertIn("Agent: Reading <file>.", text)
+        self.assertNotIn("ARTICLE.md", text)
+        self.assertLessEqual(len(text.split("Agent: ")[1]), REPLY_HEAD)
+
     def test_like_is_only_compared_with_like(self):
         from skillpp.matching import find_same
         talk = [{"prompt": "propose the slides", "reply": "Here are 9 slides.", "used": []}]

@@ -58,8 +58,10 @@ FILE = re.compile(r"\b[\w./-]+\.(md|py|json|pptx|ts|tsx|js|yaml|yml|txt|pdf|docx
 
 
 def r0(entry: Entry) -> str:
-    """Shipped: `User: prompt` / `Agent: reply` per turn."""
-    return turns_text(entry.turns)
+    """The baseline this ladder started from: prompts and whole replies, nothing
+    masked. Frozen here, because `matching.turns_text` has since become R3."""
+    return "\n\n".join(f"User: {t.get('prompt', '')}\nAgent: {t.get('reply', '')}"
+                       for t in entry.turns)
 
 
 def r1(entry: Entry) -> str:
@@ -114,14 +116,10 @@ def r2(entry: Entry) -> str:
     return FILE.sub("<file>", turns_text(turns))
 
 
-REPLY_HEAD = 300
-
-
 def r3(entry: Entry) -> str:
-    """R1, with each reply cut to its first 300 characters (whitespace collapsed)."""
-    turns = [{**t, "reply": " ".join(str(t.get("reply", "")).split())[:REPLY_HEAD]}
-             for t in entry.turns]
-    return FILE.sub("<file>", turns_text(turns))
+    """R1, with each reply cut to its first 300 characters — what `matching`
+    now embeds, so this row is the shipped rendering."""
+    return turns_text(entry.turns)
 
 
 def r4(entry: Entry) -> str:

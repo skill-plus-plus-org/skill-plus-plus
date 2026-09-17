@@ -105,7 +105,7 @@ class Config:
         # merge more and put an unrelated run in with the eval cases.
         self.match_floor = _float_env("SKILLPP_MATCH_FLOOR", 0.93)
         # Conversation text scores on its own scale; see `matching`.
-        self.match_floor_turns = _float_env("SKILLPP_MATCH_FLOOR_TURNS", 0.88)
+        self.match_floor_turns = _float_env("SKILLPP_MATCH_FLOOR_TURNS", 0.85)
         self.min_episode_steps = _int_env("SKILLPP_MIN_EPISODE_STEPS", 2)
 
     @property
