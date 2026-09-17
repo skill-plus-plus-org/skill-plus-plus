@@ -654,6 +654,14 @@ PAGE = r"""<!doctype html>
  .cand.drafted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
  .badge.declined{color:var(--no);border-color:var(--noline);background:var(--nobg)}
  .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
+ .clock:empty{display:none}
+ .collecting .clock{display:inline-block;width:110px;text-align:right;flex-shrink:0}
+ .thead{display:flex;align-items:center;gap:16px;padding:0 17px 6px 17px;
+   font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+ .thead .title{font:inherit;color:inherit}
+ .thead .count{font:inherit;min-width:34px;text-align:right;flex-shrink:0}
+ .thead .acts{min-height:0}
+ .count.reached{color:var(--ok)}
  .clock.soon{color:#fbbf24}
  .clock.gone{color:var(--no)}
  .count{font:600 13px var(--mono);min-width:34px;text-align:right;flex-shrink:0;order:99}
@@ -962,10 +970,10 @@ function render(){
       <span class="chev">›</span>
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
       ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Accepted", drafted: "Drafted", declined: "Declined"}[highlight(r)]}</span>` : ""}
-      ${r.days_left === null ? "" : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
-        title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless it reaches ${S.threshold}× first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
       <span class="acts">${actions(r)}</span>
-      <span class="seen count" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
+      ${r.days_left === null ? `<span class="clock"></span>` : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
+        title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless it reaches ${S.threshold}× first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
+      <span class="seen count ${r.occurrences >= S.threshold ? "reached" : ""}" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
       <div class="body">${candidateBody(r)}</div></div>`;
   const declined = S.rows.filter(r => r.state === "dismissed");
   const hasDraft = r => ["drafted", "revising", "installed"].includes(r.state);
@@ -978,7 +986,10 @@ function render(){
     <div class="section"><h2>Ready to decide</h2><span>${S.threshold}× or more · ${ready.length}</span></div>
     ${ready.length ? ready.map(card).join("") : `<p class="empty">Nothing has reached ${S.threshold}× yet.</p>`}
     <div class="section"><h2>Still collecting</h2><span>below ${S.threshold}× · ${collecting.length}</span></div>
-    ${collecting.length ? collecting.map(card).join("") : `<p class="empty">Nothing else.</p>`}
+    ${collecting.length ? `<div class="collecting">
+      <div class="thead"><span class="chev"></span><span class="title">Title</span>
+        <span class="acts"></span><span class="clock">Time to expire</span><span class="count">Count</span></div>
+      ${collecting.map(card).join("")}</div>` : `<p class="empty">Nothing else.</p>`}
     ${declined.length ? `<div class="section"><h2>Declined</h2><span>reinstate to put one back · ${declined.length}</span></div>
     ${declined.map(card).join("")}` : ""}`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
