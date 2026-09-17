@@ -3439,14 +3439,29 @@ class TestWeb(TempRoot):
         if job:
             job.join(timeout=60)
 
-    def test_only_candidates_seen_often_enough_are_listed(self):
+    def test_candidates_are_split_by_whether_they_were_seen_often_enough(self):
         from skillpp.ledger import STATUS_ONE_OFF
+        from skillpp.web import collect_state
         self._save("ready", occurrences=3)
         self._save("twice", occurrences=2)
-        self._save("said", occurrences=1, source="dictated")
+        self._save("often", occurrences=7)
         self._save("parked", occurrences=5, status=STATUS_ONE_OFF)
-        self.assertEqual(set(self._rows()), {"ready"})
-        self.assertEqual(self._rows()["ready"]["state"], "undecided")
+        rows = collect_state(self.config)["rows"]
+        self.assertEqual([r["id"] for r in rows], ["often", "ready", "twice"],
+                         "most-seen first; one-off parking is not listed")
+        by_id = {r["id"]: r for r in rows}
+        self.assertTrue(by_id["ready"]["ready"])
+        self.assertEqual(by_id["ready"]["state"], "undecided")
+        self.assertFalse(by_id["twice"]["ready"])
+        self.assertEqual(by_id["twice"]["state"], "collecting")
+
+    def test_a_candidate_below_the_threshold_cannot_be_decided(self):
+        from skillpp.ledger import STATUS_CANDIDATE
+        from skillpp.web import accept, decline
+        self._save("twice", occurrences=2)
+        self.assertFalse(accept(self.config, "twice")["ok"])
+        self.assertFalse(decline(self.config, "twice")["ok"])
+        self.assertEqual(Ledger(self.config).get("twice").status, STATUS_CANDIDATE)
 
     def test_decisions_stay_listed_whatever_the_count(self):
         from skillpp.ledger import STATUS_DISMISSED, STATUS_PROMOTED
@@ -3708,11 +3723,65 @@ class TestWeb(TempRoot):
         self.assertIn("It is always x.", draft["body"])
         self.assertIsNotNone(draft_zip(self.config, "x"))
 
+    def test_the_outline_uses_the_agents_own_step_descriptions(self):
+        from skillpp.web import step_outline
+        steps = [
+            {"tool": "Bash", "input": {"command": "./start.sh", "description": "Restart servers"}},
+            {"tool": "Bash", "input": {"command": "./start.sh", "description": "Restart servers"}},
+            {"tool": "Edit", "input": {"file_path": "/repo/eval/cases.json"}},
+            {"tool": "mcp__adk-docs__fetch_docs", "input": {"url": "https://x"}},
+            {"tool": "Bash", "input": {"command": "npm   test"}},
+            {"tool": "Stated", "input": {"text": "send the summary"}},
+        ]
+        self.assertEqual(step_outline(steps), ["Restart servers", "Edit cases.json",
+                                               "fetch docs", "npm test",
+                                               "send the summary"])
+
+    def test_warning_flags_name_what_deserves_a_look(self):
+        from skillpp.web import warning_flags
+        flags = warning_flags([
+            {"tool": "Bash", "input": {"command": "rm -rf build", "description": "Clean build"}},
+            {"tool": "Bash", "input": {"command": "git push origin main"}},
+            {"tool": "Bash", "input": {"command": "curl -s x > /dev/null"}},
+            {"tool": "Write", "input": {"file_path": "/repo/COVERAGE.md"}},
+        ])
+        self.assertEqual(flags["destructive"], ["Clean build"])
+        self.assertGreaterEqual(flags["network"], 1)
+        self.assertEqual(flags["writes"], ["COVERAGE.md"])
+
+    def test_a_summary_is_asked_on_demand_cached_and_redone_when_the_entry_grows(self):
+        import skillpp.local as local
+        from skillpp.web import summarise
+        self._save("a")
+        calls = []
+        real = local.ask
+        def fake(model, prompt, **kw):
+            calls.append(model)
+            return "The developer ran the tests.\n\n**Concrete thing:** tests"
+        local.ask = fake
+        self.addCleanup(lambda: setattr(local, "ask", real))
+
+        self.assertEqual(self._rows()["a"]["summary"], "", "loading asks no model")
+        self.assertEqual(calls, [])
+        self.assertEqual(summarise(self.config, "a")["summary"], "Ran the tests.")
+        summarise(self.config, "a")
+        self.assertEqual(calls, [self.config.local_model], "cached, asked once")
+        self.assertEqual(self._rows()["a"]["summary"], "Ran the tests.")
+        self.assertEqual(Ledger(self.config).get("a").description, "",
+                         "never written into the skill description")
+
+        entry = Ledger(self.config).get("a")
+        entry.steps.append({"tool": "Bash", "input": {"command": "git commit -m x"}})
+        Ledger(self.config).save(entry)
+        self.assertEqual(self._rows()["a"]["summary"], "")
+        summarise(self.config, "a")
+        self.assertEqual(len(calls), 2)
+
     def test_every_state_has_its_own_label_on_the_page(self):
         """A dismissed row once rendered as "Agent declined" with a retry
         button, because both states were called "declined"."""
         from skillpp.web import PAGE
-        for state in ("undecided", "accepted", "creating", "drafted", "revising",
+        for state in ("collecting", "undecided", "accepted", "creating", "drafted", "revising",
                       "installed", "failed", "declined", "dismissed"):
             self.assertIn(f'"{state}"', PAGE)
 

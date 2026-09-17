@@ -34,6 +34,7 @@ from .ledger import (STATUS_CANDIDATE, STATUS_DISMISSED, STATUS_PROMOTED,
 from .lifecycle import parse_frontmatter
 
 CLI = Path(__file__).resolve().parent.parent / "bin" / "skillpp"
+PROMPTS = Path(__file__).resolve().parent / "prompts"
 # `skillpp draft` gives the agent 900 seconds by default. A job still marked
 # running well past that died with the server that started it.
 DRAFT_STALE_SECONDS = 1200
@@ -86,6 +87,10 @@ def row_state(config: Config, entry) -> dict:
         # Not "declined": that is the agent refusing to draft, shown with a retry.
         return {"state": "dismissed"}
     if entry.status != STATUS_PROMOTED:
+        # Seen too few times to judge yet: listed, but it cannot be accepted or
+        # declined until it recurs. The threshold exists to filter noise.
+        if not entry.ready(config.recurrence_threshold):
+            return {"state": "collecting"}
         return {"state": "undecided"}
     if entry.skill_path and Path(entry.skill_path).expanduser().exists():
         return {"state": "installed", "path": entry.skill_path}
@@ -110,18 +115,137 @@ def row_state(config: Config, entry) -> dict:
     return {"state": "accepted"}
 
 
+def step_outline(steps: list[dict], limit: int = 30) -> list[str]:
+    """One line per step, in order: the agent's own description of a shell
+    command where it wrote one, otherwise the tool and what it touched.
+
+    Descriptions are written by the agent at call time, so this reads as what
+    was done without a model. Consecutive repeats collapse to one line.
+    """
+    lines: list[str] = []
+    for step in steps:
+        tool = str(step.get("tool", "?"))
+        payload = step.get("input") or {}
+        note = " ".join(str(payload.get("description") or payload.get("text") or "").split())
+        if not note:
+            target = payload.get("file_path") or payload.get("path") or payload.get("pattern")
+            if tool.startswith("mcp__"):
+                note = tool.split("__")[-1].replace("_", " ")
+            elif target:
+                note = f"{tool} {Path(str(target)).name or target}"
+            elif tool == "Bash":
+                note = " ".join(str(payload.get("command", "")).split())[:80]
+            else:
+                note = tool
+        if not lines or lines[-1] != note:
+            lines.append(note)
+    return lines[:limit] + ([f"… {len(lines) - limit} more"] if len(lines) > limit else [])
+
+
+def warning_flags(steps: list[dict]) -> dict:
+    """What deserves a look before accepting: destructive commands, steps that
+    reach the network or change remote state, and files written."""
+    from .signals import effects
+
+    eff = effects(steps)
+    notes = eff.get("describes", {})
+    return {
+        "destructive": [notes.get(c) or c[:80] for c in eff["destructive"]],
+        "network": len(eff["network"]),
+        # A redirect target without a path or an extension is almost always a
+        # heredoc marker or a descriptor the pattern caught, not a file.
+        "writes": sorted({Path(w).name for w in eff["writes"]
+                          if w and not w.startswith("/dev/")
+                          and ("/" in w or "." in Path(w).name)}),
+    }
+
+
+def _summaries_path(config: Config) -> Path:
+    return config.root / "review_summaries.json"
+
+
+def load_summaries(config: Config) -> dict:
+    try:
+        data = json.loads(_summaries_path(config).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _cached_summary(cache: dict, entry) -> str:
+    """The cached sentence, if it still describes the entry as it stands."""
+    hit = cache.get(entry.id) or {}
+    return hit.get("text", "") if hit.get("steps") == len(entry.steps) else ""
+
+
+def summarise(config: Config, entry_id: str) -> dict:
+    """One sentence from the local model saying what a candidate's work did.
+
+    Asked only when a candidate is opened, then cached per entry and keyed on
+    step count, so the page never waits on a model to load and a candidate that
+    grows is described again. Stored beside the ledger, never in
+    `entry.description`, which decides whether a promoted skill loads.
+    """
+    from .boundary import render_step as step_line
+    from .local import LocalModelUnavailable, ask
+
+    entry = Ledger(config).get(entry_id)
+    if not entry:
+        return {"ok": False, "error": "no such entry"}
+    cache = load_summaries(config)
+    cached = _cached_summary(cache, entry)
+    if cached:
+        return {"ok": True, "summary": cached}
+
+    asks = "\n".join(f"- {i.strip()[:200]}" for i in entry.intents[:6] if i.strip())
+    reports = [st["closing_note"][:200] for st in entry.steps if st.get("closing_note")]
+    steps = "\n".join(f"- {step_line(st)[:140]}" for st in entry.steps[:12])
+    prompt = ((PROMPTS / "candidate_summary.md").read_text(encoding="utf-8")
+              .replace("{ASKS}", asks or "- (none recorded)")
+              .replace("{REPORTS}", "\n".join(f"- {r}" for r in reports[:4]) or "- (none)")
+              .replace("{STEPS}", steps or "- (none)"))
+    try:
+        reply = ask(config.local_model, prompt, host=config.ollama_url,
+                    timeout=90.0, think=False)
+    except LocalModelUnavailable as exc:
+        return {"ok": False, "error": f"no local model: {exc}"}
+
+    # The model sometimes appends labelled blocks after the sentence, and opens
+    # with "The developer" despite being told to start with a verb.
+    line = next((l for l in reply.strip().splitlines() if l.strip()), "")
+    text = re.sub(r"^(the )?developer\s+", "", line.strip().strip("*"),
+                  flags=re.IGNORECASE).strip()
+    if not text:
+        return {"ok": False, "error": "the model returned nothing"}
+    text = text[0].upper() + text[1:]
+
+    cache[entry.id] = {"steps": len(entry.steps), "text": text}
+    path = _summaries_path(config)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+    return {"ok": True, "summary": text}
+
+
 def collect_state(config: Config) -> dict:
-    """The rows the page lists. Reads files only: no model, no agent."""
+    """The rows the page lists. Reads files only: no model, no agent.
+
+    Every candidate, promoted and dismissed entry, most-seen first. `ready`
+    splits the page: seen in enough sessions to decide on, or still collecting.
+    """
     threshold = config.recurrence_threshold
+    summaries = load_summaries(config)
     rows = []
     for entry in Ledger(config).all():
-        listed = ((entry.status == STATUS_CANDIDATE and entry.ready(threshold)
-                   and entry.source == "capture")
-                  or entry.status in (STATUS_PROMOTED, STATUS_DISMISSED))
-        if not listed:
+        if entry.status not in (STATUS_CANDIDATE, STATUS_PROMOTED, STATUS_DISMISSED):
             continue
         rows.append({"id": entry.id, "title": entry.title,
-                     "occurrences": entry.occurrences, **row_state(config, entry)})
+                     "occurrences": entry.occurrences,
+                     "ready": entry.occurrences >= threshold or entry.ready(threshold),
+                     **row_state(config, entry),
+                     "outline": step_outline(entry.steps),
+                     "flags": warning_flags(entry.steps),
+                     "summary": _cached_summary(summaries, entry)})
     rows.sort(key=lambda r: (-r["occurrences"], (r["title"] or "").lower()))
     return {"threshold": threshold, "rows": rows, "drafts": list_drafts(config)}
 
@@ -356,6 +480,7 @@ def answer_questions(config: Config, entry_id: str, answers: list) -> dict:
 def make_handler(config: Config):
     actions = {
         "/api/accept": lambda p: accept(config, str(p.get("id", ""))),
+        "/api/summary": lambda p: summarise(config, str(p.get("id", ""))),
         "/api/decline": lambda p: decline(config, str(p.get("id", ""))),
         "/api/create": lambda p: create_skill(config, str(p.get("id", ""))),
         "/api/revise": lambda p: revise(config, str(p.get("id", "")),
@@ -470,6 +595,24 @@ PAGE = r"""<!doctype html>
    vertical-align:-1px}
  @keyframes s{to{transform:rotate(360deg)}}
  .empty{color:var(--muted);padding:32px 0;text-align:center}
+ .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
+ .cand.ready{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.06),var(--panel) 40%)}
+ .cand.ready .seen{color:var(--ok)}
+ .section{display:flex;align-items:baseline;gap:10px;margin:22px 0 10px}
+ .section:first-child{margin-top:0}
+ .section h2{margin:0;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--fg)}
+ .section span{font-size:12px;color:var(--muted)}
+ .cand>.row{margin:0;border:0;background:none;cursor:pointer}
+ .cand.open .chev{transform:rotate(90deg)}
+ .cand .body{display:none;border-top:1px solid var(--line);padding:12px 16px 14px 44px}
+ .cand.open .body{display:block}
+ .sum{margin:0 0 10px;font-size:13.5px;color:var(--fg)}
+ .sum.pending{color:var(--muted);font-style:italic}
+ .outline{margin:0 0 10px;padding-left:20px;font-size:13px;color:#cbd2e1}
+ .outline li{margin:2px 0}
+ .flags{display:flex;flex-wrap:wrap;gap:6px;margin:0}
+ .flag{font:11.5px var(--mono);padding:2px 8px;border-radius:4px;border:1px solid var(--line);color:var(--dim)}
+ .flag.warn{color:#fbbf24;border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.06)}
  nav{display:flex;gap:4px}
  nav button{background:none;border:0;border-bottom:2px solid transparent;border-radius:0;
    padding:4px 10px;color:var(--dim)}
@@ -531,12 +674,14 @@ PAGE = r"""<!doctype html>
 <script>
 let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
 let view = "candidates", open = new Set(), writing = new Set(), drafts = {}, answers = {};
+let openRows = new Set(), summarising = new Set(), summaryError = {};
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 function actions(r){
   const id = esc(r.id), off = busy.has(r.id) ? " disabled" : "";
   switch(r.state){
+    case "collecting": return `<span class="state" title="Accept and Decline open at ${S.threshold} sessions">needs ${S.threshold - r.occurrences} more</span>`;
     case "undecided": return `<button class="accept" data-act="accept" data-id="${id}"${off}>Accept Skill</button>
       <button class="decline" data-act="decline" data-id="${id}"${off}>Decline Skill</button>`;
     case "accepted": return `<button class="create" data-act="create" data-id="${id}"${off}>Create Skill</button>`;
@@ -719,17 +864,55 @@ function renderDrafts(list){
   });
 }
 
+function candidateBody(r){
+  const sum = r.summary ? `<p class="sum">${esc(r.summary)}</p>`
+    : summaryError[r.id] ? `<p class="sum pending">No summary: ${esc(summaryError[r.id])}</p>`
+    : `<p class="sum pending">Summarising…</p>`;
+  const f = r.flags, chips = [];
+  f.destructive.forEach(d => chips.push(`<span class="flag warn" title="destructive">⚠ ${esc(d)}</span>`));
+  if(f.network) chips.push(`<span class="flag warn">network · ${f.network} step${f.network===1?"":"s"}</span>`);
+  if(f.writes.length) chips.push(`<span class="flag">writes ${f.writes.map(esc).join(", ")}</span>`);
+  return `${sum}<ol class="outline">${r.outline.map(l => `<li>${esc(l)}</li>`).join("")}</ol>
+    ${chips.length ? `<div class="flags">${chips.join("")}</div>` : ""}`;
+}
+
+async function fetchSummary(id){
+  const r = S.rows.find(x => x.id === id);
+  if(!r || r.summary || summarising.has(id) || summaryError[id]) return;
+  summarising.add(id);
+  try {
+    const res = await (await fetch("/api/summary", {method:"POST", body: JSON.stringify({id})})).json();
+    const row = S.rows.find(x => x.id === id);
+    if(res.ok){ if(row) row.summary = res.summary; } else { summaryError[id] = res.error || "failed"; }
+  } catch(e){ summaryError[id] = String(e); }
+  finally { summarising.delete(id); if(view === "candidates") render(); }
+}
+
 function render(){
   document.getElementById("where").textContent = `threshold ≥ ${S.threshold} sessions`;
   renderNav();
   const list = document.getElementById("list");
   if(view === "drafts") return renderDrafts(list);
-  list.innerHTML = S.rows.length ? S.rows.map(r => `<div class="row">
+  const card = r => `<div class="cand ${r.ready?"ready":""} ${openRows.has(r.id)?"open":""}">
+      <div class="row" data-row="${esc(r.id)}">
+      <span class="chev">›</span>
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
       <span class="seen">seen in ${r.occurrences} session${r.occurrences===1?"":"s"}</span>
-      <span class="acts">${actions(r)}</span></div>`).join("")
-    : `<p class="empty">No candidates seen in ${S.threshold} or more sessions yet.</p>`;
+      <span class="acts">${actions(r)}</span></div>
+      <div class="body">${candidateBody(r)}</div></div>`;
+  const ready = S.rows.filter(r => r.ready), collecting = S.rows.filter(r => !r.ready);
+  list.innerHTML = `
+    <div class="section"><h2>Ready to decide</h2><span>seen in ${S.threshold} or more sessions · ${ready.length}</span></div>
+    ${ready.length ? ready.map(card).join("") : `<p class="empty">Nothing has been seen in ${S.threshold} sessions yet.</p>`}
+    <div class="section"><h2>Still collecting</h2><span>seen in fewer than ${S.threshold} sessions · ${collecting.length}</span></div>
+    ${collecting.length ? collecting.map(card).join("") : `<p class="empty">Nothing else.</p>`}`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
+  list.querySelectorAll("[data-row]").forEach(h => h.onclick = ev => {
+    if(ev.target.closest("a, button")) return;
+    const id = h.dataset.row;
+    if(openRows.has(id)){ openRows.delete(id); } else { openRows.add(id); fetchSummary(id); }
+    h.parentElement.classList.toggle("open");
+  });
   list.querySelectorAll("[data-goto]").forEach(a => a.onclick = () => {
     view = "drafts"; open.add(a.dataset.goto); render();
   });
