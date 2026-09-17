@@ -45,6 +45,10 @@ _SAFE_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _NOT_SKILL_FILES = ("status.json",)
 
 _jobs: dict[str, threading.Thread] = {}
+# Which server process started a run. A run marked running by a server that is
+# no longer the one serving died with it, so it is shown as failed at once
+# instead of spinning until DRAFT_STALE_SECONDS.
+_BOOT = f"{time.time():.6f}-{id(_jobs)}"
 _jobs_lock = threading.Lock()
 
 
@@ -96,18 +100,22 @@ def row_state(config: Config, entry) -> dict:
     if entry.skill_path and Path(entry.skill_path).expanduser().exists():
         return {"state": "installed", "path": entry.skill_path}
     status = _read_status(config, entry.id)
-    fresh = time.time() - status.get("started", 0) < DRAFT_STALE_SECONDS
+    orphaned = status.get("boot") not in (None, _BOOT)
+    fresh = (time.time() - status.get("started", 0) < DRAFT_STALE_SECONDS
+             and not orphaned)
     drafted = sorted(p for p in _draft_dir(config, entry.id).rglob("SKILL.md")
                      if ".revisions" not in p.parts)
     if status.get("state") == "running":
         if fresh:
             return {"state": "creating"}
-        return {"state": "failed", "message": "the draft run did not finish"}
+        return {"state": "failed", "message": "the server restarted while the draft ran"
+                if orphaned else "the draft run did not finish"}
     if drafted and status.get("state") == "revising" and fresh:
         return {"state": "revising", "path": str(drafted[0])}
     if drafted:
         stale = status.get("state") == "revising"
-        message = ("the revision did not finish" if stale else
+        message = ("the server restarted while the revision ran" if stale and orphaned else
+                   "the revision did not finish" if stale else
                    status.get("message", "") if status.get("state") == "revise-failed"
                    else "")
         return {"state": "drafted", "path": str(drafted[0]), "message": message}
@@ -441,7 +449,7 @@ def create_skill(config: Config, entry_id: str) -> dict:
         if state not in ("accepted", "failed", "declined"):
             return {"ok": False,
                     "error": f"cannot create a skill for a row that is {state}"}
-        _write_status(config, entry.id, state="running", started=time.time())
+        _write_status(config, entry.id, state="running", started=time.time(), boot=_BOOT)
         job = threading.Thread(target=_draft_job, args=(config, entry.id),
                                daemon=True)
         _jobs[entry.id] = job
@@ -485,7 +493,7 @@ def revise(config: Config, entry_id: str, instruction: str,
             return {"ok": False, "error": "already running"}
         if state != "drafted":
             return {"ok": False, "error": f"no draft to revise ({state})"}
-        _write_status(config, entry.id, state="revising", started=time.time())
+        _write_status(config, entry.id, state="revising", started=time.time(), boot=_BOOT)
         job = threading.Thread(target=_revise_job, args=(config, entry.id, instruction),
                                daemon=True)
         _jobs[entry.id] = job
@@ -958,9 +966,13 @@ function render(){
       <span class="acts">${actions(r)}</span></div>
       <div class="body">${candidateBody(r)}</div></div>`;
   const declined = S.rows.filter(r => r.state === "dismissed");
-  const live = S.rows.filter(r => r.state !== "dismissed");
+  const hasDraft = r => ["drafted", "revising", "installed"].includes(r.state);
+  const drafted = S.rows.filter(hasDraft);
+  const live = S.rows.filter(r => r.state !== "dismissed" && !hasDraft(r));
   const ready = live.filter(r => r.ready), collecting = live.filter(r => !r.ready);
   list.innerHTML = `
+    ${drafted.length ? `<div class="section"><h2>Drafted</h2><span>a skill draft exists · ${drafted.length}</span></div>
+    ${drafted.map(card).join("")}` : ""}
     <div class="section"><h2>Ready to decide</h2><span>${S.threshold}× or more · ${ready.length}</span></div>
     ${ready.length ? ready.map(card).join("") : `<p class="empty">Nothing has reached ${S.threshold}× yet.</p>`}
     <div class="section"><h2>Still collecting</h2><span>below ${S.threshold}× · ${collecting.length}</span></div>

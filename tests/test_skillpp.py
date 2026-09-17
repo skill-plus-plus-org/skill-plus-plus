@@ -3548,6 +3548,20 @@ class TestWeb(TempRoot):
         self.assertEqual(self._rows()["r"]["state"], "creating")
         self.assertFalse(create_skill(self.config, "r")["ok"])
 
+    def test_a_run_from_a_server_that_restarted_fails_at_once(self):
+        import time
+        from skillpp.web import _write_status, accept, create_skill
+        self._save("o")
+        accept(self.config, "o")
+        _write_status(self.config, "o", state="running", started=time.time(),
+                      boot="an-earlier-server")
+        row = self._rows()["o"]
+        self.assertEqual(row["state"], "failed")
+        self.assertIn("restarted", row["message"])
+        self._agent("sys.exit(1)\n")
+        self.assertTrue(create_skill(self.config, "o")["ok"], "retry allowed")
+        self._wait_for_draft("o")
+
     def test_a_run_that_never_finished_reads_as_failed(self):
         from skillpp.web import _write_status, accept
         self._save("s")
