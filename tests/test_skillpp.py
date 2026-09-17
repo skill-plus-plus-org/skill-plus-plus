@@ -3854,8 +3854,9 @@ class TestLiveSessions(unittest.TestCase):
         sizes = recurrence.evaluate(rows)["sizes"]
         self.assertEqual(sizes.get("add-eval-case"), 7)
         self.assertEqual(sizes.get("coverage-writeup"), 2)
-        # Three runs, two of them cut at the review prompt: a recorded gap.
-        self.assertEqual(sizes.get("create-presentation"), 5)
+        # Five runs, two of them cut at the review prompt: a recorded gap.
+        self.assertEqual(sizes.get("create-presentation"), 7)
+        self.assertEqual(sizes.get("write-linkedin-post"), 3)
 
     def test_there_are_live_sessions_to_score(self):
         """A silently empty directory would make every test below vacuous."""
