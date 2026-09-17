@@ -657,7 +657,7 @@ PAGE = r"""<!doctype html>
  .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
  .clock.soon{color:#fbbf24}
  .clock.gone{color:var(--no)}
- .count{font:600 13px var(--mono);min-width:34px;text-align:right}
+ .count{font:600 13px var(--mono);min-width:34px;text-align:right;flex-shrink:0;order:99}
  .section{display:flex;align-items:baseline;gap:10px;margin:22px 0 10px}
  .section:first-child{margin-top:0}
  .section h2{margin:0;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--fg)}
@@ -965,8 +965,8 @@ function render(){
       ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Accepted", drafted: "Drafted", declined: "Declined"}[highlight(r)]}</span>` : ""}
       ${r.days_left === null ? "" : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
         title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless it reaches ${S.threshold}× first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
-      <span class="seen count" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span>
-      <span class="acts">${actions(r)}</span></div>
+      <span class="acts">${actions(r)}</span>
+      <span class="seen count" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
       <div class="body">${candidateBody(r)}</div></div>`;
   const declined = S.rows.filter(r => r.state === "dismissed");
   const hasDraft = r => ["drafted", "revising", "installed"].includes(r.state);
