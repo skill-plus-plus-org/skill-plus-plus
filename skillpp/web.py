@@ -42,7 +42,7 @@ DRAFT_STALE_SECONDS = 1200
 
 _SAFE_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 # Written by this page or by the agent's editor, never part of the skill.
-_NOT_SKILL_FILES = ("status.json",)
+_NOT_SKILL_FILES = ("status.json", "downloaded.json")
 
 _jobs: dict[str, threading.Thread] = {}
 # Which server process started a run. A run marked running by a server that is
@@ -331,6 +331,37 @@ def split_open_questions(text: str) -> tuple[list[str], str]:
     return [q for q in questions if q], remaining
 
 
+def _skill_digest(skill_md: Path) -> str:
+    import hashlib
+    return hashlib.sha256(skill_md.read_bytes()).hexdigest()
+
+
+def record_download(config: Config, entry_id: str) -> None:
+    """Remember that this version of the draft was downloaded.
+
+    Kept as a digest of SKILL.md, so a draft revised after its download counts
+    as not downloaded again: the copy someone has is no longer this one.
+    """
+    from datetime import datetime, timezone
+    entry = Ledger(config).get(entry_id)
+    if not entry:
+        return
+    skill_md = Path(row_state(config, entry)["path"])
+    path = _draft_dir(config, entry.id) / "downloaded.json"
+    path.write_text(json.dumps({
+        "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "sha256": _skill_digest(skill_md)}), encoding="utf-8")
+
+
+def _downloaded_at(config: Config, entry_id: str, skill_md: Path) -> str:
+    try:
+        record = json.loads((_draft_dir(config, entry_id) / "downloaded.json")
+                            .read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    return record.get("at", "") if record.get("sha256") == _skill_digest(skill_md) else ""
+
+
 def list_drafts(config: Config) -> list[dict]:
     """Every finished draft, with the SKILL.md text to review."""
     drafts = []
@@ -352,6 +383,7 @@ def list_drafts(config: Config) -> list[dict]:
                       for p in _draft_files(config, entry.id)],
             "revising": state["state"] == "revising",
             "message": state.get("message", ""),
+            "downloaded_at": _downloaded_at(config, entry.id, skill_md),
         })
     drafts.sort(key=lambda d: d["name"].lower())
     return drafts
@@ -565,6 +597,7 @@ def make_handler(config: Config):
                             {"error": "answer the open questions first"}))
                     return self._send(404, json.dumps({"error": "no such draft"}))
                 filename, data = found
+                record_download(config, entry_id)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/zip")
                 self.send_header("Content-Disposition",
@@ -877,13 +910,13 @@ function reviseBlock(d){
 }
 
 function renderDrafts(list){
-  list.innerHTML = S.drafts.length ? S.drafts.map(d => `<div class="draft ${open.has(d.id)?"open":""}">
+  const card = d => `<div class="draft ${open.has(d.id)?"open":""}">
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
         <span class="acts">${d.questions.length
           ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
-          : `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">Download skill</a>`}</span>
+          : `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">${d.downloaded_at ? "Download again" : "Download skill"}</a>`}</span>
       </div>
       <p class="desc">${esc(d.description)}</p>
       <div class="body">
@@ -891,8 +924,15 @@ function renderDrafts(list){
         ${questionsBlock(d)}
         <div class="md">${md(d.body)}</div>
         ${reviseBlock(d)}
-      </div></div>`).join("")
+      </div></div>`;
+  const toReview = S.drafts.filter(d => !d.downloaded_at), downloaded = S.drafts.filter(d => d.downloaded_at);
+  list.innerHTML = S.drafts.length ? `
+    <div class="section"><h2>To review</h2><span>not downloaded yet · ${toReview.length}</span></div>
+    ${toReview.length ? toReview.map(card).join("") : `<p class="empty">Everything has been downloaded.</p>`}
+    <div class="section"><h2>Downloaded</h2><span>revising one moves it back to review · ${downloaded.length}</span></div>
+    ${downloaded.length ? downloaded.map(card).join("") : `<p class="empty">Nothing downloaded yet.</p>`}`
     : `<p class="empty">No drafts yet. Promote a candidate, then Draft.</p>`;
+  list.querySelectorAll("a.download").forEach(a => a.addEventListener("click", () => setTimeout(load, 1000)));
   list.querySelectorAll("[data-revise-open]").forEach(b => b.onclick = () => {
     writing.add(b.dataset.reviseOpen); render();
     const box = document.querySelector(`[data-instruction="${CSS.escape(b.dataset.reviseOpen)}"]`);

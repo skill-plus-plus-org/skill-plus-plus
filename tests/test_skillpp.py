@@ -3622,6 +3622,21 @@ class TestWeb(TempRoot):
         self.assertEqual(sorted(names), ["add-eval-case/SKILL.md",
                                          "add-eval-case/references/notes.md"])
 
+    def test_a_downloaded_draft_is_listed_as_downloaded_until_it_changes(self):
+        import io, zipfile
+        from skillpp.web import collect_state, draft_zip, record_download
+        self._drafted("x")
+        self.assertEqual(collect_state(self.config)["drafts"][0]["downloaded_at"], "")
+        record_download(self.config, "x")
+        self.assertNotEqual(collect_state(self.config)["drafts"][0]["downloaded_at"], "")
+        _, data = draft_zip(self.config, "x")
+        self.assertEqual(zipfile.ZipFile(io.BytesIO(data)).namelist(),
+                         ["add-eval-case/SKILL.md"], "the record is not part of the skill")
+        skill = self.config.root / "drafts" / "x" / "SKILL.md"
+        skill.write_text(skill.read_text() + "\n## Traps\n")
+        self.assertEqual(collect_state(self.config)["drafts"][0]["downloaded_at"], "",
+                         "a revised draft is back to review")
+
     def test_only_a_finished_draft_of_a_known_entry_downloads(self):
         from skillpp.web import draft_zip
         self._save("u")
