@@ -13,20 +13,26 @@ first run.
 One row per rendering:
 
 * **danger** — the highest score between two *different* procedures.
-* **floor** — the lowest floor with no wrong merge in the replay.
-* **merged** — correct merges at that floor, of every same-procedure pair.
-* **margin** — floor minus danger. Negative means the replay avoided the wrong
-  merge only because of fold order, not because the scores separate.
+* **safe** — the first floor above the danger line (a hundredth above it). The
+  floor a change would ship at: every wrong pair scores below it.
+* **merged** — correct merges in the replay at the safe floor, of every
+  same-procedure pair, and **wrong** merges there (0 by construction, printed
+  as a check).
+* **luck** — the lowest floor with no wrong merge in the replay. Below *safe*,
+  it held only because of the order the sessions were folded in; shown, never
+  chosen. (An earlier "margin" column subtracted the danger line from it, and
+  read worse exactly when a change pulled same-procedure pairs up.)
 * **2x2 gap** — runs 4, 5, 6 and 8: two procedures on two files. Worst
   same-procedure score minus best different-procedure score; positive means the
   text follows the procedure rather than the material.
-* **3x** — families with an entry holding three or more runs at that floor.
+* **3x** — families with an entry holding three or more runs at the safe floor.
 
 A step on the ladder changes one thing. Nothing here decides; it prints.
 """
 
 from __future__ import annotations
 
+import math
 import re
 import sys
 import tempfile
@@ -56,8 +62,14 @@ def r0(entry: Entry) -> str:
     return turns_text(entry.turns)
 
 
+def r1(entry: Entry) -> str:
+    """R0 with every file name, in prompts and replies, replaced by `<file>`."""
+    return FILE.sub("<file>", r0(entry))
+
+
 RENDERINGS = {
     "R0": r0,
+    "R1": r1,
 }
 
 
@@ -96,16 +108,16 @@ def score(name: str, render, rows: list[dict], ledger: Ledger, cache: dict) -> d
     danger = max(cosine(vec[a], vec[b]) for i, a in enumerate(ids) for b in ids[i + 1:]
                  if fam[a] != fam[b])
 
-    floor, merged, should, big = None, 0, 0, []
+    luck = None
     for step in range(50, 100):
-        f = step / 100
-        ev = recurrence.evaluate(replay(rows, vec, f))
-        if ev["pairs"]["wrong"] == 0:
-            out = replay(rows, vec, f)
-            sizes = Counter((o["family"], o["entry"]) for o in out)
-            floor, merged, should = f, ev["pairs"]["correct"], ev["pairs"]["should_merge"]
-            big = sorted({family for (family, _), n in sizes.items() if n >= 3})
+        if recurrence.evaluate(replay(rows, vec, step / 100))["pairs"]["wrong"] == 0:
+            luck = step / 100
             break
+    safe = math.floor(danger * 100) / 100 + 0.01
+    out = replay(rows, vec, safe)
+    ev = recurrence.evaluate(out)
+    sizes = Counter((o["family"], o["entry"]) for o in out)
+    big = sorted({family for (family, _), n in sizes.items() if n >= 3})
 
     by_tag = {r["episode"].split("#")[0]: r["entry"] for r in rows}
     p = {k: vec[by_tag[t]] for k, t in PRESENTATION.items()}
@@ -113,8 +125,9 @@ def score(name: str, render, rows: list[dict], ledger: Ledger, cache: dict) -> d
     same = [cosine(p["article"], p["handoff"]), cosine(q["article"], q["handoff"])]
     diff = [cosine(p["article"], q["article"]), cosine(p["handoff"], q["handoff"]),
             cosine(p["article"], q["handoff"]), cosine(p["handoff"], q["article"])]
-    return {"name": name, "danger": danger, "floor": floor, "merged": merged,
-            "should": should, "margin": (floor - danger) if floor else None,
+    return {"name": name, "danger": danger, "safe": safe, "luck": luck,
+            "merged": ev["pairs"]["correct"], "wrong": ev["pairs"]["wrong"],
+            "should": ev["pairs"]["should_merge"],
             "gap": min(same) - max(diff), "same": same, "diff": diff, "big": big}
 
 
@@ -127,13 +140,12 @@ def main(argv: list[str]) -> int:
     rows, ledger = bank_apart()
     sessions = len({r["episode"].split("#")[0] for r in rows})
     print(f"{len(rows)} episodes from {sessions} live sessions\n")
-    print(f"{'step':6} {'danger':>7} {'floor':>6} {'merged':>8} {'margin':>7} {'2x2 gap':>8}  3x")
+    print(f"{'step':6} {'danger':>7} {'safe':>5} {'merged':>8} {'wrong':>5} {'luck':>5} {'2x2 gap':>8}  3x at safe")
     cache: dict = {}
     for name in names:
         s = score(name, RENDERINGS[name], rows, ledger, cache)
-        margin = f"{s['margin']:+.3f}" if s["margin"] is not None else "   n/a"
-        print(f"{name:6} {s['danger']:7.3f} {s['floor'] or 0:6.2f} {s['merged']:>3}/{s['should']:<4} "
-              f"{margin:>7} {s['gap']:+8.3f}  {', '.join(s['big']) or '-'}")
+        print(f"{name:6} {s['danger']:7.3f} {s['safe']:5.2f} {s['merged']:>3}/{s['should']:<4} "
+              f"{s['wrong']:>5} {s['luck'] or 0:5.2f} {s['gap']:+8.3f}  {', '.join(s['big']) or '-'}")
         print(f"       2x2 same procedure {' '.join(f'{x:.3f}' for x in s['same'])} | "
               f"different {' '.join(f'{x:.3f}' for x in s['diff'])}")
     return 0
