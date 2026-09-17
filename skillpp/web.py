@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import re
 import subprocess
 import sys
@@ -113,6 +114,22 @@ def row_state(config: Config, entry) -> dict:
     if status.get("state") in ("failed", "declined"):
         return {"state": status["state"], "message": status.get("message", "")}
     return {"state": "accepted"}
+
+
+def days_left(config: Config, entry, now=None) -> int | None:
+    """Days until `skillpp expire` would delete this candidate, or None if it
+    never would. Mirrors `Ledger.expire`: only a candidate still collecting
+    expires, `candidate_ttl_days` after it was last recognized — so every new
+    recognition resets the clock, and one that reaches the threshold keeps."""
+    from datetime import datetime, timedelta, timezone
+    from .ledger import _parse_ts
+
+    if entry.status != STATUS_CANDIDATE or entry.ready(config.recurrence_threshold):
+        return None
+    now = now or datetime.now(timezone.utc)
+    seconds = (_parse_ts(entry.last_seen) + timedelta(days=config.candidate_ttl_days)
+               - now).total_seconds()
+    return max(0, math.ceil(seconds / 86400))    # part of a day left is a day left
 
 
 def step_outline(steps: list[dict], limit: int = 30) -> list[str]:
@@ -242,12 +259,14 @@ def collect_state(config: Config) -> dict:
         rows.append({"id": entry.id, "title": entry.title,
                      "occurrences": entry.occurrences,
                      "ready": entry.occurrences >= threshold or entry.ready(threshold),
+                     "days_left": days_left(config, entry),
                      **row_state(config, entry),
                      "outline": step_outline(entry.steps),
                      "flags": warning_flags(entry.steps),
                      "summary": _cached_summary(summaries, entry)})
     rows.sort(key=lambda r: (-r["occurrences"], (r["title"] or "").lower()))
-    return {"threshold": threshold, "rows": rows, "drafts": list_drafts(config)}
+    return {"threshold": threshold, "ttl": config.candidate_ttl_days,
+            "rows": rows, "drafts": list_drafts(config)}
 
 
 def _skill_name(entry, skill_md: Path) -> str:
@@ -615,6 +634,9 @@ PAGE = r"""<!doctype html>
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
  .cand.ready{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.06),var(--panel) 40%)}
  .cand.ready .seen{color:var(--ok)}
+ .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
+ .clock.soon{color:#fbbf24}
+ .clock.gone{color:var(--no)}
  .count{font:600 13px var(--mono);min-width:34px;text-align:right}
  .section{display:flex;align-items:baseline;gap:10px;margin:22px 0 10px}
  .section:first-child{margin-top:0}
@@ -915,6 +937,8 @@ function render(){
       <div class="row" data-row="${esc(r.id)}">
       <span class="chev">›</span>
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
+      ${r.days_left === null ? "" : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
+        title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless it reaches ${S.threshold}× first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
       <span class="seen count" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span>
       <span class="acts">${actions(r)}</span></div>
       <div class="body">${candidateBody(r)}</div></div>`;

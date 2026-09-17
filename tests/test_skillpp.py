@@ -3467,6 +3467,22 @@ class TestWeb(TempRoot):
                          "not the agent's 'declined', which offers a retry")
         self.assertFalse(accept(self.config, "d")["ok"], "declined stays declined")
 
+    def test_the_clock_counts_down_from_the_last_recognition(self):
+        from datetime import datetime, timedelta, timezone
+        from skillpp.ledger import STATUS_PROMOTED
+        from skillpp.web import days_left
+        now = datetime(2026, 9, 17, 12, tzinfo=timezone.utc)
+        ago = lambda d: (now - timedelta(days=d)).isoformat()
+        entry = lambda d, **kw: Entry(id="x", occurrences=kw.pop("n", 1), last_seen=ago(d), **kw)
+        self.assertEqual(days_left(self.config, entry(0), now), 14)
+        self.assertEqual(days_left(self.config, entry(0.5), now), 14)
+        self.assertEqual(days_left(self.config, entry(10), now), 4)
+        self.assertEqual(days_left(self.config, entry(13.9), now), 1)
+        self.assertEqual(days_left(self.config, entry(20), now), 0)
+        self.assertIsNone(days_left(self.config, entry(30, n=3), now),
+                          "a candidate at the threshold is kept for review")
+        self.assertIsNone(days_left(self.config, entry(30, status=STATUS_PROMOTED), now))
+
     def test_a_declined_candidate_can_be_reinstated(self):
         from skillpp.ledger import STATUS_CANDIDATE
         from skillpp.web import decline, reinstate
