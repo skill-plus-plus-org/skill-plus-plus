@@ -1016,13 +1016,12 @@ function render(){
       <span class="seen count ${r.occurrences >= S.threshold ? "reached" : ""}" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
       <div class="body">${candidateBody(r)}</div></div>`;
   const declined = S.rows.filter(r => r.state === "dismissed");
-  const hasDraft = r => ["drafted", "revising", "installed"].includes(r.state);
-  const drafted = S.rows.filter(hasDraft);
-  const live = S.rows.filter(r => r.state !== "dismissed" && !hasDraft(r));
-  const ready = live.filter(r => r.ready), collecting = live.filter(r => !r.ready);
+  const promoted = S.rows.filter(r => !["undecided", "collecting", "dismissed"].includes(r.state));
+  const open_ = S.rows.filter(r => ["undecided", "collecting"].includes(r.state));
+  const ready = open_.filter(r => r.ready), collecting = open_.filter(r => !r.ready);
   list.innerHTML = `
-    ${drafted.length ? `<div class="section"><h2>Drafted</h2><span>a skill draft exists · ${drafted.length}</span></div>
-    ${drafted.map(card).join("")}` : ""}
+    ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>draft, review and download · ${promoted.length}</span></div>
+    ${promoted.map(card).join("")}` : ""}
     <div class="section"><h2>Ready to decide</h2><span>${S.threshold}× or more · ${ready.length}</span></div>
     ${ready.length ? ready.map(card).join("") : `<p class="empty">Nothing has reached ${S.threshold}× yet.</p>`}
     <div class="section"><h2>Still collecting</h2><span>below ${S.threshold}× · ${collecting.length}</span></div>
