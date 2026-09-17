@@ -598,6 +598,7 @@ PAGE = r"""<!doctype html>
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
  .cand.ready{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.06),var(--panel) 40%)}
  .cand.ready .seen{color:var(--ok)}
+ .count{font:600 13px var(--mono);min-width:34px;text-align:right}
  .section{display:flex;align-items:baseline;gap:10px;margin:22px 0 10px}
  .section:first-child{margin-top:0}
  .section h2{margin:0;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--fg)}
@@ -681,7 +682,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g,
 function actions(r){
   const id = esc(r.id), off = busy.has(r.id) ? " disabled" : "";
   switch(r.state){
-    case "collecting": return `<span class="state" title="Accept and Decline open at COUNT ${S.threshold}">needs ${S.threshold - r.occurrences} more</span>`;
+    case "collecting": return `<span class="state" title="Accept and Decline open at ${S.threshold}×">needs ${S.threshold - r.occurrences} more</span>`;
     case "undecided": return `<button class="accept" data-act="accept" data-id="${id}"${off}>Accept Skill</button>
       <button class="decline" data-act="decline" data-id="${id}"${off}>Decline Skill</button>`;
     case "accepted": return `<button class="create" data-act="create" data-id="${id}"${off}>Create Skill</button>`;
@@ -889,7 +890,7 @@ async function fetchSummary(id){
 }
 
 function render(){
-  document.getElementById("where").textContent = `threshold COUNT ≥ ${S.threshold}`;
+  document.getElementById("where").textContent = `ready at ${S.threshold}×`;
   renderNav();
   const list = document.getElementById("list");
   if(view === "drafts") return renderDrafts(list);
@@ -897,14 +898,14 @@ function render(){
       <div class="row" data-row="${esc(r.id)}">
       <span class="chev">›</span>
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
-      <span class="seen" title="how often this procedure was recognized">COUNT ${r.occurrences}</span>
+      <span class="seen count" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span>
       <span class="acts">${actions(r)}</span></div>
       <div class="body">${candidateBody(r)}</div></div>`;
   const ready = S.rows.filter(r => r.ready), collecting = S.rows.filter(r => !r.ready);
   list.innerHTML = `
-    <div class="section"><h2>Ready to decide</h2><span>COUNT ${S.threshold} or more · ${ready.length}</span></div>
-    ${ready.length ? ready.map(card).join("") : `<p class="empty">Nothing has reached COUNT ${S.threshold} yet.</p>`}
-    <div class="section"><h2>Still collecting</h2><span>COUNT below ${S.threshold} · ${collecting.length}</span></div>
+    <div class="section"><h2>Ready to decide</h2><span>${S.threshold}× or more · ${ready.length}</span></div>
+    ${ready.length ? ready.map(card).join("") : `<p class="empty">Nothing has reached ${S.threshold}× yet.</p>`}
+    <div class="section"><h2>Still collecting</h2><span>below ${S.threshold}× · ${collecting.length}</span></div>
     ${collecting.length ? collecting.map(card).join("") : `<p class="empty">Nothing else.</p>`}`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
   list.querySelectorAll("[data-row]").forEach(h => h.onclick = ev => {
