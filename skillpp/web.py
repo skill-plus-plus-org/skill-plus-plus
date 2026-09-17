@@ -297,7 +297,9 @@ def serve(config: Config, skills_dir: Path | None = None, port: int = 8765,
     return httpd
 
 
-PAGE = """<!doctype html>
+# Raw: the page script holds regular expressions, and their backslashes must
+# reach the browser unchanged.
+PAGE = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>skillpp</title>
@@ -350,9 +352,24 @@ PAGE = """<!doctype html>
  .draft .desc{padding:0 16px 12px 44px;color:var(--dim);font-size:12.5px;margin:0}
  .draft .body{display:none;border-top:1px solid var(--line);padding:14px 16px}
  .draft.open .body{display:block}
- .draft pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.55 var(--mono);
-   color:#cbd2e1;background:var(--bg);border:1px solid var(--line);border-radius:6px;
-   padding:14px;max-height:70vh;overflow:auto}
+ .md{color:#cbd2e1;font-size:13.5px;line-height:1.6;max-width:760px}
+ .md h1{font-size:18px;margin:18px 0 8px;color:var(--fg)}
+ .md h2{font-size:15px;margin:20px 0 6px;color:var(--fg)}
+ .md h3,.md h4,.md h5,.md h6{font-size:13.5px;margin:16px 0 4px;color:var(--fg)}
+ .md p{margin:6px 0} .md li>p{margin:2px 0}
+ .md ul,.md ol{margin:6px 0;padding-left:22px} .md li{margin:3px 0}
+ .md code{font:12px var(--mono);background:var(--surface);border:1px solid var(--line);
+   border-radius:4px;padding:1px 5px}
+ .md pre{margin:8px 0;padding:12px;background:var(--bg);border:1px solid var(--line);
+   border-radius:6px;overflow:auto}
+ .md pre code{background:none;border:0;padding:0;white-space:pre;font-size:12px;line-height:1.55}
+ .md blockquote{margin:8px 0;padding-left:12px;border-left:2px solid var(--line);color:var(--dim)}
+ .md hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+ .md .link{text-decoration:underline dotted;color:var(--fg)}
+ .md table.fm{border-collapse:collapse;margin:0 0 12px;font:11.5px var(--mono);width:100%}
+ .md .fm th{text-align:left;color:var(--muted);font-weight:500;padding:3px 12px 3px 0;
+   white-space:nowrap;vertical-align:top;width:1%}
+ .md .fm td{color:var(--dim);padding:3px 0;word-break:break-word}
  .files{font:11.5px var(--mono);color:var(--muted);margin:0 0 10px}
  a.download{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;text-decoration:none;
    color:var(--ok);border:1px solid var(--okline);background:var(--okbg);white-space:nowrap}
@@ -391,6 +408,89 @@ function renderNav(){
   nav.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { view = b.dataset.view; render(); });
 }
 
+// Markdown for reviewing a SKILL.md. Everything is escaped first; only the
+// tags written here reach the page. Links show their text and never navigate.
+function mdInline(raw){
+  const codes = [];
+  let t = raw.replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return "@@code" + (codes.length - 1) + "@@"; });
+  t = esc(t)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(?<![*\w])\*([^*\s][^*]*?)\*(?![*\w])/g, "<em>$1</em>")
+    .replace(/(?<![_\w])_([^_\s][^_]*?)_(?![_\w])/g, "<em>$1</em>")
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<span class="link" title="$2">$1</span>');
+  return t.replace(/@@code(\d+)@@/g, (m, i) => `<code>${esc(codes[i])}</code>`);
+}
+
+function mdFrontmatter(fm){
+  const rows = [];
+  let parent = "";
+  for(const line of fm.split("\n")){
+    const m = line.match(/^(\s*)([\w.-]+):\s*(.*)$/);
+    if(!m) continue;
+    const [, indent, key, value] = m;
+    if(!indent && !value){ parent = key; continue; }
+    if(!indent) parent = "";
+    const name = indent && parent ? `${parent}.${key}` : key;
+    rows.push(`<tr><th>${esc(name)}</th><td>${esc(value.replace(/^"(.*)"$/, "$1"))}</td></tr>`);
+  }
+  return rows.length ? `<table class="fm">${rows.join("")}</table>` : "";
+}
+
+function md(src){
+  let body = src.replace(/\r\n/g, "\n"), head = "";
+  const fm = body.match(/^---\n([\s\S]*?)\n---\n?/);
+  if(fm){ head = mdFrontmatter(fm[1]); body = body.slice(fm[0].length); }
+  const out = [], lines = body.split("\n"), lists = [];
+  let para = [];
+  const flush = () => { if(para.length){ out.push(`<p>${mdInline(para.join(" "))}</p>`); para = []; } };
+  const closeTo = indent => {
+    while(lists.length && lists[lists.length - 1].indent > indent){
+      out.push(`</li></${lists.pop().type}>`);
+    }
+  };
+  for(let i = 0; i < lines.length; i++){
+    const line = lines[i], indent = line.match(/^\s*/)[0].length, text = line.trim();
+    if(text.startsWith("```")){
+      flush();
+      if(indent === 0) closeTo(-1);
+      const code = [];
+      for(i++; i < lines.length && !lines[i].trim().startsWith("```"); i++){
+        code.push(lines[i].slice(Math.min(indent, lines[i].match(/^\s*/)[0].length)));
+      }
+      out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+      continue;
+    }
+    if(!text){ flush(); continue; }
+    const item = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+    if(item){
+      flush();
+      const type = /\d/.test(item[2]) ? "ol" : "ul";
+      closeTo(indent);
+      const top = lists[lists.length - 1];
+      if(top && top.indent === indent && top.type === type){
+        out.push("</li><li>");
+      } else {
+        if(top && top.indent === indent) out.push(`</li></${lists.pop().type}>`);
+        lists.push({type, indent});
+        out.push(`<${type}><li>`);
+      }
+      para.push(item[3]);
+      continue;
+    }
+    if(lists.length && indent > 0){ para.push(text); continue; }
+    const h = text.match(/^(#{1,6})\s+(.*)$/);
+    const rule = /^(-{3,}|\*{3,}|_{3,})$/.test(text);
+    const q = text.match(/^>\s?(.*)$/);
+    if(h || rule || q || lists.length){ flush(); closeTo(-1); }
+    if(h){ const n = h[1].length; out.push(`<h${n}>${mdInline(h[2])}</h${n}>`); continue; }
+    if(rule){ out.push("<hr>"); continue; }
+    if(q){ out.push(`<blockquote>${mdInline(q[1])}</blockquote>`); continue; }
+    para.push(text);
+  }
+  flush(); closeTo(-1);
+  return head + out.join("\n");
+}
+
 function renderDrafts(list){
   list.innerHTML = S.drafts.length ? S.drafts.map(d => `<div class="draft ${open.has(d.id)?"open":""}">
       <div class="row" data-toggle="${esc(d.id)}">
@@ -403,7 +503,7 @@ function renderDrafts(list){
       <p class="desc">${esc(d.description)}</p>
       <div class="body">
         <p class="files">${d.files.map(esc).join(" · ")}</p>
-        <pre>${esc(d.body)}</pre>
+        <div class="md">${md(d.body)}</div>
       </div></div>`).join("")
     : `<p class="empty">No drafts yet. Accept a candidate, then Create Skill.</p>`;
   list.querySelectorAll("[data-toggle]").forEach(h => h.onclick = ev => {

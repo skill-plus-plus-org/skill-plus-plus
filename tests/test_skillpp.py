@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -3509,6 +3510,30 @@ class TestWeb(TempRoot):
         self._drafted("x", name="../escape")
         filename, _ = draft_zip(self.config, "x")
         self.assertEqual(filename, "x.zip")
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_a_draft_renders_as_markdown_and_never_as_raw_html(self):
+        """The SKILL.md is written by an agent, so it is untrusted text."""
+        import json, subprocess
+        from skillpp.web import PAGE
+        script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
+        source = ("---\nname: x\nmetadata:\n  tier: \"provisional\"\n---\n"
+                  "# Title\n\nA line\ncontinued with `body_contains`.\n\n"
+                  "1. **Step** one\n   ```bash\n   git add a\n   ```\n2. Step two\n"
+                  "   - nested\n\n<script>alert(1)</script> <img src=x onerror=y>\n")
+        program = script + f"\nprocess.stdout.write(md({json.dumps(source)}));"
+        html = subprocess.run(["node", "-e", program], capture_output=True,
+                              text=True, check=True).stdout
+        self.assertIn("<h1>Title</h1>", html)
+        self.assertIn("<p>A line continued with <code>body_contains</code>.</p>", html)
+        self.assertIn("<strong>Step</strong>", html)
+        self.assertIn("<pre><code>git add a</code></pre>", html)
+        self.assertIn("<th>metadata.tier</th><td>provisional</td>", html)
+        self.assertEqual(html.count("<li>"), html.count("</li>"))
+        self.assertEqual(html.count("<ol>"), html.count("</ol>"))
+        self.assertEqual(html.count("<ul>"), html.count("</ul>"))
+        self.assertNotIn("<script>", html)
+        self.assertNotIn("<img", html)
 
     def test_every_state_has_its_own_label_on_the_page(self):
         """A dismissed row once rendered as "Agent declined" with a retry
