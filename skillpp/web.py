@@ -264,9 +264,10 @@ def collect_state(config: Config) -> dict:
                      "outline": step_outline(entry.steps),
                      "flags": warning_flags(entry.steps),
                      "summary": _cached_summary(summaries, entry)})
-    # Most-recognized first; at the same count, the one closest to expiring
-    # first. Rows that never expire (no clock) come after those that do.
-    rows.sort(key=lambda r: (-r["occurrences"],
+    # Expired last of all. Otherwise most-recognized first; at the same count,
+    # the one closest to expiring first, then rows that never expire.
+    rows.sort(key=lambda r: (r["days_left"] == 0,
+                             -r["occurrences"],
                              r["days_left"] is None,
                              r["days_left"] if r["days_left"] is not None else 0,
                              (r["title"] or "").lower()))
@@ -624,8 +625,6 @@ PAGE = r"""<!doctype html>
  button.accept:hover{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
  button.decline:hover{color:var(--no);border-color:var(--noline);background:var(--nobg)}
  button.reinstate:hover{color:var(--fg);border-color:var(--dim)}
- .cand.declined{opacity:.7}
- .cand.declined:hover{opacity:1}
  button.create{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .state{font:12px var(--mono);color:var(--dim);white-space:nowrap}
  .state.ok{color:var(--ok)} .state.no{color:var(--no)}
@@ -637,8 +636,12 @@ PAGE = r"""<!doctype html>
  @keyframes s{to{transform:rotate(360deg)}}
  .empty{color:var(--muted);padding:32px 0;text-align:center}
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
- .cand.ready{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.06),var(--panel) 40%)}
- .cand.ready .seen{color:var(--ok)}
+ .cand.ready{border-left:3px solid #fbbf24;background:linear-gradient(90deg,rgba(251,191,36,.07),var(--panel) 40%)}
+ .cand.ready .seen{color:#fbbf24}
+ .cand.accepted{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.07),var(--panel) 40%)}
+ .cand.accepted .seen{color:var(--ok)}
+ .cand.declined{border-left:3px solid var(--no);background:linear-gradient(90deg,rgba(244,63,94,.07),var(--panel) 40%)}
+ .cand.declined .seen{color:var(--no)}
  .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
  .clock.soon{color:#fbbf24}
  .clock.gone{color:var(--no)}
@@ -938,7 +941,11 @@ function render(){
   renderNav();
   const list = document.getElementById("list");
   if(view === "drafts") return renderDrafts(list);
-  const card = r => `<div class="cand ${r.state==="dismissed"?"declined":r.ready?"ready":""} ${openRows.has(r.id)?"open":""}">
+  const highlight = r => r.state === "dismissed" ? "declined"
+    : ["undecided", "collecting"].includes(r.state) ? (r.ready ? "ready" : "")
+    : "accepted";
+  const card = r => `<div class="cand ${highlight(r)} ${openRows.has(r.id)?"open":""}" title="${
+    {ready: `${S.threshold}× reached: ready to decide`, accepted: "accepted", declined: "declined"}[highlight(r)] || ""}">
       <div class="row" data-row="${esc(r.id)}">
       <span class="chev">›</span>
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
