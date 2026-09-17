@@ -124,11 +124,24 @@ def r3(entry: Entry) -> str:
     return FILE.sub("<file>", turns_text(turns))
 
 
+def r4(entry: Entry) -> str:
+    """R3 without the replies: `User: prompt` per turn, file names masked.
+
+    Measured, not kept: merged 12 -> 19 and the 2x2 gap +0.161, but every added
+    merge was a create-presentation pair, whose prompts were scripted and pasted
+    verbatim. On the unscripted coding sessions it changed nothing (add-eval-case
+    4/21 both). A rendering that reads only prompt wording is flattered by a
+    corpus whose non-coding runs share that wording.
+    """
+    return FILE.sub("<file>", "\n\n".join(f"User: {t.get('prompt', '')}" for t in entry.turns))
+
+
 RENDERINGS = {
     "R0": r0,
     "R1": r1,
     "R2": r2,
     "R3": r3,
+    "R4": r4,
 }
 
 
