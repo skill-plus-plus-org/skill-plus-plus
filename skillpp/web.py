@@ -678,11 +678,11 @@ PAGE = r"""<!doctype html>
  .empty{color:var(--muted);padding:32px 0;text-align:center}
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
  .cand.ready{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.07),var(--panel) 40%)}
- .cand.accepted{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.07),var(--panel) 40%)}
+ .cand.accepted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
  .badge{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;
    border-radius:4px;white-space:nowrap;border:1px solid}
  .badge.ready{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
- .badge.accepted{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
+ .badge.accepted{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .badge.drafted{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .cand.drafted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
  .badge.declined{color:var(--no);border-color:var(--noline);background:var(--nobg)}
