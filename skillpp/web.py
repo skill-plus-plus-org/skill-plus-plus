@@ -1005,11 +1005,11 @@ function render(){
     : ["undecided", "collecting"].includes(r.state) ? (r.ready ? "ready" : "")
     : "accepted";
   const card = r => `<div class="cand ${highlight(r)} ${openRows.has(r.id)?"open":""}" title="${
-    {ready: `${S.threshold}× reached: ready to decide`, accepted: "accepted", drafted: "drafted", declined: "declined"}[highlight(r)] || ""}">
+    {ready: `${S.threshold}× reached: ready to decide`, accepted: "promoted", drafted: "drafted", declined: "dismissed"}[highlight(r)] || ""}">
       <div class="row" data-row="${esc(r.id)}">
       <span class="chev">›</span>
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
-      ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Accepted", drafted: "Drafted", declined: "Declined"}[highlight(r)]}</span>` : ""}
+      ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Promoted", drafted: "Drafted", declined: "Dismissed"}[highlight(r)]}</span>` : ""}
       <span class="acts">${actions(r)}</span>
       ${r.days_left === null ? `<span class="clock"></span>` : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
         title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless it reaches ${S.threshold}× first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
@@ -1030,7 +1030,7 @@ function render(){
       <div class="thead"><span class="chev"></span><span class="title">Title</span>
         <span class="acts"></span><span class="clock">Time to expire</span><span class="count">Count</span></div>
       ${collecting.map(card).join("")}</div>` : `<p class="empty">Nothing else.</p>`}
-    ${declined.length ? `<div class="section"><h2>Declined</h2><span>reinstate to put one back · ${declined.length}</span></div>
+    ${declined.length ? `<div class="section"><h2>Dismissed</h2><span>reinstate to put one back · ${declined.length}</span></div>
     ${declined.map(card).join("")}` : ""}`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
   list.querySelectorAll("[data-row]").forEach(h => h.onclick = ev => {
