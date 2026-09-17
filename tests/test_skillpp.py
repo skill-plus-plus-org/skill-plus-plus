@@ -3781,18 +3781,6 @@ class TestWeb(TempRoot):
                                                "fetch docs", "npm test",
                                                "send the summary"])
 
-    def test_warning_flags_name_what_deserves_a_look(self):
-        from skillpp.web import warning_flags
-        flags = warning_flags([
-            {"tool": "Bash", "input": {"command": "rm -rf build", "description": "Clean build"}},
-            {"tool": "Bash", "input": {"command": "git push origin main"}},
-            {"tool": "Bash", "input": {"command": "curl -s x > /dev/null"}},
-            {"tool": "Write", "input": {"file_path": "/repo/COVERAGE.md"}},
-        ])
-        self.assertEqual(flags["destructive"], ["Clean build"])
-        self.assertGreaterEqual(flags["network"], 1)
-        self.assertEqual(flags["writes"], ["COVERAGE.md"])
-
     def test_a_summary_is_asked_on_demand_cached_and_redone_when_the_entry_grows(self):
         import skillpp.local as local
         from skillpp.web import summarise

@@ -167,24 +167,6 @@ def step_outline(steps: list[dict], limit: int = 30) -> list[str]:
     return lines[:limit] + ([f"… {len(lines) - limit} more"] if len(lines) > limit else [])
 
 
-def warning_flags(steps: list[dict]) -> dict:
-    """What deserves a look before accepting: destructive commands, steps that
-    reach the network or change remote state, and files written."""
-    from .signals import effects
-
-    eff = effects(steps)
-    notes = eff.get("describes", {})
-    return {
-        "destructive": [notes.get(c) or c[:80] for c in eff["destructive"]],
-        "network": len(eff["network"]),
-        # A redirect target without a path or an extension is almost always a
-        # heredoc marker or a descriptor the pattern caught, not a file.
-        "writes": sorted({Path(w).name for w in eff["writes"]
-                          if w and not w.startswith("/dev/")
-                          and ("/" in w or "." in Path(w).name)}),
-    }
-
-
 def _summaries_path(config: Config) -> Path:
     return config.root / "review_summaries.json"
 
@@ -270,7 +252,6 @@ def collect_state(config: Config) -> dict:
                      "days_left": days_left(config, entry),
                      **row_state(config, entry),
                      "outline": step_outline(entry.steps),
-                     "flags": warning_flags(entry.steps),
                      "summary": _cached_summary(summaries, entry)})
     # Expired last of all. Otherwise most-recognized first; at the same count,
     # the one closest to expiring first, then rows that never expire.
@@ -716,9 +697,6 @@ PAGE = r"""<!doctype html>
  .sum.pending{color:var(--muted);font-style:italic}
  .outline{margin:0 0 10px;padding-left:20px;font-size:13px;color:#cbd2e1}
  .outline li{margin:2px 0}
- .flags{display:flex;flex-wrap:wrap;gap:6px;margin:0}
- .flag{font:11.5px var(--mono);padding:2px 8px;border-radius:4px;border:1px solid var(--line);color:var(--dim)}
- .flag.warn{color:#fbbf24;border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.06)}
  nav{display:flex;gap:4px}
  nav button{background:none;border:0;border-bottom:2px solid transparent;border-radius:0;
    padding:4px 10px;color:var(--dim)}
@@ -984,12 +962,7 @@ function candidateBody(r){
   const sum = r.summary ? `<p class="sum">${esc(r.summary)}</p>`
     : summaryError[r.id] ? `<p class="sum pending">No summary: ${esc(summaryError[r.id])}</p>`
     : `<p class="sum pending">Summarising…</p>`;
-  const f = r.flags, chips = [];
-  f.destructive.forEach(d => chips.push(`<span class="flag warn" title="destructive">⚠ ${esc(d)}</span>`));
-  if(f.network) chips.push(`<span class="flag warn">network · ${f.network} step${f.network===1?"":"s"}</span>`);
-  if(f.writes.length) chips.push(`<span class="flag">writes ${f.writes.map(esc).join(", ")}</span>`);
-  return `${sum}<ol class="outline">${r.outline.map(l => `<li>${esc(l)}</li>`).join("")}</ol>
-    ${chips.length ? `<div class="flags">${chips.join("")}</div>` : ""}`;
+  return `${sum}<ol class="outline">${r.outline.map(l => `<li>${esc(l)}</li>`).join("")}</ol>`;
 }
 
 async function fetchSummary(id){
