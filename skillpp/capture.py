@@ -439,7 +439,11 @@ def handle_session_end(config: Config, payload: dict) -> dict:
     # needs the steps that followed each gap. A model that is missing, slow or
     # incoherent costs the verdicts, never the steps — and a session with no
     # verdicts is offline, kept rather than banked.
-    if config.judge_boundaries:
+    #
+    # Not asked again once folding has begun (`folded`): the episodes already
+    # banked are recorded by position, and a second judgement can cut
+    # differently and make those positions name other steps.
+    if config.judge_boundaries and "folded" not in session:
         try:
             from .boundary import judge_session
             judge_session(config, session)
@@ -525,12 +529,36 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
                 "episodes": [], "flagged": 0,
                 "reason": f"no embeddings: {config.embed_model} did not answer"}
 
+    # Which episodes are already in the ledger. An outage can still land between
+    # the check above and the last episode, and a fold that stops there has
+    # banked the episodes before it. Without this list the retry banks them
+    # again, and `occurrences` counts every recognition, so one run would count
+    # twice — enough to reach the threshold on its own.
+    folded = session.setdefault("folded", [])
     results = []
-    for episode in foldable:
-        result = _fold_steps(config, session, episode.steps,
-                             source=source, match=can_match)
+    for index, episode in enumerate(foldable):
+        if index in folded:
+            continue
+        try:
+            result = _fold_steps(config, session, episode.steps,
+                                 source=source, match=can_match)
+        except LocalModelUnavailable as exc:
+            if not force:
+                # Held, not crashed: `handle_session_end` stamps and saves the
+                # file, with `folded` and the verdicts, so a retry resumes here.
+                return {"status": "offline", "steps": len(session.get("steps", [])),
+                        "episodes": results, "flagged": 0,
+                        "reason": (f"embeddings stopped after {len(folded)} of "
+                                   f"{len(foldable)} episodes: {exc}")}
+            # An explicit keep never loses work. The rest is banked unmatched,
+            # as it is when the model is down before a keep starts, and
+            # `skillpp merge` compares those first.
+            can_match = False
+            result = _fold_steps(config, session, episode.steps,
+                                 source=source, match=False)
         result["ended_by"] = episode.ended_by
         results.append(result)
+        folded.append(index)
 
     flagged = [e for e in episodes if e.flagged]
     if not results:
@@ -937,8 +965,9 @@ def keep_current(config: Config, session_id: str | None = None) -> dict:
     if not [s for s in session.get("steps", []) if not is_prompt(s)]:
         return {"status": "nothing-yet"}
     # Boundaries are normally found at `SessionEnd`; this folds mid-session, so
-    # ask now for whatever gaps the buffer already holds.
-    if config.judge_boundaries:
+    # ask now for whatever gaps the buffer already holds — unless a held fold
+    # already fixed them (see `handle_session_end`).
+    if config.judge_boundaries and "folded" not in session:
         try:
             from .boundary import judge_session
             judge_session(config, session)

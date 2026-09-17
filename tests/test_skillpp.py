@@ -3950,6 +3950,84 @@ class TestLiveSessions(unittest.TestCase):
                 self.assertIsNone(secret.search(blob))
 
 
+class TestFoldResumesAfterOutage(TempRoot):
+    """An embedding outage mid-fold holds the session, and a retry resumes.
+
+    Before this the exception escaped the hook: the file stayed unstamped, the
+    episodes before the outage were already banked with nothing recording it,
+    and folding the file again counted them a second time.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.calls = self._stub_judge(is_marker)
+        self.down = False
+        import skillpp.matching as matching
+        from skillpp.local import LocalModelUnavailable
+
+        def flaky(text, **kw):
+            # Down only for the second episode, so the first is banked first.
+            if self.down and "pytest" in text:
+                raise LocalModelUnavailable("could not reach an embedding model")
+            return _stub_embed(text)
+        patcher = mock.patch.object(matching, "embed", flaky)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _capture(self, session_id="two"):
+        from skillpp.capture import handle_prompt, handle_tool
+        handle_prompt(self.config, {"session_id": session_id, "cwd": "/r",
+                                    "prompt": "ship both"})
+        for command in ("npm test", "git commit -m 'a'",
+                        "pytest -q", "git commit -m 'b'"):
+            handle_tool(self.config, {"session_id": session_id, "cwd": "/r",
+                                      "tool_name": "Bash",
+                                      "tool_input": {"command": command}})
+
+    def _occurrences(self):
+        return sorted((e.steps[0]["input"]["command"], e.occurrences, e.unmatched)
+                      for e in Ledger(self.config).all())
+
+    def test_an_outage_mid_fold_holds_the_session(self):
+        from skillpp.capture import _session_file, handle_session_end
+        self._capture()
+        self.down = True
+        result = handle_session_end(self.config, {"session_id": "two"})
+
+        self.assertEqual(result["status"], "offline")
+        self.assertIn("after 1 of 2 episodes", result["reason"])
+        saved = json.loads(_session_file(self.config, "two").read_text(encoding="utf-8"))
+        self.assertTrue(saved["held"]["at"])
+        self.assertEqual(saved["folded"], [0])
+        self.assertEqual(self._occurrences(), [("npm test", 1, False)])
+
+    def test_a_retry_resumes_without_counting_twice(self):
+        from skillpp.capture import _session_file, handle_session_end
+        self._capture()
+        self.down = True
+        handle_session_end(self.config, {"session_id": "two"})
+
+        self.down = False
+        self.calls.clear()
+        result = handle_session_end(self.config, {"session_id": "two"})
+
+        self.assertNotEqual(result["status"], "offline")
+        self.assertEqual(self._occurrences(),
+                         [("npm test", 1, False), ("pytest -q", 1, False)])
+        self.assertEqual(self.calls, [], "the judge was asked again on retry")
+        self.assertFalse(_session_file(self.config, "two").exists())
+
+    def test_an_explicit_keep_banks_the_rest_unmatched(self):
+        from skillpp.capture import keep_current
+        self._capture()
+        self.down = True
+        result = keep_current(self.config, "two")
+
+        self.assertNotEqual(result["status"], "offline")
+        self.assertEqual(self._occurrences(),
+                         [("npm test", 1, False), ("pytest -q", 1, True)])
+
+
 class TestEmbedEndpoint(TempRoot):
     """`local.embed` truncates at the model's limit instead of failing.
 
