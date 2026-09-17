@@ -3318,204 +3318,164 @@ class TestParkingSticks(TempRoot):
 
 
 class TestWeb(TempRoot):
-    """A page that shows the current ledger, not the one it was written for.
+    """The decision page: candidates seen often enough, Accept or Decline, then
+    Create Skill for an accepted one.
 
-    The previous version predates `hint`, `description`, `parked_at_occurrences`
-    and the one-off/split statuses, so it would have rendered parked entries as
-    live ones and no ranking at all. A stale view that looks authoritative is
-    worse than no view, which is why this was rewritten rather than ported.
+    Every action runs a real `skillpp` command in a subprocess, so these run the
+    CLI end to end. The agent `skillpp draft` launches is a stub script; no model
+    and no real agent are involved.
     """
 
     def setUp(self) -> None:
         super().setUp()
-        self.skills = self.root / "skills"
-        self.skills.mkdir(parents=True, exist_ok=True)
         self.ledger = Ledger(self.config)
 
-    def _step(self, c):
-        return {"tool": "Bash", "input": {"command": c}}
+    def _save(self, eid, occurrences=3, **kw):
+        entry = Entry(id=eid, title=f"work {eid}", occurrences=occurrences,
+                      sessions=[f"s{n}" for n in range(occurrences)],
+                      steps=[{"tool": "Bash", "input": {"command": "npm test"}}],
+                      **kw)
+        self.ledger.save(entry)
+        return entry
 
-    def test_the_state_separates_parked_from_candidates(self):
-        from skillpp.ledger import STATUS_DISMISSED
+    def _rows(self):
         from skillpp.web import collect_state
-        self.ledger.save(Entry(id="a", signature="s1", title="live one",
-                               steps=[self._step("npm test")]))
-        self.ledger.save(Entry(id="b", signature="s2", title="parked one",
-                               status=STATUS_DISMISSED,
-                               steps=[self._step("ls")]))
-        state = collect_state(self.config, self.skills)
-        self.assertEqual([e["id"] for e in state["candidates"]], ["a"])
-        self.assertEqual([e["id"] for e in state["parked"]], ["b"])
+        return {r["id"]: r for r in collect_state(self.config)["rows"]}
 
-    def test_review_rows_show_what_a_reader_needs_to_judge(self):
-        from skillpp.web import review_rows
-        from skillpp.matching import remember
-        a = Entry(id="a", title="restart again",
-                  intents=["restart again", "still broken"],
-                  steps=[self._step("npm test"), self._step("npm run build")])
-        b = Entry(id="b", title="fix: the thing", intents=["please fix it"],
-                  steps=[self._step("npm test"),
-                         self._step("git commit -m 'fix: the thing'")])
-        c = Entry(id="c", title="restart again", intents=["restart again"],
-                  steps=[self._step("git commit -m 'later'")])
-        for e in (a, b, c):
-            self.ledger.save(e)
-            remember(e, self.config)       # the cache `skillpp merge` fills
-        rows = {r["id"]: r for r in review_rows(self.config)}
-        self.assertTrue(rows["a"]["title_from_prompt"])
-        self.assertFalse(rows["b"]["title_from_prompt"], "titled from its commit")
-        self.assertTrue(rows["c"]["title_from_prompt"],
-                        "a later commit does not change where the title came from")
-        self.assertEqual(rows["a"]["intents"], ["restart again", "still broken"])
-        self.assertEqual(rows["a"]["closest"]["id"], "b")
+    def _agent(self, body):
+        """Point `skillpp draft` at a stub agent script."""
+        import os
+        import shlex
+        script = self.root / "agent.py"
+        script.write_text("import os, pathlib, sys\n" + body, encoding="utf-8")
+        os.environ["SKILLPP_AGENT"] = (f"{shlex.quote(sys.executable)} "
+                                       f"{shlex.quote(str(script))} {{PROMPT}}")
+        self.addCleanup(lambda: os.environ.pop("SKILLPP_AGENT", None))
 
-    def test_closest_never_waits_on_a_model(self):
-        """No cached vector, no closest — loading the page must not embed."""
-        import skillpp.matching as matching
-        from skillpp.web import review_rows
-        self.ledger.save(Entry(id="a", title="t", steps=[self._step("npm test")]))
-        self.ledger.save(Entry(id="b", title="u", steps=[self._step("npm test")]))
+    def _wait_for_draft(self, eid):
+        from skillpp import web
+        job = web._jobs.get(eid)
+        if job:
+            job.join(timeout=60)
+
+    def test_only_candidates_seen_often_enough_are_listed(self):
+        from skillpp.ledger import STATUS_ONE_OFF
+        self._save("ready", occurrences=3)
+        self._save("twice", occurrences=2)
+        self._save("said", occurrences=1, source="dictated")
+        self._save("parked", occurrences=5, status=STATUS_ONE_OFF)
+        self.assertEqual(set(self._rows()), {"ready"})
+        self.assertEqual(self._rows()["ready"]["state"], "undecided")
+
+    def test_decisions_stay_listed_whatever_the_count(self):
+        from skillpp.ledger import STATUS_DISMISSED, STATUS_PROMOTED
+        self._save("yes", occurrences=1, status=STATUS_PROMOTED)
+        self._save("no", occurrences=2, status=STATUS_DISMISSED)
+        rows = self._rows()
+        self.assertEqual(rows["yes"]["state"], "accepted")
+        self.assertEqual(rows["no"]["state"], "dismissed")
+
+    def test_accept_promotes_and_records_the_decision(self):
+        from skillpp.ledger import STATUS_PROMOTED
+        from skillpp.web import accept
+        self._save("a")
+        self.assertTrue(accept(self.config, "a")["ok"])
+        self.assertEqual(Ledger(self.config).get("a").status, STATUS_PROMOTED)
+        self.assertIn('"promoted"', (self.config.root / "decisions.jsonl").read_text())
+        self.assertEqual(self._rows()["a"]["state"], "accepted")
+        self.assertFalse(accept(self.config, "a")["ok"], "decided once")
+
+    def test_decline_dismisses_and_records_the_decision(self):
+        from skillpp.ledger import STATUS_DISMISSED
+        from skillpp.web import accept, decline
+        self._save("d")
+        self.assertTrue(decline(self.config, "d")["ok"])
+        self.assertEqual(Ledger(self.config).get("d").status, STATUS_DISMISSED)
+        self.assertIn('"dismissed"', (self.config.root / "decisions.jsonl").read_text())
+        self.assertEqual(self._rows()["d"]["state"], "dismissed",
+                         "not the agent's 'declined', which offers a retry")
+        self.assertFalse(accept(self.config, "d")["ok"], "declined stays declined")
+
+    def test_create_skill_needs_an_accepted_candidate(self):
+        from skillpp.web import create_skill
+        self._save("u")
+        self.assertFalse(create_skill(self.config, "u")["ok"])
+        self.assertFalse((self.config.root / "drafts" / "u").exists())
+
+    def test_create_skill_drafts_and_never_installs(self):
+        from skillpp.web import accept, create_skill
+        self._agent("d = pathlib.Path(os.environ['SKILLPP_DRAFT_DIR'])\n"
+                    "d.mkdir(parents=True, exist_ok=True)\n"
+                    "(d / 'SKILL.md').write_text('---\\nname: x\\n---\\n')\n")
+        self._save("c")
+        accept(self.config, "c")
+        self.assertTrue(create_skill(self.config, "c")["ok"])
+        self._wait_for_draft("c")
+        row = self._rows()["c"]
+        self.assertEqual(row["state"], "drafted")
+        self.assertTrue(row["path"].endswith("drafts/c/SKILL.md"))
+        self.assertEqual(Ledger(self.config).get("c").skill_path, "")
+
+    def test_a_failed_draft_says_why_and_can_be_retried(self):
+        from skillpp.web import accept, create_skill
+        self._agent("print('not logged in'); sys.exit(1)\n")
+        self._save("f")
+        accept(self.config, "f")
+        create_skill(self.config, "f")
+        self._wait_for_draft("f")
+        row = self._rows()["f"]
+        self.assertEqual(row["state"], "failed")
+        self.assertIn("not logged in", row["message"])
+        self.assertTrue(create_skill(self.config, "f")["ok"], "retry allowed")
+        self._wait_for_draft("f")
+
+    def test_one_draft_run_at_a_time(self):
+        import time
+        from skillpp.web import _write_status, accept, create_skill
+        self._save("r")
+        accept(self.config, "r")
+        _write_status(self.config, "r", state="running", started=time.time())
+        self.assertEqual(self._rows()["r"]["state"], "creating")
+        self.assertFalse(create_skill(self.config, "r")["ok"])
+
+    def test_a_run_that_never_finished_reads_as_failed(self):
+        from skillpp.web import _write_status, accept
+        self._save("s")
+        accept(self.config, "s")
+        _write_status(self.config, "s", state="running", started=0)
+        self.assertEqual(self._rows()["s"]["state"], "failed")
+
+    def test_an_installed_skill_is_shown_as_installed(self):
+        from skillpp.ledger import STATUS_PROMOTED
+        skill = self.root / "skills" / "x" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("---\nname: x\n---\n")
+        self._save("i", status=STATUS_PROMOTED, skill_path=str(skill))
+        self.assertEqual(self._rows()["i"]["state"], "installed")
+
+    def test_loading_the_page_runs_nothing(self):
+        import subprocess
+        self._save("a")
 
         def refuse(*a, **k):
-            raise AssertionError("the review page embedded something")
-        real, matching.embed = matching.embed, refuse
-        self.addCleanup(lambda: setattr(matching, "embed", real))
-        self.assertTrue(all(r["closest"] is None for r in review_rows(self.config)))
+            raise AssertionError("loading the page ran a command")
+        real, subprocess.run = subprocess.run, refuse
+        self.addCleanup(lambda: setattr(subprocess, "run", real))
+        self.assertIn("a", self._rows())
 
-    def test_a_review_tag_is_saved_cleared_and_validated(self):
-        from skillpp.web import load_review, review_rows, save_review
-        self.ledger.save(Entry(id="a", signature="s", title="t",
-                               steps=[self._step("npm test")]))
-        self.assertTrue(save_review(self.config, "a", "fragment")["ok"])
-        self.assertEqual(load_review(self.config), {"a": "fragment"})
-        self.assertEqual(review_rows(self.config)[0]["tag"], "fragment")
-        self.assertFalse(save_review(self.config, "a", "brilliant")["ok"])
-        self.assertFalse(save_review(self.config, "nope", "good")["ok"])
-        save_review(self.config, "a", "")
-        self.assertEqual(load_review(self.config), {})
-
-    def test_a_summary_is_cached_and_redone_when_the_entry_grows(self):
-        import skillpp.local as local
-        from skillpp.web import review_rows, summarise
-        self.ledger.save(Entry(id="a", signature="s", title="option 1",
-                               intents=["option 1"],
-                               steps=[self._step("npm test")]))
-        calls = []
-        real = local.ask
-        def fake(model, prompt, **kw):
-            calls.append(prompt)
-            return "The developer ran the tests.\n\n**Concrete thing:** tests"
-        local.ask = fake
-        self.addCleanup(lambda: setattr(local, "ask", real))
-
-        out = summarise(self.config, "a")
-        self.assertEqual(out["summary"], "Ran the tests.",
-                         "first line only, no leading 'The developer'")
-        summarise(self.config, "a")
-        self.assertEqual(len(calls), 1, "cached, not asked twice")
-        self.assertEqual(review_rows(self.config)[0]["summary"], "Ran the tests.")
-
-        entry = self.ledger.get("a")
-        entry.steps.append(self._step("git commit -m x"))
-        self.ledger.save(entry)
-        self.assertEqual(review_rows(self.config)[0]["summary"], "",
-                         "a grown entry is not described by the old sentence")
-        summarise(self.config, "a")
-        self.assertEqual(len(calls), 2)
-
-    def test_a_summary_never_fills_the_skill_description(self):
-        """`description` decides whether a promoted skill loads."""
-        import skillpp.local as local
-        from skillpp.web import summarise
-        self.ledger.save(Entry(id="a", signature="s", title="t",
-                               steps=[self._step("npm test")]))
-        real = local.ask
-        local.ask = lambda *a, **k: "Ran the tests."
-        self.addCleanup(lambda: setattr(local, "ask", real))
-        summarise(self.config, "a")
-        self.assertEqual(Ledger(self.config).get("a").description, "")
-
-    def test_review_tags_never_touch_the_ledger(self):
-        """Judging the output must not steer it."""
-        from skillpp.web import save_review
-        self.ledger.save(Entry(id="a", signature="s", title="t",
-                               steps=[self._step("npm test")]))
-        before = self.ledger.get("a").status
-        save_review(self.config, "a", "duplicate")
-        self.assertEqual(Ledger(self.config).get("a").status, before)
-
-    def test_the_ranking_and_description_reach_the_page(self):
-        """Both are new since the old UI, and both decide what a reader does."""
-        from skillpp.web import collect_state
-        self.ledger.save(Entry(id="a", signature="s", title="t", hint="method",
-                               description="When a migration is lock-blocked.",
-                               steps=[self._step("npm test")]))
-        row = collect_state(self.config, self.skills)["candidates"][0]
-        self.assertEqual(row["hint"], "method")
-        self.assertIn("lock-blocked", row["description"])
-
-    def test_deviation_is_visible_on_a_parked_entry(self):
-        from skillpp.ledger import STATUS_DISMISSED
-        from skillpp.web import collect_state
-        self.ledger.save(Entry(id="a", signature="s", title="t",
-                               status=STATUS_DISMISSED, occurrences=4,
-                               parked_at_occurrences=1,
-                               steps=[self._step("npm test")]))
-        row = collect_state(self.config, self.skills)["parked"][0]
-        self.assertEqual(row["since_parked"], 3)
-        self.assertTrue(row["parking_looks_wrong"])
-
-    def test_a_traversal_name_is_refused_not_sanitised(self):
-        from skillpp.web import _skill_path
-        for name in ("../../etc/passwd", "..", "a/../../b", "", "x" * 80):
-            self.assertIsNone(_skill_path(self.skills, self.config, name), name)
-
-    def test_saving_a_skill_without_a_description_is_refused(self):
-        """It is the only thing read when deciding whether to load a skill."""
-        from skillpp.web import save_skill
-        path = self.skills / "x" / "SKILL.md"
-        path.parent.mkdir(parents=True)
-        path.write_text("---\nname: x\ndescription: original\n---\nbody\n")
-        result = save_skill(path, "---\nname: x\n---\nbody\n")
-        self.assertFalse(result["ok"])
-        self.assertIn("description", result["error"])
-        self.assertIn("original", path.read_text())
-
-    def test_an_over_long_description_is_refused(self):
-        from skillpp.web import save_skill
-        path = self.skills / "x" / "SKILL.md"
-        path.parent.mkdir(parents=True)
-        path.write_text("---\nname: x\ndescription: fine\n---\n")
-        long = "y" * 201
-        result = save_skill(path, f"---\nname: x\ndescription: {long}\n---\n")
-        self.assertFalse(result["ok"])
-        self.assertIn("200", result["error"])
-
-    def test_a_valid_save_keeps_the_previous_version(self):
-        from skillpp.web import save_skill
-        path = self.skills / "x" / "SKILL.md"
-        path.parent.mkdir(parents=True)
-        path.write_text("---\nname: x\ndescription: before\n---\n")
-        result = save_skill(path, "---\nname: x\ndescription: after\n---\n")
-        self.assertTrue(result["ok"])
-        self.assertIn("after", path.read_text())
-        self.assertTrue(list(path.parent.glob("*.bak-*")))
-
-    def test_reopen_is_the_only_status_change_the_page_makes(self):
-        from skillpp.ledger import STATUS_CANDIDATE, STATUS_DISMISSED
-        from skillpp.web import reopen
-        self.ledger.save(Entry(id="a", signature="s", title="t",
-                               status=STATUS_DISMISSED))
-        self.assertTrue(reopen(self.config, "a")["ok"])
-        self.assertEqual(Ledger(self.config).get("a").status, STATUS_CANDIDATE)
-        # not applicable to anything that was not parked
-        self.assertFalse(reopen(self.config, "a")["ok"])
+    def test_every_state_has_its_own_label_on_the_page(self):
+        """A dismissed row once rendered as "Agent declined" with a retry
+        button, because both states were called "declined"."""
+        from skillpp.web import PAGE
+        for state in ("undecided", "accepted", "creating", "drafted",
+                      "installed", "failed", "declined", "dismissed"):
+            self.assertIn(f'"{state}"', PAGE)
 
     def test_the_page_carries_no_external_references(self):
         """Dependency-free on purpose, and offline by consequence."""
         from skillpp.web import PAGE
-        for bad in ("http://", "https://cdn", "//cdn.", "<script src"):
-            self.assertNotIn(bad, PAGE.replace("http://127.0.0.1", ""))
+        for bad in ("http://", "https://", "//cdn.", "<script src", "<link"):
+            self.assertNotIn(bad, PAGE)
 
 
 class TestLiveSessions(unittest.TestCase):
