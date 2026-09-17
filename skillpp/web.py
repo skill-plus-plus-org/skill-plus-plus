@@ -773,6 +773,8 @@ PAGE = r"""<!doctype html>
 <main id="list"></main>
 <script>
 let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
+// A candidate with a draft is reviewed in the Drafts tab, not listed here.
+const inDrafts = r => ["drafted", "revising"].includes(r.state);
 let view = "candidates", open = new Set(), writing = new Set(), drafts = {}, answers = {};
 let openRows = new Set(), summarising = new Set(), summaryError = {};
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
@@ -784,14 +786,14 @@ function actions(r){
     case "collecting": return "";
     case "undecided": return `<button class="accept" data-act="accept" data-id="${id}"${off}>Promote</button>
       <button class="decline" data-act="decline" data-id="${id}"${off}>Dismiss</button>`;
-    case "accepted": return `<button class="create" data-act="create" data-id="${id}"${off}>Draft</button>`;
+    case "accepted": return `<button class="create" data-act="create" data-id="${id}"${off}>Draft Skill</button>`;
     case "creating": return `<span class="state"><span class="spin"></span>Creating skill…</span>`;
     case "drafted": return `<a class="state ok" data-goto="${id}" title="Review in Drafts">Review</a>`;
     case "revising": return `<span class="state"><span class="spin"></span>Revising…</span>`;
     case "installed": return `<span class="state ok" title="${esc(r.path)}">Skill installed</span>`;
     case "failed": case "declined":
       return `<span class="msg" title="${esc(r.message)}">${r.state==="declined" ? "Agent declined" : "Failed"}: ${esc(r.message)}</span>
-        <button class="create" data-act="create" data-id="${id}"${off}>Draft</button>`;
+        <button class="create" data-act="create" data-id="${id}"${off}>Draft Skill</button>`;
     case "dismissed": return `<button class="reinstate" data-act="reinstate" data-id="${id}"${off}>Reinstate</button>`;
     default: return "";
   }
@@ -799,7 +801,7 @@ function actions(r){
 
 function renderNav(){
   const nav = document.getElementById("nav");
-  nav.innerHTML = [["candidates","Candidates",S.rows.length],["drafts","Drafts",S.drafts.length]]
+  nav.innerHTML = [["candidates","Candidates",S.rows.filter(r => !inDrafts(r)).length],["drafts","Drafts",S.drafts.length]]
     .map(([k,l,n]) => `<button data-view="${k}" aria-selected="${view===k}">${l} (${n})</button>`).join("");
   nav.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { view = b.dataset.view; render(); });
 }
@@ -931,7 +933,7 @@ function renderDrafts(list){
     ${toReview.length ? toReview.map(card).join("") : `<p class="empty">Everything has been downloaded.</p>`}
     <div class="section"><h2>Downloaded</h2><span>revising one moves it back to review · ${downloaded.length}</span></div>
     ${downloaded.length ? downloaded.map(card).join("") : `<p class="empty">Nothing downloaded yet.</p>`}`
-    : `<p class="empty">No drafts yet. Promote a candidate, then Draft.</p>`;
+    : `<p class="empty">No drafts yet. Promote a candidate, then Draft Skill.</p>`;
   list.querySelectorAll("a.download").forEach(a => a.addEventListener("click", () => setTimeout(load, 1000)));
   list.querySelectorAll("[data-revise-open]").forEach(b => b.onclick = () => {
     writing.add(b.dataset.reviseOpen); render();
@@ -1016,11 +1018,11 @@ function render(){
       <span class="seen count ${r.occurrences >= S.threshold ? "reached" : ""}" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
       <div class="body">${candidateBody(r)}</div></div>`;
   const declined = S.rows.filter(r => r.state === "dismissed");
-  const promoted = S.rows.filter(r => !["undecided", "collecting", "dismissed"].includes(r.state));
+  const promoted = S.rows.filter(r => !["undecided", "collecting", "dismissed"].includes(r.state) && !inDrafts(r));
   const open_ = S.rows.filter(r => ["undecided", "collecting"].includes(r.state));
   const ready = open_.filter(r => r.ready), collecting = open_.filter(r => !r.ready);
   list.innerHTML = `
-    ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>draft, review and download · ${promoted.length}</span></div>
+    ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>draft one; finished drafts move to the Drafts tab · ${promoted.length}</span></div>
     ${promoted.map(card).join("")}` : ""}
     <div class="section"><h2>Ready to decide</h2><span>${S.threshold}× or more · ${ready.length}</span></div>
     ${ready.length ? ready.map(card).join("") : `<p class="empty">Nothing has reached ${S.threshold}× yet.</p>`}
