@@ -666,7 +666,8 @@ PAGE = r"""<!doctype html>
  button.accept:hover{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
  button.decline:hover{color:var(--no);border-color:var(--noline);background:var(--nobg)}
  button.reinstate:hover{color:var(--fg);border-color:var(--dim)}
- button.create{color:var(--go);border-color:var(--goline);background:var(--gobg)}
+ button.create{color:#0c0d10;border-color:var(--go);background:var(--go);font-weight:600}
+ button.create:hover{filter:brightness(1.1)}
  .state{font:12px var(--mono);color:var(--dim);white-space:nowrap}
  .state.ok{color:var(--ok)} .state.no{color:var(--no)}
  .msg{font:12px var(--mono);color:var(--no);max-width:260px;white-space:nowrap;
