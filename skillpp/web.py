@@ -699,7 +699,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g,
 function actions(r){
   const id = esc(r.id), off = busy.has(r.id) ? " disabled" : "";
   switch(r.state){
-    case "collecting": return `<span class="state" title="Accept and Decline open at ${S.threshold}×">needs ${S.threshold - r.occurrences} more</span>`;
+    case "collecting": return "";
     case "undecided": return `<button class="accept" data-act="accept" data-id="${id}"${off}>Accept Skill</button>
       <button class="decline" data-act="decline" data-id="${id}"${off}>Decline Skill</button>`;
     case "accepted": return `<button class="create" data-act="create" data-id="${id}"${off}>Create Skill</button>`;
