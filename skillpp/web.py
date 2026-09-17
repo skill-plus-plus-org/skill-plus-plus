@@ -2,7 +2,7 @@
 
 One list: the candidates recognized often enough to be worth a decision, and
 what was decided about them. Accept promotes, Decline dismisses, and an
-accepted candidate gets a Create Skill button that has the developer's agent
+accepted candidate gets a Draft button that has the developer's agent
 write a draft. Everything else the ledger holds stays in the CLI.
 
 Every action runs an existing command — `skillpp promote`, `skillpp dismiss`,
@@ -392,12 +392,12 @@ def _decide(config: Config, entry_id: str, command: str) -> dict:
 
 
 def accept(config: Config, entry_id: str) -> dict:
-    """Accept Skill: `skillpp promote <id>`, with no skill file yet."""
+    """Promote: `skillpp promote <id>`, with no skill file yet."""
     return _decide(config, entry_id, "promote")
 
 
 def decline(config: Config, entry_id: str) -> dict:
-    """Decline Skill: `skillpp dismiss <id>`."""
+    """Dismiss: `skillpp dismiss <id>`."""
     return _decide(config, entry_id, "dismiss")
 
 
@@ -434,7 +434,7 @@ def _draft_job(config: Config, entry_id: str) -> None:
 
 
 def create_skill(config: Config, entry_id: str) -> dict:
-    """Create Skill: `skillpp draft <id> --apply`, in the background.
+    """Draft: `skillpp draft <id> --apply`, in the background.
 
     Only for an accepted candidate, and one run at a time per candidate. The
     draft lands in `<root>/drafts/<id>/` and is never installed from here.
@@ -651,6 +651,8 @@ PAGE = r"""<!doctype html>
    border-radius:4px;white-space:nowrap;border:1px solid}
  .badge.ready{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.1)}
  .badge.accepted{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
+ .badge.drafted{color:var(--go);border-color:var(--goline);background:var(--gobg)}
+ .cand.drafted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
  .badge.declined{color:var(--no);border-color:var(--noline);background:var(--nobg)}
  .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
  .clock.soon{color:#fbbf24}
@@ -740,16 +742,16 @@ function actions(r){
   const id = esc(r.id), off = busy.has(r.id) ? " disabled" : "";
   switch(r.state){
     case "collecting": return "";
-    case "undecided": return `<button class="accept" data-act="accept" data-id="${id}"${off}>Accept Skill</button>
-      <button class="decline" data-act="decline" data-id="${id}"${off}>Decline Skill</button>`;
-    case "accepted": return `<button class="create" data-act="create" data-id="${id}"${off}>Create Skill</button>`;
+    case "undecided": return `<button class="accept" data-act="accept" data-id="${id}"${off}>Promote</button>
+      <button class="decline" data-act="decline" data-id="${id}"${off}>Dismiss</button>`;
+    case "accepted": return `<button class="create" data-act="create" data-id="${id}"${off}>Draft</button>`;
     case "creating": return `<span class="state"><span class="spin"></span>Creating skill…</span>`;
     case "drafted": return `<a class="state ok" data-goto="${id}" title="Review in Drafts">Draft ready →</a>`;
     case "revising": return `<span class="state"><span class="spin"></span>Revising…</span>`;
     case "installed": return `<span class="state ok" title="${esc(r.path)}">Skill installed</span>`;
     case "failed": case "declined":
       return `<span class="msg" title="${esc(r.message)}">${r.state==="declined" ? "Agent declined" : "Failed"}: ${esc(r.message)}</span>
-        <button class="create" data-act="create" data-id="${id}"${off}>Create Skill</button>`;
+        <button class="create" data-act="create" data-id="${id}"${off}>Draft</button>`;
     case "dismissed": return `<button class="reinstate" data-act="reinstate" data-id="${id}"${off}>Reinstate</button>`;
     default: return "";
   }
@@ -883,7 +885,7 @@ function renderDrafts(list){
         <div class="md">${md(d.body)}</div>
         ${reviseBlock(d)}
       </div></div>`).join("")
-    : `<p class="empty">No drafts yet. Accept a candidate, then Create Skill.</p>`;
+    : `<p class="empty">No drafts yet. Promote a candidate, then Draft.</p>`;
   list.querySelectorAll("[data-revise-open]").forEach(b => b.onclick = () => {
     writing.add(b.dataset.reviseOpen); render();
     const box = document.querySelector(`[data-instruction="${CSS.escape(b.dataset.reviseOpen)}"]`);
@@ -952,14 +954,15 @@ function render(){
   const list = document.getElementById("list");
   if(view === "drafts") return renderDrafts(list);
   const highlight = r => r.state === "dismissed" ? "declined"
+    : ["drafted", "revising", "installed"].includes(r.state) ? "drafted"
     : ["undecided", "collecting"].includes(r.state) ? (r.ready ? "ready" : "")
     : "accepted";
   const card = r => `<div class="cand ${highlight(r)} ${openRows.has(r.id)?"open":""}" title="${
-    {ready: `${S.threshold}× reached: ready to decide`, accepted: "accepted", declined: "declined"}[highlight(r)] || ""}">
+    {ready: `${S.threshold}× reached: ready to decide`, accepted: "accepted", drafted: "drafted", declined: "declined"}[highlight(r)] || ""}">
       <div class="row" data-row="${esc(r.id)}">
       <span class="chev">›</span>
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
-      ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Accepted", declined: "Declined"}[highlight(r)]}</span>` : ""}
+      ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Accepted", drafted: "Drafted", declined: "Declined"}[highlight(r)]}</span>` : ""}
       ${r.days_left === null ? "" : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
         title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless it reaches ${S.threshold}× first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
       <span class="seen count" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span>

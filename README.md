@@ -393,7 +393,7 @@ worth reading. Neither half is useful alone.
 | `skillpp keep` | Save the work so far as a candidate, without ending the session |
 | `skillpp reconcile` | Report promoted skills whose file is gone; reports only, never decides |
 | `skillpp ignored [--threshold N]` | List parked candidates and how often that work happened anyway |
-| `skillpp web [--port N] [--no-browser]` | Accept or decline candidates recognized ≥ 3 times (declined ones can be reinstated), then Create Skill (runs `skillpp draft --apply`) for an accepted one; review finished drafts, revise them through your agent, and download each as a skill folder zip; loopback only, no auth |
+| `skillpp web [--port N] [--no-browser]` | Promote or dismiss candidates recognized ≥ 3 times (dismissed ones can be reinstated), then Draft (runs `skillpp draft --apply`) for a promoted one; review finished drafts, revise them through your agent, and download each as a skill folder zip; loopback only, no auth |
 | `skillpp draft <id> [--apply]` | Have your own agent write a draft `SKILL.md`; never installs it. Dry run without `--apply` |
 | `skillpp revise <id> --instruction "…" [--apply]` | Have your own agent change a draft `SKILL.md` as instructed, in place; the previous version is kept in `.revisions/`. Dry run without `--apply` |
 | `skillpp show <id>` | Effect summary, evidence, open questions |
