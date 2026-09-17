@@ -3463,6 +3463,53 @@ class TestWeb(TempRoot):
         self.addCleanup(lambda: setattr(subprocess, "run", real))
         self.assertIn("a", self._rows())
 
+    def _drafted(self, eid, name="add-eval-case", extra=None):
+        from skillpp.ledger import STATUS_PROMOTED
+        from skillpp.web import _write_status
+        self._save(eid, status=STATUS_PROMOTED)
+        folder = self.config.root / "drafts" / eid
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: \"Use when adding a case.\"\n---\n# Body\n")
+        for rel, text in (extra or {}).items():
+            (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+            (folder / rel).write_text(text)
+        _write_status(self.config, eid, state="ready")
+
+    def test_a_finished_draft_is_listed_for_review(self):
+        from skillpp.web import collect_state
+        self._drafted("x", extra={"references/notes.md": "n"})
+        self._save("u")                                    # undecided: no draft
+        drafts = collect_state(self.config)["drafts"]
+        self.assertEqual([d["id"] for d in drafts], ["x"])
+        self.assertEqual(drafts[0]["name"], "add-eval-case")
+        self.assertEqual(drafts[0]["description"], "Use when adding a case.")
+        self.assertIn("# Body", drafts[0]["body"])
+        self.assertEqual(drafts[0]["files"], ["SKILL.md", "references/notes.md"],
+                         "status.json is the page's bookkeeping, not the skill")
+
+    def test_a_draft_downloads_as_a_folder_ready_for_the_skills_directory(self):
+        import io, zipfile
+        from skillpp.web import draft_zip
+        self._drafted("x", extra={"references/notes.md": "n"})
+        filename, data = draft_zip(self.config, "x")
+        self.assertEqual(filename, "add-eval-case.zip")
+        names = zipfile.ZipFile(io.BytesIO(data)).namelist()
+        self.assertEqual(sorted(names), ["add-eval-case/SKILL.md",
+                                         "add-eval-case/references/notes.md"])
+
+    def test_only_a_finished_draft_of_a_known_entry_downloads(self):
+        from skillpp.web import draft_zip
+        self._save("u")
+        self.assertIsNone(draft_zip(self.config, "u"))
+        self.assertIsNone(draft_zip(self.config, "../../etc"))
+
+    def test_an_unsafe_skill_name_falls_back_to_the_id(self):
+        from skillpp.web import draft_zip
+        self._drafted("x", name="../escape")
+        filename, _ = draft_zip(self.config, "x")
+        self.assertEqual(filename, "x.zip")
+
     def test_every_state_has_its_own_label_on_the_page(self):
         """A dismissed row once rendered as "Agent declined" with a retry
         button, because both states were called "declined"."""

@@ -15,23 +15,32 @@ Dependency-free on purpose: `http.server` and one self-contained page.
 
 from __future__ import annotations
 
+import io
 import json
+import re
 import subprocess
 import sys
 import threading
 import time
 import webbrowser
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from .config import Config
 from .ledger import (STATUS_CANDIDATE, STATUS_DISMISSED, STATUS_PROMOTED,
                      Ledger)
+from .lifecycle import parse_frontmatter
 
 CLI = Path(__file__).resolve().parent.parent / "bin" / "skillpp"
 # `skillpp draft` gives the agent 900 seconds by default. A job still marked
 # running well past that died with the server that started it.
 DRAFT_STALE_SECONDS = 1200
+
+_SAFE_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+# Written by this page or by the agent's editor, never part of the skill.
+_NOT_SKILL_FILES = ("status.json",)
 
 _jobs: dict[str, threading.Thread] = {}
 _jobs_lock = threading.Lock()
@@ -106,7 +115,60 @@ def collect_state(config: Config) -> dict:
         rows.append({"id": entry.id, "title": entry.title,
                      "occurrences": entry.occurrences, **row_state(config, entry)})
     rows.sort(key=lambda r: (-r["occurrences"], (r["title"] or "").lower()))
-    return {"threshold": threshold, "rows": rows}
+    return {"threshold": threshold, "rows": rows, "drafts": list_drafts(config)}
+
+
+def _skill_name(entry, skill_md: Path) -> str:
+    """The folder name the skill unpacks to: its frontmatter name, if safe."""
+    name = str(parse_frontmatter(skill_md.read_text(encoding="utf-8")).get("name") or "")
+    return name if _SAFE_NAME.match(name) else entry.id
+
+
+def _draft_files(config: Config, entry_id: str) -> list[Path]:
+    root = _draft_dir(config, entry_id)
+    return sorted(p for p in root.rglob("*")
+                  if p.is_file() and p.name not in _NOT_SKILL_FILES
+                  and not p.name.endswith(".tmp"))
+
+
+def list_drafts(config: Config) -> list[dict]:
+    """Every finished draft, with the SKILL.md text to review."""
+    drafts = []
+    for entry in Ledger(config).all():
+        if row_state(config, entry)["state"] != "drafted":
+            continue
+        skill_md = sorted(_draft_dir(config, entry.id).rglob("SKILL.md"))[0]
+        text = skill_md.read_text(encoding="utf-8")
+        front = parse_frontmatter(text)
+        drafts.append({
+            "id": entry.id, "title": entry.title,
+            "name": _skill_name(entry, skill_md),
+            "description": str(front.get("description") or ""),
+            "body": text,
+            "files": [str(p.relative_to(_draft_dir(config, entry.id)))
+                      for p in _draft_files(config, entry.id)],
+        })
+    drafts.sort(key=lambda d: d["name"].lower())
+    return drafts
+
+
+def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
+    """A draft as `<skill-name>.zip`, holding `<skill-name>/SKILL.md` and any
+    files beside it, so it unpacks straight into a skills directory.
+
+    Only a ledger entry with a finished draft is served; the id is looked up,
+    never joined into a path from the request.
+    """
+    entry = Ledger(config).get(entry_id)
+    if not entry or row_state(config, entry)["state"] != "drafted":
+        return None
+    root = _draft_dir(config, entry.id)
+    name = _skill_name(entry, sorted(root.rglob("SKILL.md"))[0])
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in _draft_files(config, entry.id):
+            archive.write(path, f"{name}/{path.relative_to(root)}")
+    return f"{name}.zip", buffer.getvalue()
 
 
 def _decide(config: Config, entry_id: str, command: str) -> dict:
@@ -191,10 +253,24 @@ def make_handler(config: Config):
             self.wfile.write(raw)
 
         def do_GET(self):
-            if self.path in ("/", "/index.html"):
+            url = urlparse(self.path)
+            if url.path in ("/", "/index.html"):
                 return self._send(200, PAGE, "text/html; charset=utf-8")
-            if self.path == "/api/state":
+            if url.path == "/api/state":
                 return self._send(200, json.dumps(collect_state(config)))
+            if url.path == "/api/draft.zip":
+                found = draft_zip(config, (parse_qs(url.query).get("id") or [""])[0])
+                if not found:
+                    return self._send(404, json.dumps({"error": "no such draft"}))
+                filename, data = found
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="{filename}"')
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             self._send(404, json.dumps({"error": "not found"}))
 
         def do_POST(self):
@@ -262,12 +338,32 @@ PAGE = """<!doctype html>
    vertical-align:-1px}
  @keyframes s{to{transform:rotate(360deg)}}
  .empty{color:var(--muted);padding:32px 0;text-align:center}
+ nav{display:flex;gap:4px}
+ nav button{background:none;border:0;border-bottom:2px solid transparent;border-radius:0;
+   padding:4px 10px;color:var(--dim)}
+ nav button[aria-selected=true]{color:var(--fg);border-bottom-color:var(--fg)}
+ a.state{text-decoration:none;cursor:pointer}
+ .draft{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
+ .draft .row{margin:0;border:0;background:none;cursor:pointer}
+ .chev{color:var(--muted);font:12px var(--mono);width:12px;transition:transform .15s}
+ .draft.open .chev{transform:rotate(90deg)}
+ .draft .desc{padding:0 16px 12px 44px;color:var(--dim);font-size:12.5px;margin:0}
+ .draft .body{display:none;border-top:1px solid var(--line);padding:14px 16px}
+ .draft.open .body{display:block}
+ .draft pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.55 var(--mono);
+   color:#cbd2e1;background:var(--bg);border:1px solid var(--line);border-radius:6px;
+   padding:14px;max-height:70vh;overflow:auto}
+ .files{font:11.5px var(--mono);color:var(--muted);margin:0 0 10px}
+ a.download{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;text-decoration:none;
+   color:var(--ok);border:1px solid var(--okline);background:var(--okbg);white-space:nowrap}
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
 </style></head><body>
-<header><b>skillpp</b><span id="where"></span></header>
+<header><span style="display:flex;align-items:center;gap:18px"><b>skillpp</b>
+<nav id="nav"></nav></span><span id="where"></span></header>
 <main id="list"></main>
 <script>
-let S = {rows:[]}, busy = new Set(), timer = null;
+let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
+let view = "candidates", open = new Set();
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -278,7 +374,7 @@ function actions(r){
       <button class="decline" data-act="decline" data-id="${id}"${off}>Decline Skill</button>`;
     case "accepted": return `<button class="create" data-act="create" data-id="${id}"${off}>Create Skill</button>`;
     case "creating": return `<span class="state"><span class="spin"></span>Creating skill…</span>`;
-    case "drafted": return `<span class="state ok" title="${esc(r.path)}">Draft ready</span>`;
+    case "drafted": return `<a class="state ok" data-goto="${id}" title="Review in Drafts">Draft ready →</a>`;
     case "installed": return `<span class="state ok" title="${esc(r.path)}">Skill installed</span>`;
     case "failed": case "declined":
       return `<span class="msg" title="${esc(r.message)}">${r.state==="declined" ? "Agent declined" : "Failed"}: ${esc(r.message)}</span>
@@ -288,15 +384,50 @@ function actions(r){
   }
 }
 
+function renderNav(){
+  const nav = document.getElementById("nav");
+  nav.innerHTML = [["candidates","Candidates",S.rows.length],["drafts","Drafts",S.drafts.length]]
+    .map(([k,l,n]) => `<button data-view="${k}" aria-selected="${view===k}">${l} (${n})</button>`).join("");
+  nav.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { view = b.dataset.view; render(); });
+}
+
+function renderDrafts(list){
+  list.innerHTML = S.drafts.length ? S.drafts.map(d => `<div class="draft ${open.has(d.id)?"open":""}">
+      <div class="row" data-toggle="${esc(d.id)}">
+        <span class="chev">›</span>
+        <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
+        <span class="seen">${esc(d.title)}</span>
+        <span class="acts"><a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}"
+          download="${esc(d.name)}.zip">Download skill</a></span>
+      </div>
+      <p class="desc">${esc(d.description)}</p>
+      <div class="body">
+        <p class="files">${d.files.map(esc).join(" · ")}</p>
+        <pre>${esc(d.body)}</pre>
+      </div></div>`).join("")
+    : `<p class="empty">No drafts yet. Accept a candidate, then Create Skill.</p>`;
+  list.querySelectorAll("[data-toggle]").forEach(h => h.onclick = ev => {
+    if(ev.target.closest("a")) return;
+    const id = h.dataset.toggle;
+    open.has(id) ? open.delete(id) : open.add(id);
+    h.parentElement.classList.toggle("open");
+  });
+}
+
 function render(){
   document.getElementById("where").textContent = `threshold ≥ ${S.threshold} sessions`;
+  renderNav();
   const list = document.getElementById("list");
+  if(view === "drafts") return renderDrafts(list);
   list.innerHTML = S.rows.length ? S.rows.map(r => `<div class="row">
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
       <span class="seen">seen in ${r.occurrences} session${r.occurrences===1?"":"s"}</span>
       <span class="acts">${actions(r)}</span></div>`).join("")
     : `<p class="empty">No candidates seen in ${S.threshold} or more sessions yet.</p>`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
+  list.querySelectorAll("[data-goto]").forEach(a => a.onclick = () => {
+    view = "drafts"; open.add(a.dataset.goto); render();
+  });
 }
 
 async function act(what, id){
