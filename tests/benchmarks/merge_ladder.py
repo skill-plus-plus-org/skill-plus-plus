@@ -114,10 +114,21 @@ def r2(entry: Entry) -> str:
     return FILE.sub("<file>", turns_text(turns))
 
 
+REPLY_HEAD = 300
+
+
+def r3(entry: Entry) -> str:
+    """R1, with each reply cut to its first 300 characters (whitespace collapsed)."""
+    turns = [{**t, "reply": " ".join(str(t.get("reply", "")).split())[:REPLY_HEAD]}
+             for t in entry.turns]
+    return FILE.sub("<file>", turns_text(turns))
+
+
 RENDERINGS = {
     "R0": r0,
     "R1": r1,
     "R2": r2,
+    "R3": r3,
 }
 
 
