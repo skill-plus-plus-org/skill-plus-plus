@@ -5,7 +5,7 @@
 
 `score.py` folds each live session into its own ledger, so it can never see
 whether two sessions of the same procedure were unified — and nothing else
-asserted it. This folds all eleven into **one** ledger, in the order the
+asserted it. This folds every live session into **one** ledger, in the order the
 sessions actually started, through the real `fold_session`, and compares where
 each banked episode landed against `truth.families`.
 
@@ -101,7 +101,8 @@ def main() -> int:
         rows = fold_all(config)
     result = evaluate(rows)
 
-    print(f"{len(rows)} banked episodes from 11 live sessions, folded into one ledger\n")
+    sessions = len({r["episode"].split("#")[0] for r in rows})
+    print(f"{len(rows)} banked episodes from {sessions} live sessions, folded into one ledger\n")
     print("family                         runs  entries")
     for family, entries in result["families"].items():
         runs = result["sizes"][family]

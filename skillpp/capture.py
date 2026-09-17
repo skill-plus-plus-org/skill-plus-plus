@@ -778,13 +778,14 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
 
     ledger = Ledger(config)
     intents = _intents_for(session, steps)
+    turns = _turns(steps, cwd)
     # Same procedure or not, decided by an embedding against every entry of any
     # status (`matching.find_same`). Raises if the model is unreachable; the
     # caller has already checked it is up, so that is a mid-fold outage.
     existing = None
     if match:
         from .matching import find_same
-        hit = find_same(substantive, list(ledger.all()), config)
+        hit = find_same(substantive, list(ledger.all()), config, turns=turns)
         existing = hit[0] if hit else None
 
     deps_mcp = sorted({s["tool"] for s in substantive if s["tool"].startswith("mcp__")})
@@ -830,7 +831,7 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
         sessions=[session.get("session_id", "")] if session.get("session_id") else [],
         intents=intents,
         steps=substantive,
-        turns=_turns(steps, cwd),
+        turns=turns,
         variants=[substantive],
         deps_mcp=deps_mcp,
         deps_cli=deps_cli,

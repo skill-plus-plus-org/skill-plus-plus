@@ -438,12 +438,11 @@ def cmd_merge(args: argparse.Namespace) -> int:
     from .similar import AUTO_MERGED
     from .ledger import STATUS_CANDIDATE, STATUS_COVERED, STATUS_PROMOTED
     from .local import LocalModelUnavailable, cosine
-    from .matching import load_cache, save_cache, vector_for
+    from .matching import floor_for, has_conversation, load_cache, save_cache, vector_for
     from .similar import fold_into
 
     config = Config(args.root)
     ledger = Ledger(config)
-    floor = args.floor if args.floor is not None else config.match_floor
     entries = [e for e in ledger.all()
                if e.status in (STATUS_CANDIDATE, STATUS_PROMOTED)]
     cache = load_cache(config)
@@ -460,7 +459,10 @@ def cmd_merge(args: argparse.Namespace) -> int:
         for b in entries[i + 1:]:
             if a.status == STATUS_PROMOTED and b.status == STATUS_PROMOTED:
                 continue          # two skills: not ours to reconcile
+            if has_conversation(a.turns) != has_conversation(b.turns):
+                continue          # conversation and steps are not on one scale
             score = cosine(vectors[a.id], vectors[b.id])
+            floor = args.floor if args.floor is not None else floor_for(a, config)
             if score >= floor:
                 pairs.append((score, a, b))
     # Entries banked without matching go first, then the most similar.
@@ -474,7 +476,9 @@ def cmd_merge(args: argparse.Namespace) -> int:
         seen.update({a.id, b.id})
 
     if not chosen:
-        print(f"No pair at or above {floor:.2f}. Nothing to merge.")
+        shown = (f"{args.floor:.2f}" if args.floor is not None else
+                 f"{config.match_floor_turns:.2f} (conversation) / {config.match_floor:.2f} (steps)")
+        print(f"No pair at or above {shown}. Nothing to merge.")
         return 0
     for score, a, b in chosen:
         skill = a if a.status == STATUS_PROMOTED else b if b.status == STATUS_PROMOTED else None

@@ -1441,3 +1441,31 @@ against anything else); padding short runs with placeholders (short runs grow
 alike, one more wrong run at 0.92 and 0.95); prompts in any selection (the
 prompt of the first edit did best, but 36 of 98 real prompts are five words or
 fewer — "option 1", "do it again" — which would embed identically).
+
+### Conversation text replaces commands where a run has replies
+
+Measured once capture kept each prompt's reply (`capture._turns`), on fourteen
+live sessions — the eleven above plus three runs of one conversation-driven
+procedure, *propose slide content, fact-check it, build the deck* — banked as 18
+episodes with the real fold order replayed per input. "Danger" is the highest
+score between two different procedures:
+
+| embedded | danger | no wrong merge at | correct merges of 32 | largest entry: eval case / presentation / coverage |
+| --- | --- | --- | --- | --- |
+| numbered steps (commands) | 0.921 | 0.93 | 4 | 3 / 1 / 1 |
+| step descriptions | 0.846 | 0.85–0.90 | 4–7 | 3 / 2 / 1 |
+| prompts only | 0.864 | 0.88 | 3 | 2 / 2 / 2 |
+| **prompts and replies** | **0.854** | **0.84–0.88** | **6–7** | **3 / 2 / 2** |
+| descriptions and prompts | 0.868 | 0.88 | 5 | 2 / 2 / 2 |
+
+Shipped: prompts and replies at **0.88**, for runs that carry a reply; steps at
+0.93 otherwise. Only like is compared with like — the two texts score on
+different scales. The real fold reproduces the replay: 6 of 32 merged, 0 wrong,
+the coverage write-ups in one entry for the first time, an eval-case entry at 3.
+
+Why commands lost here: three runs of the presentation procedure scored
+0.66–0.83 on them — scratchpad paths, `sed` against `Read`, and a run that also
+fixed the docs. Why the floor moved down safely: 0.88 clears the danger line by
+0.026, against 0.009 for commands at 0.93. The presentation pieces reach 2, not
+3: two of the three runs are cut at the review prompt (see the live fixtures'
+`expected_fail`), and a piece does not look like a whole run.

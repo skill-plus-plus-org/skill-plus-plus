@@ -14,12 +14,32 @@ model could be waited on. That stopped being true when `SessionEnd` began waitin
 on the local model for the boundary judge; a session with no model is already
 held offline rather than guessed at.
 
-What is embedded is the steps alone, one numbered line each: `3. Bash git
-status --short`. No prompt. Prompts pulled matching toward wording rather than
-work: three card-case sessions opened with the same doc-lookup sentence, which
-held them together at 0.97 and pulled an unrelated run that opened the same way
-to 0.914, six thousandths under the floor. With the steps alone, measured on the
-eleven live sessions, 0.93 is the lowest floor with no wrong merge.
+What is embedded is the run's conversation when it has one — each prompt and the
+agent's reply, `User: …` / `Agent: …` — and otherwise its steps, one numbered
+line each: `3. Bash git status --short`.
+
+Measured on the fourteen live sessions banked as 18 separate episodes, the real
+fold order replayed for each input ("danger" is the highest score between two
+*different* procedures):
+
+| embedded | danger | no wrong merge at | correct merges of 32 |
+|---|---|---|---|
+| steps (commands) | 0.921 | 0.93 | 4 |
+| step descriptions | 0.846 | 0.85 | 7 |
+| prompts only | 0.864 | 0.88 | 3 |
+| **prompts and replies** | **0.854** | **0.88** | **6** |
+
+Commands carry what a run happened to type — scratchpad paths, `sed` against
+`Read`, whether it also fixed the docs — so three runs of one presentation
+procedure scored 0.66-0.83 on them. Prompts alone had pulled matching toward
+wording once: card-case sessions opening with the same doc-lookup sentence held
+together at 0.97. The replies are what the run produced, and with them 0.88
+clears the danger line by 0.026, against 0.009 for commands at 0.93.
+
+Only like is compared with like. A run with a conversation is compared with
+entries that have one, at `match_floor_turns`; a run without replies (older
+captures, dictation) with entries that have none, on steps at `match_floor`.
+A conversation's score and a command list's score are not on the same scale.
 
 Vectors are cached per entry in `<root>/embeddings.json`, keyed on the model and
 a hash of the embedded text, so an entry is embedded once and again only when
@@ -66,9 +86,32 @@ def steps_text(steps: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def turns_text(turns: list[dict]) -> str:
+    """The run as it was said: `User: <prompt>` and `Agent: <reply>` per turn.
+
+    Its length is left to `embed`, which cuts at the model's token limit and
+    keeps the head — the opening request and the first replies.
+    """
+    return "\n\n".join(f"User: {t.get('prompt', '')}\nAgent: {t.get('reply', '')}"
+                       for t in turns)
+
+
+def has_conversation(turns: list[dict] | None) -> bool:
+    """Does the run carry a reply? Prompts alone were measured worse than steps."""
+    return any(t.get("reply") for t in (turns or []))
+
+
 def entry_text(entry: Entry) -> str:
-    """What is embedded for an entry: the steps of its first run."""
+    """What is embedded for an entry: its first run's conversation, else its steps."""
+    if has_conversation(entry.turns):
+        return turns_text(entry.turns)
     return steps_text(entry.steps)
+
+
+def floor_for(entry_or_turns, config) -> float:
+    """The floor for one kind of text: conversation or steps."""
+    turns = getattr(entry_or_turns, "turns", entry_or_turns)
+    return config.match_floor_turns if has_conversation(turns) else config.match_floor
 
 
 def _cache_path(config) -> Path:
@@ -129,7 +172,7 @@ def vector_for(entry: Entry, config, cache: dict) -> list[float]:
 
 
 def find_same(steps: list[dict], entries: list[Entry],
-              config) -> tuple[Entry, float] | None:
+              config, turns: list[dict] | None = None) -> tuple[Entry, float] | None:
     """The existing entry this episode is a run of, or None.
 
     Every status is compared, not only candidates. A parked entry that stopped
@@ -140,12 +183,14 @@ def find_same(steps: list[dict], entries: list[Entry],
     Raises `LocalModelUnavailable` if the model cannot be reached — the caller
     decides what an unanswerable question means, not this function.
     """
+    talk = has_conversation(turns)
+    entries = [e for e in entries if has_conversation(e.turns) == talk]
     if not entries:
         return None
     cache = load_cache(config)
     try:
-        query = embed(steps_text(steps), model=config.embed_model,
-                      host=config.ollama_url,
+        query = embed(turns_text(turns) if talk else steps_text(steps),
+                      model=config.embed_model, host=config.ollama_url,
                       on_truncate=_log_truncation(config, "new episode"))
         best, best_score = None, -1.0
         for entry in entries:
@@ -154,7 +199,7 @@ def find_same(steps: list[dict], entries: list[Entry],
                 best, best_score = entry, score
     finally:
         save_cache(config, cache)
-    if best is not None and best_score >= config.match_floor:
+    if best is not None and best_score >= floor_for(turns, config):
         return best, best_score
     return None
 

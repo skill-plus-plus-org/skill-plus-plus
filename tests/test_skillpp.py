@@ -71,6 +71,14 @@ def _stub_embed(text, **kw):
     import hashlib
     vector = [0.0] * 256
     for line in text.splitlines():
+        # A conversation (`matching.turns_text`) embeds as a bag of its words,
+        # so two runs that said different things are different; mapped to the
+        # fallback below they would all be identical and everything would merge.
+        if line.startswith(("User: ", "Agent: ")):
+            for word in re.findall(r"[a-z0-9]+", line.split(": ", 1)[1].lower()):
+                slot = int(hashlib.sha256(("word:" + word).encode()).hexdigest(), 16) % len(vector)
+                vector[slot] += 1.0
+            continue
         # A multi-line command continues on lines of its own; only a line that
         # opens with a step number and a tool name is a step.
         m = re.match(r"\d+\. (mcp__[\w-]+|[A-Z][A-Za-z]+) ?(.*)", line)
@@ -4128,16 +4136,16 @@ class TestTurns(TempRoot):
 
     def test_a_merge_keeps_the_first_runs_turns(self):
         from skillpp.capture import fold_session
-        def run(prompt):
-            return {"session_id": prompt, "cwd": "/r", "steps": [
-                {"tool": "UserPrompt", "input": {"text": prompt}, "reply": "ok"},
+        def run(session, reply):
+            return {"session_id": session, "cwd": "/r", "steps": [
+                {"tool": "UserPrompt", "input": {"text": "ship the release now"}, "reply": reply},
                 {"tool": "Bash", "input": {"command": "npm test"}, "end": False},
                 {"tool": "Bash", "input": {"command": "git commit -m x"}, "end": True}]}
-        fold_session(self.config, run("first run"))
-        result = fold_session(self.config, run("second run"))
+        fold_session(self.config, run("s1", "done"))
+        result = fold_session(self.config, run("s2", "done done"))
         self.assertEqual(result["status"], "merged")
         (entry,) = Ledger(self.config).all()
-        self.assertEqual([t["prompt"] for t in entry.turns], ["first run"])
+        self.assertEqual([t["reply"] for t in entry.turns], ["done"])
 
     def test_show_for_a_draft_gives_turns_not_steps(self):
         import io
@@ -4301,6 +4309,59 @@ class TestTranscriptExtract(TempRoot):
     def test_the_judge_waits_long_enough_to_answer(self):
         import skillpp.boundary as boundary
         self.assertEqual(boundary.DEFAULT_TIMEOUT, 30.0)
+
+
+class TestConversationMatching(TempRoot):
+    """A run with replies matches on its conversation; one without, on steps."""
+
+    STEPS = [{"tool": "Bash", "input": {"command": "npm test"}},
+             {"tool": "Bash", "input": {"command": "git commit -m x"}}]
+
+    def _entry(self, eid, turns=None):
+        entry = Entry(id=eid, title=eid, steps=list(self.STEPS), turns=turns or [])
+        Ledger(self.config).save(entry)
+        return entry
+
+    def test_the_text_is_the_conversation_when_there_is_one(self):
+        from skillpp.matching import entry_text, has_conversation, turns_text
+        turns = [{"prompt": "propose the slides", "reply": "Here are 9.", "used": []}]
+        self.assertEqual(turns_text(turns), "User: propose the slides\nAgent: Here are 9.")
+        self.assertTrue(has_conversation(turns))
+        self.assertFalse(has_conversation([{"prompt": "p", "reply": "", "used": []}]))
+        self.assertEqual(entry_text(self._entry("aaaaaaaaaaaa", turns)), turns_text(turns))
+        self.assertIn("npm test", entry_text(self._entry("bbbbbbbbbbbb")))
+
+    def test_like_is_only_compared_with_like(self):
+        from skillpp.matching import find_same
+        talk = [{"prompt": "propose the slides", "reply": "Here are 9 slides.", "used": []}]
+        steps_only = self._entry("aaaaaaaaaaaa")
+        with_talk = self._entry("bbbbbbbbbbbb", talk)
+        entries = [steps_only, with_talk]
+        self.assertIs(find_same(self.STEPS, entries, self.config, turns=talk)[0], with_talk)
+        self.assertIs(find_same(self.STEPS, entries, self.config)[0], steps_only)
+        self.assertIsNone(find_same(self.STEPS, [steps_only], self.config, turns=talk))
+
+    def test_a_conversation_clears_its_own_floor(self):
+        from skillpp.matching import find_same
+        near = [{"prompt": "propose the slides", "reply": "Here are 9 slides.", "used": []}]
+        far = [{"prompt": "restart the backend server", "reply": "Restarted on 8000.", "used": []}]
+        entry = self._entry("aaaaaaaaaaaa", near)
+        self.assertIsNotNone(find_same(self.STEPS, [entry], self.config, turns=near))
+        self.assertIsNone(find_same(self.STEPS, [entry], self.config, turns=far))
+        self.config.match_floor_turns = 1.01
+        self.assertIsNone(find_same(self.STEPS, [entry], self.config, turns=near))
+
+    def test_merge_never_pairs_a_conversation_with_steps(self):
+        import argparse, io
+        from contextlib import redirect_stdout
+        from skillpp.cli import cmd_merge
+        talk = [{"prompt": "npm test", "reply": "git commit", "used": []}]
+        self._entry("aaaaaaaaaaaa")
+        self._entry("bbbbbbbbbbbb", talk)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cmd_merge(argparse.Namespace(root=self.config.root, apply=False, floor=0.0))
+        self.assertIn("Nothing to merge", out.getvalue())
 
 
 class TestEmbedEndpoint(TempRoot):
