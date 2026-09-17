@@ -501,7 +501,10 @@ PAGE = r"""<!doctype html>
    white-space:nowrap;vertical-align:top;width:1%}
  .md .fm td{color:var(--dim);padding:3px 0;word-break:break-word}
  .files{font:11.5px var(--mono);color:var(--muted);margin:0 0 10px}
- .revise{margin:0 0 14px}
+ .revise{margin:16px 0 0;padding-top:12px;border-top:1px solid var(--line);text-align:right}
+ .revise .bar{justify-content:flex-end}
+ .revise .err{text-align:right}
+ .revise textarea{text-align:left}
  .revise textarea{width:100%;min-height:72px;resize:vertical;font:13px/1.5 var(--sans);
    color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;
    padding:10px;margin:0 0 8px}
@@ -674,8 +677,8 @@ function renderDrafts(list){
       <div class="body">
         <p class="files">${d.files.map(esc).join(" · ")}</p>
         ${questionsBlock(d)}
-        ${reviseBlock(d)}
         <div class="md">${md(d.body)}</div>
+        ${reviseBlock(d)}
       </div></div>`).join("")
     : `<p class="empty">No drafts yet. Accept a candidate, then Create Skill.</p>`;
   list.querySelectorAll("[data-revise-open]").forEach(b => b.onclick = () => {
