@@ -394,7 +394,7 @@ def cmd_split(args: argparse.Namespace) -> int:
             id=new_id(config.ledger_dir), status=STATUS_CANDIDATE,
             title=entry.title, steps=steps,
             # Provenance is shared: both halves were observed in the same
-            # sessions, and occurrences count sessions.
+            # sessions, and each half was recognized as often as the whole.
             projects=list(entry.projects), sessions=list(entry.sessions),
             intents=list(entry.intents), occurrences=entry.occurrences,
             source=entry.source)
@@ -492,7 +492,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
             for sid in other.sessions:
                 if sid not in skill.sessions:
                     skill.sessions.append(sid)
-            skill.occurrences = max(len(skill.sessions), skill.occurrences)
+            skill.occurrences += other.occurrences
             other.status = STATUS_COVERED
             other.unmatched = False
             other.notes = (f"covered by promoted skill {skill.id} "

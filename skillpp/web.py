@@ -1,6 +1,6 @@
 """A local page for deciding what becomes a skill.
 
-One list: the candidates seen in enough sessions to be worth a decision, and
+One list: the candidates recognized often enough to be worth a decision, and
 what was decided about them. Accept promotes, Decline dismisses, and an
 accepted candidate gets a Create Skill button that has the developer's agent
 write a draft. Everything else the ledger holds stays in the CLI.
@@ -231,7 +231,7 @@ def collect_state(config: Config) -> dict:
     """The rows the page lists. Reads files only: no model, no agent.
 
     Every candidate, promoted and dismissed entry, most-seen first. `ready`
-    splits the page: seen in enough sessions to decide on, or still collecting.
+    splits the page: recognized often enough to decide on, or still collecting.
     """
     threshold = config.recurrence_threshold
     summaries = load_summaries(config)
@@ -681,7 +681,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g,
 function actions(r){
   const id = esc(r.id), off = busy.has(r.id) ? " disabled" : "";
   switch(r.state){
-    case "collecting": return `<span class="state" title="Accept and Decline open at ${S.threshold} sessions">needs ${S.threshold - r.occurrences} more</span>`;
+    case "collecting": return `<span class="state" title="Accept and Decline open at COUNT ${S.threshold}">needs ${S.threshold - r.occurrences} more</span>`;
     case "undecided": return `<button class="accept" data-act="accept" data-id="${id}"${off}>Accept Skill</button>
       <button class="decline" data-act="decline" data-id="${id}"${off}>Decline Skill</button>`;
     case "accepted": return `<button class="create" data-act="create" data-id="${id}"${off}>Create Skill</button>`;
@@ -889,7 +889,7 @@ async function fetchSummary(id){
 }
 
 function render(){
-  document.getElementById("where").textContent = `threshold ≥ ${S.threshold} sessions`;
+  document.getElementById("where").textContent = `threshold COUNT ≥ ${S.threshold}`;
   renderNav();
   const list = document.getElementById("list");
   if(view === "drafts") return renderDrafts(list);
@@ -897,14 +897,14 @@ function render(){
       <div class="row" data-row="${esc(r.id)}">
       <span class="chev">›</span>
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
-      <span class="seen">seen in ${r.occurrences} session${r.occurrences===1?"":"s"}</span>
+      <span class="seen" title="how often this procedure was recognized">COUNT ${r.occurrences}</span>
       <span class="acts">${actions(r)}</span></div>
       <div class="body">${candidateBody(r)}</div></div>`;
   const ready = S.rows.filter(r => r.ready), collecting = S.rows.filter(r => !r.ready);
   list.innerHTML = `
-    <div class="section"><h2>Ready to decide</h2><span>seen in ${S.threshold} or more sessions · ${ready.length}</span></div>
-    ${ready.length ? ready.map(card).join("") : `<p class="empty">Nothing has been seen in ${S.threshold} sessions yet.</p>`}
-    <div class="section"><h2>Still collecting</h2><span>seen in fewer than ${S.threshold} sessions · ${collecting.length}</span></div>
+    <div class="section"><h2>Ready to decide</h2><span>COUNT ${S.threshold} or more · ${ready.length}</span></div>
+    ${ready.length ? ready.map(card).join("") : `<p class="empty">Nothing has reached COUNT ${S.threshold} yet.</p>`}
+    <div class="section"><h2>Still collecting</h2><span>COUNT below ${S.threshold} · ${collecting.length}</span></div>
     ${collecting.length ? collecting.map(card).join("") : `<p class="empty">Nothing else.</p>`}`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
   list.querySelectorAll("[data-row]").forEach(h => h.onclick = ev => {

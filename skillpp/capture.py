@@ -583,26 +583,16 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
         if cwd and cwd not in existing.projects:
             existing.projects.append(cwd)
         sid = session.get("session_id", "")
-        if sid:
-            if sid not in existing.sessions:
-                existing.sessions.append(sid)
-            # The size of the session union, never a sum — the same rule
-            # `similar.fold_into` states and `test_occurrences_count_sessions_
-            # not_sightings` pins. It was corrected there and not here, and a
-            # session cut into episodes is exactly where the difference shows:
-            # several episodes of one session matching this entry each bumped
-            # the count while `sessions` deduplicated, so a count that is
-            # documented as "distinct sessions" outran the number of sessions
-            # that existed. Measured on 76 real sessions: 25 of 467 entries
-            # claimed more occurrences than they had sessions, the worst x154
-            # against 17 — enough to clear a threshold of 3 inside one sitting,
-            # which is the one thing that threshold exists to prevent.
-            existing.occurrences = max(len(existing.sessions),
-                                       existing.occurrences)
-        else:
-            # Nothing to deduplicate on. A payload with no session id is
-            # malformed, and counting it is the lesser of two wrongs.
-            existing.occurrences += 1
+        if sid and sid not in existing.sessions:
+            existing.sessions.append(sid)
+        # Every recognition counts, repeats inside one session included — the
+        # count is how often the procedure was recognized, and `sessions` keeps
+        # where. This was once the size of the session union instead: measured
+        # on 76 real sessions, counting sightings let 25 of 467 entries claim
+        # more occurrences than sessions (worst x154 against 17), so one long
+        # sitting can reach the recurrence threshold on its own. Chosen anyway,
+        # on 2026-09-17: a procedure repeated within a session is a repeat.
+        existing.occurrences += 1
         for intent in intents:
             if intent not in existing.intents:
                 existing.intents.append(intent)

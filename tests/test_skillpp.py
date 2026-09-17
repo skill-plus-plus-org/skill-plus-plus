@@ -2665,61 +2665,42 @@ class TestBenchmarkSegmentation(unittest.TestCase):
         self.assertGreaterEqual(sum(1 for c in CASES if c.methods == 0), 3)
 
 
-class TestOccurrencesCountSessionsInCaptureToo(TempRoot):
-    """The rule `fold_into` states, enforced on the path that actually banks.
+class TestOccurrencesCountEveryRecognition(TempRoot):
+    """The count is how often a procedure was recognized, repeats inside one
+    session included; `sessions` records where.
 
-    `test_occurrences_count_sessions_not_sightings` pinned this for the merge
-    path and the capture path kept incrementing per fold. Segmentation is where
-    that diverges: one session becomes several episodes, several of them match
-    the same entry, and each bump landed on a counter documented as counting
-    *distinct sessions*. Found on 76 real sessions — 25 of 467 entries claimed
-    more occurrences than sessions, worst x154 against 17.
+    This reverses an earlier rule that counted distinct sessions. The cost is
+    known and accepted: one long session can reach the recurrence threshold on
+    its own.
     """
 
     DEPLOY = ["docker build -t api .", "docker push api",
               "kubectl set image deploy/api api=api", "git commit -am deploy"]
 
-    def _run(self, session_id, rounds=1):
-        from skillpp.capture import (handle_prompt, handle_session_end,
-                                     handle_tool)
-        for n in range(rounds):
-            handle_prompt(self.config, {"session_id": session_id, "cwd": "/w",
-                                        "prompt": f"deploy the api ({n})"})
-            for cmd in self.DEPLOY:
-                handle_tool(self.config, {"session_id": session_id, "cwd": "/w",
-                                          "tool_name": "Bash",
-                                          "tool_input": {"command": cmd}})
-        return handle_session_end(self.config, {"session_id": session_id})
+    def _fold(self, session_id):
+        _fold_steps(self.config, {"session_id": session_id, "cwd": "/w",
+                                  "prompts": ["deploy the api"]},
+                    [bash(c) for c in self.DEPLOY])
 
-    def test_twice_in_one_session_is_one_occurrence(self):
-        self._run("only-session", rounds=2)
-        for entry in Ledger(self.config).all():
-            self.assertEqual(entry.occurrences, len(entry.sessions))
-            self.assertEqual(entry.occurrences, 1)
+    def test_twice_in_one_session_counts_twice(self):
+        self._fold("only-session")
+        self._fold("only-session")
+        (entry,) = list(Ledger(self.config).all())
+        self.assertEqual(entry.occurrences, 2)
+        self.assertEqual(entry.sessions, ["only-session"])
 
-    def test_the_threshold_cannot_be_reached_inside_one_session(self):
-        """The whole point of counting sessions rather than sightings."""
-        self._run("only-session", rounds=5)
-        for entry in Ledger(self.config).all():
-            self.assertFalse(entry.ready(self.config.recurrence_threshold),
-                             "one sitting cleared the recurrence threshold")
+    def test_one_session_can_reach_the_threshold(self):
+        for _ in range(3):
+            self._fold("only-session")
+        (entry,) = list(Ledger(self.config).all())
+        self.assertTrue(entry.ready(self.config.recurrence_threshold))
 
-    def test_the_same_work_in_three_sessions_still_reaches_three(self):
-        """The fix must not cost real recurrence, only the inflated kind."""
+    def test_three_sessions_still_reach_three(self):
         for sid in ("s1", "s2", "s3"):
-            self._run(sid)
-        top = max(e.occurrences for e in Ledger(self.config).all())
-        self.assertEqual(top, 3)
-
-    def test_occurrences_never_exceed_distinct_sessions(self):
-        """The invariant, stated as an invariant, over a mixed history."""
-        self._run("s1", rounds=3)
-        self._run("s2")
-        self._run("s3", rounds=2)
-        for entry in Ledger(self.config).all():
-            self.assertLessEqual(entry.occurrences, len(entry.sessions),
-                                 f"{entry.title[:40]} claims more occurrences "
-                                 f"than sessions")
+            self._fold(sid)
+        (entry,) = list(Ledger(self.config).all())
+        self.assertEqual(entry.occurrences, 3)
+        self.assertEqual(len(entry.sessions), 3)
 
 
 class TestMatching(TempRoot):
@@ -2954,19 +2935,13 @@ class TestFoldInto(TempRoot):
         base.update(kw)
         return Entry(**base)
 
-    def test_occurrences_count_sessions_not_sightings(self):
-        """The correction this project already had to make once: two sightings
-        inside one session are one occurrence."""
+    def test_folding_adds_the_counts_and_unions_the_sessions(self):
         from skillpp.similar import fold_into
-        a = self._entry("a", self.RELEASE, sessions=["s1"])
-        b = self._entry("b", self.RELEASE_PYTEST, sessions=["s1"])
+        a = self._entry("a", self.RELEASE, sessions=["s1"], occurrences=2)
+        b = self._entry("b", self.RELEASE_PYTEST, sessions=["s1"], occurrences=1)
         fold_into(a, b)
-        self.assertEqual(a.occurrences, 1)
-
-        c = self._entry("c", self.RELEASE, sessions=["s1"])
-        d = self._entry("d", self.RELEASE_PYTEST, sessions=["s2"])
-        fold_into(c, d)
-        self.assertEqual(c.occurrences, 2)
+        self.assertEqual(a.occurrences, 3)
+        self.assertEqual(a.sessions, ["s1"])
 
     def test_folding_keeps_the_other_body_as_a_variant(self):
         from skillpp.similar import fold_into

@@ -15,9 +15,8 @@ from __future__ import annotations
 def fold_into(keep, drop) -> None:
     """Fold *drop*'s evidence into *keep*, in place.
 
-    Occurrences count *sessions*, so the arithmetic is a union rather than a
-    sum: two sightings inside one session are one occurrence, which is the
-    correction this project already had to make once.
+    Occurrences count every recognition, so they add up; sessions are a
+    union.
     """
     for sid in drop.sessions:
         if sid not in keep.sessions:
@@ -31,11 +30,9 @@ def fold_into(keep, drop) -> None:
     del keep.intents[8:]
     if drop.steps and len(keep.variants) < 4:
         keep.variants.append(drop.steps)
-    # NOT `occurrences + 1`. That was the first version and it is the exact
-    # double-count this project corrected once before: two sightings inside
-    # one session are one occurrence, so the count is the size of the
-    # session union, never a sum. A test pins both directions.
-    keep.occurrences = max(len(keep.sessions), keep.occurrences)
+    # Both entries' recognitions, summed: the count is how often the procedure
+    # was recognized, not in how many sessions (see capture._fold_steps).
+    keep.occurrences += drop.occurrences
     if drop.last_seen > keep.last_seen:
         keep.last_seen = drop.last_seen
 
