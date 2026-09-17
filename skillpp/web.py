@@ -1024,13 +1024,11 @@ function render(){
   list.innerHTML = `
     ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>draft one; finished drafts move to the Drafts tab · ${promoted.length}</span></div>
     ${promoted.map(card).join("")}` : ""}
-    <div class="section"><h2>Ready to decide</h2><span>${S.threshold}× or more · ${ready.length}</span></div>
-    ${ready.length ? ready.map(card).join("") : `<p class="empty">Nothing has reached ${S.threshold}× yet.</p>`}
-    <div class="section"><h2>Still collecting</h2><span>below ${S.threshold}× · ${collecting.length}</span></div>
-    ${collecting.length ? `<div class="collecting">
+    <div class="section"><h2>Still collecting</h2><span>${ready.length} at ${S.threshold}× or more, ready to promote or dismiss · ${ready.length + collecting.length} total</span></div>
+    ${ready.length + collecting.length ? `<div class="collecting">
       <div class="thead"><span class="chev"></span><span class="title">Title</span>
         <span class="acts"></span><span class="clock">Time to expire</span><span class="count">Count</span></div>
-      ${collecting.map(card).join("")}</div>` : `<p class="empty">Nothing else.</p>`}
+      ${ready.concat(collecting).map(card).join("")}</div>` : `<p class="empty">No candidates yet.</p>`}
     ${declined.length ? `<div class="section"><h2>Dismissed</h2><span>reinstate to put one back · ${declined.length}</span></div>
     ${declined.map(card).join("")}` : ""}`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
