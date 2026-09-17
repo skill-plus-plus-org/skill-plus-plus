@@ -936,9 +936,9 @@ function renderDrafts(list){
       </div></div>`;
   const toReview = S.drafts.filter(d => !d.downloaded_at), downloaded = S.drafts.filter(d => d.downloaded_at);
   list.innerHTML = S.drafts.length ? `
-    <div class="section"><h2>To review</h2><span>not downloaded yet · ${toReview.length}</span></div>
+    <div class="section"><h2>To review</h2><span>Drafts you have not downloaded yet.</span></div>
     ${toReview.length ? toReview.map(card).join("") : `<p class="empty">Everything has been downloaded.</p>`}
-    <div class="section"><h2>Downloaded</h2><span>revising one moves it back to review · ${downloaded.length}</span></div>
+    <div class="section"><h2>Downloaded</h2><span>Drafts you downloaded. Revising one moves it back to review.</span></div>
     ${downloaded.length ? downloaded.map(card).join("") : `<p class="empty">Nothing downloaded yet.</p>`}`
     : `<p class="empty">No drafts yet. Promote a candidate, then Draft Skill.</p>`;
   list.querySelectorAll("a.download").forEach(a => a.addEventListener("click", () => setTimeout(load, 1000)));
@@ -1029,14 +1029,14 @@ function render(){
   const open_ = S.rows.filter(r => ["undecided", "collecting"].includes(r.state));
   const ready = open_.filter(r => r.ready), collecting = open_.filter(r => !r.ready);
   list.innerHTML = `
-    ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>draft one; finished drafts move to the Drafts tab · ${promoted.length}</span></div>
+    ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>Candidates you promoted. Draft a skill from them; the draft appears in the Drafts tab.</span></div>
     ${promoted.map(card).join("")}` : ""}
-    <div class="section"><h2>Still collecting</h2><span>${ready.length} at ${S.threshold}× or more, ready to promote or dismiss · ${ready.length + collecting.length} total</span></div>
+    <div class="section"><h2>Still collecting</h2><span>Work skillpp saw you repeat. Once something is seen ${S.threshold}×, you can promote or dismiss it.</span></div>
     ${ready.length + collecting.length ? `<div class="collecting">
       <div class="thead"><span class="chev"></span><span class="title">Title</span>
         <span class="acts"></span><span class="clock">Time to expire</span><span class="count">Count</span></div>
       ${ready.concat(collecting).map(card).join("")}</div>` : `<p class="empty">No candidates yet.</p>`}
-    ${declined.length ? `<div class="section"><h2>Dismissed</h2><span>reinstate to put one back · ${declined.length}</span></div>
+    ${declined.length ? `<div class="section"><h2>Dismissed</h2><span>Candidates you dismissed. Reinstate one to bring it back.</span></div>
     ${declined.map(card).join("")}` : ""}`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
   list.querySelectorAll("[data-row]").forEach(h => h.onclick = ev => {
