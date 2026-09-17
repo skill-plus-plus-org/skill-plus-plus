@@ -677,11 +677,11 @@ PAGE = r"""<!doctype html>
  @keyframes s{to{transform:rotate(360deg)}}
  .empty{color:var(--muted);padding:32px 0;text-align:center}
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
- .cand.ready{border-left:3px solid #fbbf24;background:linear-gradient(90deg,rgba(251,191,36,.07),var(--panel) 40%)}
+ .cand.ready{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.07),var(--panel) 40%)}
  .cand.accepted{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.07),var(--panel) 40%)}
  .badge{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;
    border-radius:4px;white-space:nowrap;border:1px solid}
- .badge.ready{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.1)}
+ .badge.ready{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
  .badge.accepted{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
  .badge.drafted{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .cand.drafted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
@@ -689,6 +689,7 @@ PAGE = r"""<!doctype html>
  .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
  .clock:empty{display:none}
  .collecting .clock{display:inline-block;width:110px;text-align:right;flex-shrink:0}
+ .collecting .row .clock:empty{display:none}    /* no clock: buttons sit by the count */
  .thead{display:flex;align-items:center;gap:16px;padding:0 17px 6px 17px;
    font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
  .thead .title{font:inherit;color:inherit}
