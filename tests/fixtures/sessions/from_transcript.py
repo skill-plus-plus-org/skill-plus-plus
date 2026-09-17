@@ -35,14 +35,17 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO))
 
-from skillpp.capture import (_KEEP_INPUT, _RESPONSE_CHARS,  # noqa: E402
-                             _reply_text)
+from skillpp.capture import (_ENVELOPE_PREFIXES, _KEEP_INPUT,  # noqa: E402
+                             _NOT_A_PROMPT, _REPLY_CHARS,
+                             _RESPONSE_CHARS, _reply_text)
 from skillpp.sanitize import scrub, scrub_obj               # noqa: E402
 from skillpp.segment import PROMPT_TOOL, is_prompt, segment  # noqa: E402
 
 HOME = os.path.expanduser("~")
-ENVELOPE = ("<task-notification", "<system-reminder", "<local-command",
-            "<command-name", "<command-message", "<!-- attach")
+# What is not a prompt: the envelopes live capture ignores, and a tool's image
+# result, which a transcript records as a `user` row with string content. Taking
+# those as prompts gave run 1 of a real session 13 prompts where there were 4.
+ENVELOPE = _ENVELOPE_PREFIXES + _NOT_A_PROMPT
 SECRETS = re.compile(r"(ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}"
                      r"|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY)")
 
@@ -68,6 +71,7 @@ def extract(path: Path) -> list[dict]:
                     replies[block.get("tool_use_id")] = block.get("content")
 
     steps: list[dict] = []
+    replies_to: list[list[str]] = []   # per prompt, the agent's reply text
     asks = 0
     pending: list[str] = []          # what the assistant said before the next call
     closing: list[str] = []          # ... and what it said after the previous one
@@ -85,6 +89,7 @@ def extract(path: Path) -> list[dict]:
                 steps.append({"tool": PROMPT_TOOL,
                               "input": {"text": scrub(text)[:2000]},
                               "failed": False})
+                replies_to.append([])
             continue
         if row.get("type") != "assistant" or not isinstance(message.get("content"), list):
             continue
@@ -96,6 +101,10 @@ def extract(path: Path) -> list[dict]:
             # sparse by nature (7-21% of calls across these sessions).
             if kind in ("text", "thinking") and (block.get(kind) or "").strip():
                 pending.append(block[kind])
+                # What the person read in reply — `text` only, as live capture
+                # keeps it on the prompt marker (`capture._reply_before`).
+                if kind == "text" and replies_to:
+                    replies_to[-1].append(block["text"].strip())
                 continue
             if kind != "tool_use":
                 continue
@@ -131,11 +140,24 @@ def extract(path: Path) -> list[dict]:
     # Anything left ran out with the session: the last task's own completion
     # report, with no prompt and no call after it. `capture` takes this at
     # SessionEnd.
+    for marker, parts in zip((s for s in steps if is_prompt(s)), replies_to):
+        reply = scrub("\n\n".join(parts))
+        if len(reply) > _REPLY_CHARS:
+            reply = reply[:_REPLY_CHARS].rsplit(" ", 1)[0] + " …"
+        if reply:
+            marker["reply"] = reply
     tail = scrub(" ".join(" ".join(pending).split())[:_RESPONSE_CHARS])
     work = [s for s in steps if not is_prompt(s)]
     if tail and work:
         work[-1].setdefault("closing_note", tail)
-    return json.loads(json.dumps(steps).replace(HOME, "${HOME}"))
+    blob = json.dumps(steps).replace(HOME, "${HOME}")
+    # The account name survives `$HOME` in two shapes: as a file owner in `ls -l`
+    # output, and inside the project slug of a scratchpad path
+    # (`/private/tmp/claude-501/-Users-<name>-…`).
+    user = Path(HOME).name
+    blob = blob.replace("-Users-" + user.replace(".", "-") + "-", "-Users-${USER}-")
+    blob = re.sub(rf"(?<![\w.]){re.escape(user)}(?![\w])", "${USER}", blob)
+    return json.loads(blob)
 
 
 def main(argv: list[str]) -> int:
@@ -153,8 +175,8 @@ def main(argv: list[str]) -> int:
     hits = SECRETS.findall(blob)
     if hits:
         raise SystemExit(f"refusing to write: {len(hits)} secret-shaped string(s)")
-    if HOME in blob:
-        raise SystemExit("refusing to write: $HOME survived templating")
+    if HOME in blob or Path(HOME).name in blob:
+        raise SystemExit("refusing to write: $HOME or the account name survived templating")
 
     work = [s for s in steps if not is_prompt(s)]
     doc = {

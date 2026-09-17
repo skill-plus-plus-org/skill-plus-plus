@@ -97,9 +97,12 @@ PRIOR_STEPS = 3
 # at "Regenerate the evalset" as well as at "Separate job:".
 _PROMPT_CHARS = 400
 
-# Short on purpose. This runs inside `PostToolUse`, so the developer waits for
-# it. A model that has not answered in this long is not going to answer usefully.
-DEFAULT_TIMEOUT = 5.0
+# The judge runs at session end or in `fold-pending`, never while someone waits
+# on a reply. It was 5 s when it ran per tool call, and at session end that made
+# a cold or busy model's silence decide the boundaries: replayed warm, three
+# presentation runs that had stayed whole were each cut, because the live runs
+# had timed out rather than answered.
+DEFAULT_TIMEOUT = 30.0
 
 
 # Verbs for the tools whose whole payload is a path.

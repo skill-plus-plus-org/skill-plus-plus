@@ -3846,6 +3846,8 @@ class TestLiveSessions(unittest.TestCase):
         sizes = recurrence.evaluate(rows)["sizes"]
         self.assertEqual(sizes.get("add-eval-case"), 7)
         self.assertEqual(sizes.get("coverage-writeup"), 2)
+        # Three runs, two of them cut at the review prompt: a recorded gap.
+        self.assertEqual(sizes.get("create-presentation"), 5)
 
     def test_there_are_live_sessions_to_score(self):
         """A silently empty directory would make every test below vacuous."""
@@ -4253,6 +4255,52 @@ class TestFoldPending(TempRoot):
         self.assertEqual(argv[-3:], ["fold-pending", "--exclude", "s1"])
         self.assertTrue(popen.call_args.kwargs["start_new_session"])
         popen.return_value.wait.assert_not_called()
+
+
+class TestTranscriptExtract(TempRoot):
+    """`from_transcript.extract` builds fixtures the way live capture records."""
+
+    def _extract(self, rows):
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "sessions"))
+        from from_transcript import extract
+        path = self.root / "t.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        return extract(path)
+
+    def test_an_image_result_is_not_a_prompt_and_a_prompt_keeps_its_reply(self):
+        steps = self._extract([
+            {"type": "user", "message": {"content": "propose the slides"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "thinking", "thinking": "hidden"},
+                {"type": "text", "text": "Here are 9 slides."},
+                {"type": "tool_use", "id": "t1", "name": "Bash",
+                 "input": {"command": "ls"}}]}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "a.md"}]}},
+            {"type": "user", "message": {"content": "[Image: original 2001x1125]"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "Render looks fine."}]}},
+        ])
+        prompts = [st for st in steps if is_prompt(st)]
+        self.assertEqual([p["input"]["text"] for p in prompts], ["propose the slides"])
+        self.assertEqual(prompts[0]["reply"], "Here are 9 slides.\n\nRender looks fine.")
+
+    def test_the_account_name_is_templated(self):
+        user = Path.home().name
+        steps = self._extract([
+            {"type": "user", "message": {"content": "list it"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "t1", "name": "Bash",
+                 "input": {"command": f"ls /private/tmp/claude-501/-Users-{user.replace('.', '-')}-x"}}]}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t1",
+                 "content": f"-rw-r--r-- 1 {user} staff 10 notes.md"}]}},
+        ])
+        self.assertNotIn(user, json.dumps(steps))
+
+    def test_the_judge_waits_long_enough_to_answer(self):
+        import skillpp.boundary as boundary
+        self.assertEqual(boundary.DEFAULT_TIMEOUT, 30.0)
 
 
 class TestEmbedEndpoint(TempRoot):
