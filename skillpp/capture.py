@@ -15,6 +15,7 @@ always exits 0. Capture is never worth breaking someone's work over.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -564,6 +565,74 @@ def handle_session_end(config: Config, payload: dict) -> dict:
     return result
 
 
+# How long a session file may sit untouched before it counts as ended. A
+# session that never fires `SessionEnd` — a CLI window closed, an app killed —
+# otherwise waits forever. Long, because a desktop session can be picked up again
+# hours later, and folding it early would bank half the work.
+PENDING_IDLE_HOURS = 12.0
+# A `fold-pending` run older than this is assumed dead, not still folding.
+_PENDING_LOCK_SECONDS = 3600
+
+
+def _find_transcript(session_id: str) -> str | None:
+    """The transcript for a session recorded before capture kept its path."""
+    for path in (Path.home() / ".claude" / "projects").glob(f"*/{session_id}.jsonl"):
+        return str(path)
+    return None
+
+
+def fold_pending(config: Config, *, exclude: str | None = None,
+                 idle_hours: float = PENDING_IDLE_HOURS) -> list[dict]:
+    """Bank the sessions that ended without being banked.
+
+    Measured on the real ledger: of ten unbanked sessions, nine were desktop
+    sessions where `SessionEnd` *did* fire — at quitting the app — and the
+    boundary judge got no answer from the local model in time, so each was held.
+    Nothing ever read `held` again. The tenth was a CLI session that never ended.
+
+    Held sessions are retried now; a session untouched for *idle_hours* is
+    treated as ended. Either way it goes through `handle_session_end`, so the
+    judge, the fold and the held stamp are the ones a normal end uses, and
+    `folded` keeps a partial retry from counting an episode twice. *exclude* is
+    the session that is starting, which is live by definition.
+    """
+    lock = config.root / "fold-pending.lock"
+    try:
+        if time.time() - lock.stat().st_mtime > _PENDING_LOCK_SECONDS:
+            lock.unlink()
+    except OSError:
+        pass
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return [{"status": "locked"}]
+    os.close(fd)
+    results = []
+    try:
+        for path in sorted(config.sessions_dir.glob("*.json")):
+            sid = path.stem
+            if sid == exclude:
+                continue
+            try:
+                session = json.loads(path.read_text(encoding="utf-8"))
+                idle = (time.time() - path.stat().st_mtime) / 3600
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not session.get("held") and idle < idle_hours:
+                results.append({"session": sid, "status": "live"})
+                continue
+            transcript = session.get("transcript") or _find_transcript(sid)
+            result = handle_session_end(config, {"session_id": sid,
+                                                 "transcript_path": transcript})
+            results.append({"session": sid, **result})
+    finally:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+    return results
+
+
 def fold_session(config: Config, session: dict, *, force: bool = False,
                  source: str = "capture") -> dict:
     """Turn a finished session into ledger entries — one per task.
@@ -582,6 +651,11 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
     # git verbs — measured worse than making no cuts at all, and worse again
     # than the judge. Reported rather than returned empty, because a silent
     # nothing is indistinguishable from a session that held no work.
+    # No tool call at all is a conversation, not an unjudged session: there is
+    # no step a verdict could sit on. Reading it as offline held nine real chat
+    # sessions forever under "gemma3n:e4b did not answer" while the model was up.
+    if not [s for s in session.get("steps", []) if not is_prompt(s)]:
+        return {"status": "too-thin", "steps": 0, "episodes": [], "flagged": 0}
     if not was_judged(session.get("steps", [])) and not force:
         return {"status": "offline", "steps": len(session.get("steps", [])),
                 "episodes": [], "flagged": 0,

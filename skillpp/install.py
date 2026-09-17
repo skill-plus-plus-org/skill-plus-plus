@@ -14,10 +14,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# `SessionStart` carries no capture duty. It exists to notice that `SessionEnd`
-# left entries queued for a near-miss check, and to start that check in a
-# detached process — which is what lets the check use an embedding at all, since
-# the one place it could never live is the hook a session is waiting on.
+# `SessionStart` banks what earlier sessions left behind: sessions held because
+# the local model did not answer when they ended, and sessions that never ended.
+# It starts `skillpp fold-pending` detached, because a session must not wait on a
+# model to start.
 HOOK_EVENTS = ("UserPromptSubmit", "PostToolUse", "SessionEnd", "SessionStart")
 MARKER = "skillpp hook"
 

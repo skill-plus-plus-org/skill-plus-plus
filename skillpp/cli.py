@@ -60,11 +60,13 @@ def cmd_hook(args: argparse.Namespace) -> int:
             if args.verbose:
                 print(json.dumps(result))
         elif event == "SessionStart":
-            # Nothing to do. This used to spawn a background merge pass; matching
-            # now happens when an episode is saved. Accepted quietly so hooks
-            # installed before the change keep working.
+            # Bank what earlier sessions left behind — held because the local
+            # model did not answer at their end, or never ended at all. In the
+            # background: a session must not wait on a model to start.
+            proc = _spawn_background_process(
+                config, "fold-pending", "--exclude", str(payload.get("session_id", "")))
             if args.verbose:
-                print(json.dumps({"status": "nothing-to-do", "event": event}))
+                print(json.dumps({"status": "spawned", "pid": proc.pid}))
         elif args.verbose:
             print(json.dumps({"status": "ignored-event", "event": event}))
     except Exception as exc:  # noqa: BLE001 - deliberate catch-all
@@ -513,6 +515,49 @@ def cmd_merge(args: argparse.Namespace) -> int:
                          note=f"absorbed {drop.id} ({drop.title[:80]}) — "
                               f"embedding {score:.3f}")
         print(f"\nfolded {drop.id} into {keep.id} — now seen {keep.occurrences}x")
+    return 0
+
+
+def _spawn_background_process(config: Config, *argv: str):
+    """Start a skillpp command detached, and do not wait for it.
+
+    `start_new_session` matters: without it the child is in the hook's process
+    group, so the terminal closing — or Claude Code reaping the hook — can
+    signal a process that is midway through a model call.
+    """
+    import subprocess
+    package_root = Path(__file__).resolve().parent.parent
+    return subprocess.Popen(
+        [sys.executable, "-m", "skillpp", "--root", str(config.root), *argv],
+        cwd=str(package_root),
+        env={**os.environ, "PYTHONPATH": str(package_root)},
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def cmd_fold_pending(args: argparse.Namespace) -> int:
+    """Bank sessions that ended without being banked (see `capture.fold_pending`)."""
+    from .capture import fold_pending
+
+    config = Config(args.root)
+    config.ensure_dirs()
+    results = fold_pending(config, exclude=args.exclude, idle_hours=args.idle_hours)
+    if results == [{"status": "locked"}]:
+        print("Another fold-pending is running.")
+        return 0
+    for r in results:
+        episodes = [e for e in (r.get("episodes") or []) if e.get("status") in ("created", "merged")]
+        if r["status"] == "live":
+            what = "still live, skipped"
+        elif r["status"] == "offline":
+            what = f"held again: {r.get('reason', '')}"
+        elif episodes:
+            what = "banked " + ", ".join(f"{e['status']} {e['id']}" for e in episodes)
+        else:
+            what = r["status"]
+        print(f"  {r['session'][:8]}  {what}")
+    if not results:
+        print("No pending sessions.")
     return 0
 
 
@@ -1189,6 +1234,13 @@ def build_parser() -> argparse.ArgumentParser:
                             "ending the session")
     p.add_argument("--session-id", help="which session; defaults to the newest")
     p.set_defaults(func=cmd_keep)
+
+    p = sub.add_parser("fold-pending",
+                       help="bank sessions that ended without being banked")
+    p.add_argument("--exclude", help="a live session to leave alone")
+    p.add_argument("--idle-hours", type=float, default=12.0,
+                   help="treat a session untouched this long as ended")
+    p.set_defaults(func=cmd_fold_pending)
 
     p = sub.add_parser("web", help="browse the ledger in a local page")
     p.add_argument("--port", type=int, default=8765)

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2866,21 +2868,6 @@ class TestCaptureMatchesByEmbedding(TempRoot):
         b = fold_session(other, self._session("s1"))["id"]
         self.assertNotEqual(a, b)
 
-    def test_the_session_start_hook_does_nothing(self):
-        """It used to spawn a background merge pass; hooks installed then must
-        keep working."""
-        import io, contextlib
-        from skillpp.cli import main
-        out = io.StringIO()
-        real_stdin = sys.stdin
-        sys.stdin = io.StringIO('{"session_id": "s1"}')   # a hook reads its payload here
-        self.addCleanup(lambda: setattr(sys, "stdin", real_stdin))
-        with contextlib.redirect_stdout(out):
-            code = main(["--root", str(self.config.root), "hook",
-                         "--event", "SessionStart"])
-        self.assertEqual(code, 0)
-        self.assertEqual(out.getvalue(), "")
-
 
 class TestMergeCommand(TempRoot):
     """`skillpp merge`: folding what is already in the ledger."""
@@ -4174,6 +4161,98 @@ class TestTurns(TempRoot):
         self.assertIn("steps", show("aaaaaaaaaaaa", "--json"))
         self.assertEqual(show("bbbbbbbbbbbb", "--json", "--draft"),
                          show("bbbbbbbbbbbb", "--json"))
+
+
+class TestFoldPending(TempRoot):
+    """Sessions that ended without being banked are banked later.
+
+    Nine of ten unbanked real sessions were desktop sessions whose `SessionEnd`
+    fired while the local model did not answer, so they were held — and nothing
+    ever retried a held session.
+    """
+
+    def _session(self, sid, *, held=False, hours_ago=0.0):
+        from skillpp.capture import _session_file
+        steps = [{"tool": "UserPrompt", "input": {"text": f"ship {sid}"}},
+                 {"tool": "Bash", "input": {"command": "npm test"}},
+                 {"tool": "Bash", "input": {"command": "git commit -m x"}}]
+        doc = {"session_id": sid, "cwd": "/r", "prompts": [], "steps": steps}
+        if held:
+            doc["held"] = {"at": "2026-09-07T13:02:00+00:00", "reason": "no verdicts"}
+        path = _session_file(self.config, sid)
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        stamp = time.time() - hours_ago * 3600
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def test_a_held_session_is_banked_once_the_model_answers(self):
+        from skillpp.capture import fold_pending
+        path = self._session("held1", held=True)
+        (result,) = fold_pending(self.config)
+        self.assertEqual(result["status"], "created")
+        self.assertFalse(path.exists())
+        self.assertEqual(len(list(Ledger(self.config).all())), 1)
+
+    def test_a_held_session_stays_held_while_the_model_is_silent(self):
+        from skillpp.capture import fold_pending
+        self._stub_judge(None)
+        path = self._session("held1", held=True)
+        (result,) = fold_pending(self.config)
+        self.assertEqual(result["status"], "offline")
+        self.assertTrue(json.loads(path.read_text())["held"])
+        self.assertEqual(list(Ledger(self.config).all()), [])
+
+    def test_a_recent_session_is_live_and_an_old_one_has_ended(self):
+        from skillpp.capture import fold_pending
+        recent = self._session("recent", hours_ago=1)
+        old = self._session("old", hours_ago=13)
+        results = {r["session"]: r["status"] for r in fold_pending(self.config)}
+        self.assertEqual(results, {"old": "created", "recent": "live"})
+        self.assertTrue(recent.exists())
+        self.assertFalse(old.exists())
+
+    def test_the_starting_session_is_left_alone(self):
+        from skillpp.capture import fold_pending
+        path = self._session("starting", held=True)
+        self.assertEqual(fold_pending(self.config, exclude="starting"), [])
+        self.assertTrue(path.exists())
+
+    def test_a_running_fold_is_not_joined_but_a_dead_one_is_ignored(self):
+        from skillpp.capture import fold_pending
+        self._session("held1", held=True)
+        lock = self.config.root / "fold-pending.lock"
+        lock.write_text("")
+        self.assertEqual(fold_pending(self.config), [{"status": "locked"}])
+        stamp = time.time() - 2 * 3600
+        os.utime(lock, (stamp, stamp))
+        self.assertEqual(fold_pending(self.config)[0]["status"], "created")
+        self.assertFalse(lock.exists())
+
+    def test_a_chat_with_no_tool_calls_is_not_held_as_offline(self):
+        from skillpp.capture import _session_file, fold_pending
+        path = _session_file(self.config, "chat")
+        path.write_text(json.dumps({
+            "session_id": "chat", "cwd": "/r", "prompts": [],
+            "held": {"at": "2026-09-07T13:02:00+00:00", "reason": "no verdicts"},
+            "steps": [{"tool": "UserPrompt", "input": {"text": "make it an I"}},
+                      {"tool": "UserPrompt", "input": {"text": "add a closing"}}]}))
+        (result,) = fold_pending(self.config)
+        self.assertEqual(result["status"], "too-thin")
+        self.assertFalse(path.exists())
+
+    def test_session_start_spawns_the_fold_and_does_not_wait(self):
+        import io
+        from skillpp.cli import main
+        real_stdin = sys.stdin
+        sys.stdin = io.StringIO('{"session_id": "s1"}')
+        self.addCleanup(lambda: setattr(sys, "stdin", real_stdin))
+        with mock.patch("subprocess.Popen") as popen:
+            code = main(["--root", str(self.config.root), "hook", "--event", "SessionStart"])
+        self.assertEqual(code, 0)
+        argv = popen.call_args.args[0]
+        self.assertEqual(argv[-3:], ["fold-pending", "--exclude", "s1"])
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        popen.return_value.wait.assert_not_called()
 
 
 class TestEmbedEndpoint(TempRoot):
