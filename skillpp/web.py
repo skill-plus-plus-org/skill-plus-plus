@@ -693,6 +693,9 @@ PAGE = r"""<!doctype html>
  .cand.open .chev{transform:rotate(90deg)}
  .cand .body{display:none;border-top:1px solid var(--line);padding:12px 16px 14px 44px}
  .cand.open .body{display:block}
+ .cand .body h3{margin:0 0 6px;font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.05em;
+   color:var(--muted)}
+ .cand .body h3 + .sum{margin-bottom:14px}
  .sum{margin:0 0 10px;font-size:13.5px;color:var(--fg)}
  .sum.pending{color:var(--muted);font-style:italic}
  .outline{margin:0 0 10px;padding-left:20px;font-size:13px;color:#cbd2e1}
@@ -962,7 +965,8 @@ function candidateBody(r){
   const sum = r.summary ? `<p class="sum">${esc(r.summary)}</p>`
     : summaryError[r.id] ? `<p class="sum pending">No summary: ${esc(summaryError[r.id])}</p>`
     : `<p class="sum pending">Summarising…</p>`;
-  return `${sum}<ol class="outline">${r.outline.map(l => `<li>${esc(l)}</li>`).join("")}</ol>`;
+  return `<h3>Summary</h3>${sum}
+    <h3>Steps</h3><ol class="outline">${r.outline.map(l => `<li>${esc(l)}</li>`).join("")}</ol>`;
 }
 
 async function fetchSummary(id){
