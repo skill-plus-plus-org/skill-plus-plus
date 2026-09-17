@@ -141,6 +141,39 @@ def _draft_files(config: Config, entry_id: str) -> list[Path]:
                   and not any(part.startswith(".") for part in p.relative_to(root).parts))
 
 
+_QUESTIONS_HEADING = re.compile(r"^##\s+Open questions\s*$", re.IGNORECASE)
+_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*)$")
+
+
+def split_open_questions(text: str) -> tuple[list[str], str]:
+    """The draft's `## Open questions` and the SKILL.md without that section.
+
+    The drafting agent cannot ask, so it writes what it could not tell from the
+    runs there (`commands/skillpp-draft.md`, step 5). Those are gaps in the
+    skill, not part of it: the page shows them as answer fields, hides the
+    section from the rendered draft, and refuses the download while any remain.
+    The section ends at the next heading or horizontal rule.
+    """
+    lines = text.split("\n")
+    start = next((i for i, line in enumerate(lines) if _QUESTIONS_HEADING.match(line)), None)
+    if start is None:
+        return [], text
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if re.match(r"^(#{1,6}\s|-{3,}\s*$|\*{3,}\s*$|_{3,}\s*$)", lines[i]):
+            end = i
+            break
+    questions: list[str] = []
+    for line in lines[start + 1:end]:
+        item = _ITEM.match(line)
+        if item:
+            questions.append(item.group(1).strip())
+        elif line.strip() and questions:
+            questions[-1] += " " + line.strip()
+    remaining = "\n".join(lines[:start] + lines[end:])
+    return [q for q in questions if q], remaining
+
+
 def list_drafts(config: Config) -> list[dict]:
     """Every finished draft, with the SKILL.md text to review."""
     drafts = []
@@ -151,11 +184,13 @@ def list_drafts(config: Config) -> list[dict]:
         skill_md = Path(state["path"])
         text = skill_md.read_text(encoding="utf-8")
         front = parse_frontmatter(text)
+        questions, shown = split_open_questions(text)
         drafts.append({
             "id": entry.id, "title": entry.title,
             "name": _skill_name(entry, skill_md),
             "description": str(front.get("description") or ""),
-            "body": text,
+            "body": shown,
+            "questions": questions,
             "files": [str(p.relative_to(_draft_dir(config, entry.id)))
                       for p in _draft_files(config, entry.id)],
             "revising": state["state"] == "revising",
@@ -175,8 +210,11 @@ def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
     entry = Ledger(config).get(entry_id)
     if not entry or row_state(config, entry)["state"] != "drafted":
         return None
+    skill_md = Path(row_state(config, entry)["path"])
+    if split_open_questions(skill_md.read_text(encoding="utf-8"))[0]:
+        return None                  # open questions first; see split_open_questions
     root = _draft_dir(config, entry.id)
-    name = _skill_name(entry, Path(row_state(config, entry)["path"]))
+    name = _skill_name(entry, skill_md)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in _draft_files(config, entry.id):
@@ -268,13 +306,14 @@ def _revise_job(config: Config, entry_id: str, instruction: str) -> None:
             _jobs.pop(entry_id, None)
 
 
-def revise(config: Config, entry_id: str, instruction: str) -> dict:
+def revise(config: Config, entry_id: str, instruction: str,
+           limit: int = MAX_INSTRUCTION) -> dict:
     """Revise: `skillpp revise <id> --instruction … --apply`, in the background."""
     instruction = (instruction or "").strip()
     if not instruction:
         return {"ok": False, "error": "say what to change"}
-    if len(instruction) > MAX_INSTRUCTION:
-        return {"ok": False, "error": f"keep it under {MAX_INSTRUCTION} characters"}
+    if len(instruction) > limit:
+        return {"ok": False, "error": f"keep it under {limit} characters"}
     entry = Ledger(config).get(entry_id)
     if not entry:
         return {"ok": False, "error": "no such entry"}
@@ -292,6 +331,28 @@ def revise(config: Config, entry_id: str, instruction: str) -> dict:
     return {"ok": True}
 
 
+MAX_ANSWERS = 6000
+
+
+def answer_questions(config: Config, entry_id: str, answers: list) -> dict:
+    """Send answers to a draft's open questions: one `skillpp revise` run that
+    folds each answer into the skill and removes the questions it answers."""
+    pairs = [(str(a.get("question", "")).strip(), str(a.get("answer", "")).strip())
+             for a in answers if isinstance(a, dict)]
+    pairs = [(q, a) for q, a in pairs if q and a]
+    if not pairs:
+        return {"ok": False, "error": "answer at least one question"}
+    text = "\n\n".join(f"Q: {q}\nA: {a}" for q, a in pairs)
+    if len(text) > MAX_ANSWERS:
+        return {"ok": False, "error": f"keep the answers under {MAX_ANSWERS} characters"}
+    instruction = (
+        "The developer answered open questions from the draft. For each answer, "
+        "change the skill where it applies so it no longer needs the question, then "
+        "remove that question from the `## Open questions` section. Remove the "
+        "section when it is empty. Leave unanswered questions as they are.\n\n" + text)
+    return revise(config, entry_id, instruction, limit=MAX_ANSWERS + 1000)
+
+
 def make_handler(config: Config):
     actions = {
         "/api/accept": lambda p: accept(config, str(p.get("id", ""))),
@@ -299,6 +360,8 @@ def make_handler(config: Config):
         "/api/create": lambda p: create_skill(config, str(p.get("id", ""))),
         "/api/revise": lambda p: revise(config, str(p.get("id", "")),
                                         str(p.get("instruction", ""))),
+        "/api/answer": lambda p: answer_questions(config, str(p.get("id", "")),
+                                                  p.get("answers") or []),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -320,8 +383,14 @@ def make_handler(config: Config):
             if url.path == "/api/state":
                 return self._send(200, json.dumps(collect_state(config)))
             if url.path == "/api/draft.zip":
-                found = draft_zip(config, (parse_qs(url.query).get("id") or [""])[0])
+                entry_id = (parse_qs(url.query).get("id") or [""])[0]
+                found = draft_zip(config, entry_id)
                 if not found:
+                    waiting = any(d["id"] == entry_id and d["questions"]
+                                  for d in list_drafts(config))
+                    if waiting:
+                        return self._send(409, json.dumps(
+                            {"error": "answer the open questions first"}))
                     return self._send(404, json.dumps({"error": "no such draft"}))
                 filename, data = found
                 self.send_response(200)
@@ -438,6 +507,17 @@ PAGE = r"""<!doctype html>
    padding:10px;margin:0 0 8px}
  .revise .bar{display:flex;gap:8px;align-items:center}
  .revise .err{font:12px var(--mono);color:var(--no);margin:0 0 8px}
+ .questions{margin:0 0 16px;padding:12px 14px;border:1px solid rgba(251,191,36,.35);
+   background:rgba(251,191,36,.06);border-radius:8px}
+ .questions h4{margin:0 0 4px;font:600 12px var(--mono);color:#fbbf24;text-transform:uppercase;
+   letter-spacing:.04em}
+ .questions .hint{margin:0 0 10px;font-size:12px;color:var(--dim)}
+ .questions label{display:block;margin:10px 0 4px;font-size:13px;color:var(--fg)}
+ .questions code{font:12px var(--mono);background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+ .questions textarea{width:100%;min-height:52px;resize:vertical;font:13px/1.5 var(--sans);
+   color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px}
+ .blocked{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;color:var(--muted);
+   border:1px solid var(--line);white-space:nowrap;cursor:not-allowed}
  a.download{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;text-decoration:none;
    color:var(--ok);border:1px solid var(--okline);background:var(--okbg);white-space:nowrap}
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
@@ -447,7 +527,7 @@ PAGE = r"""<!doctype html>
 <main id="list"></main>
 <script>
 let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
-let view = "candidates", open = new Set(), writing = new Set(), drafts = {};
+let view = "candidates", open = new Set(), writing = new Set(), drafts = {}, answers = {};
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -559,6 +639,17 @@ function md(src){
   return head + out.join("\n");
 }
 
+function questionsBlock(d){
+  if(!d.questions.length || d.revising) return "";
+  const id = esc(d.id), given = answers[d.id] || {};
+  return `<div class="questions"><h4>Open questions</h4>
+    <p class="hint">The agent could not tell these from the recorded runs. Answer them to finish the skill; it downloads once none are left.</p>
+    ${d.questions.map((q, i) => `<label for="q-${id}-${i}">${i + 1}. ${mdInline(q)}</label>
+      <textarea id="q-${id}-${i}" data-answer="${id}" data-index="${i}">${esc(given[i] || "")}</textarea>`).join("")}
+    <div class="bar" style="margin-top:10px"><button class="create" data-answer-send="${id}">Send answers</button></div>
+  </div>`;
+}
+
 function reviseBlock(d){
   const id = esc(d.id);
   const err = d.message ? `<p class="err">Last revision: ${esc(d.message)}</p>` : "";
@@ -575,12 +666,14 @@ function renderDrafts(list){
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
-        <span class="acts"><a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}"
-          download="${esc(d.name)}.zip">Download skill</a></span>
+        <span class="acts">${d.questions.length
+          ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
+          : `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">Download skill</a>`}</span>
       </div>
       <p class="desc">${esc(d.description)}</p>
       <div class="body">
         <p class="files">${d.files.map(esc).join(" · ")}</p>
+        ${questionsBlock(d)}
         ${reviseBlock(d)}
         <div class="md">${md(d.body)}</div>
       </div></div>`).join("")
@@ -594,6 +687,19 @@ function renderDrafts(list){
     writing.delete(b.dataset.reviseCancel); delete drafts[b.dataset.reviseCancel]; render();
   });
   list.querySelectorAll("[data-instruction]").forEach(t => t.oninput = () => { drafts[t.dataset.instruction] = t.value; });
+  list.querySelectorAll("[data-answer]").forEach(t => t.oninput = () => {
+    (answers[t.dataset.answer] ||= {})[t.dataset.index] = t.value;
+  });
+  list.querySelectorAll("[data-answer-send]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.answerSend, d = S.drafts.find(x => x.id === id), given = answers[id] || {};
+    const payload = d.questions.map((question, i) => ({question, answer: (given[i] || "").trim()}))
+      .filter(a => a.answer);
+    if(!payload.length){ alert("Answer at least one question."); return; }
+    b.disabled = true;
+    const r = await (await fetch("/api/answer", {method:"POST", body: JSON.stringify({id, answers: payload})})).json();
+    if(!r.ok){ alert(r.error || "failed"); b.disabled = false; return; }
+    delete answers[id]; await load();
+  });
   list.querySelectorAll("[data-revise-send]").forEach(b => b.onclick = async () => {
     const id = b.dataset.reviseSend, instruction = (drafts[id] || "").trim();
     if(!instruction) return;

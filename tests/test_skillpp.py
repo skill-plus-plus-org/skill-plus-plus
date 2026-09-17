@@ -3662,6 +3662,52 @@ class TestWeb(TempRoot):
         self.assertEqual(self._rows()["x"]["state"], "drafted")
         self.assertIn("did not finish", self._rows()["x"]["message"])
 
+    QUESTIONS = ("# Body\n\n## Open questions\n\n- Is it always `x`, or can it\n"
+                 "  also be `y`?\n2. Which runner?\n\n---\n\n_footer_\n")
+
+    def test_open_questions_are_read_out_of_the_draft(self):
+        from skillpp.web import split_open_questions
+        questions, rest = split_open_questions(self.QUESTIONS)
+        self.assertEqual(questions, ["Is it always `x`, or can it also be `y`?",
+                                     "Which runner?"])
+        self.assertNotIn("Open questions", rest)
+        self.assertIn("# Body", rest)
+        self.assertIn("_footer_", rest, "the section ends at the rule")
+        self.assertEqual(split_open_questions("# Body\n"), ([], "# Body\n"))
+
+    def test_a_draft_with_open_questions_shows_them_and_will_not_download(self):
+        from skillpp.web import collect_state, draft_zip
+        self._drafted("x")
+        skill = self.config.root / "drafts" / "x" / "SKILL.md"
+        skill.write_text(skill.read_text() + "\n" + self.QUESTIONS)
+        draft = collect_state(self.config)["drafts"][0]
+        self.assertEqual(len(draft["questions"]), 2)
+        self.assertNotIn("Open questions", draft["body"])
+        self.assertIsNone(draft_zip(self.config, "x"))
+
+    def test_answers_revise_the_draft_until_it_downloads(self):
+        from skillpp.web import answer_questions, collect_state, draft_zip
+        self._agent(
+            "import re\n"
+            "d = pathlib.Path(os.environ['SKILLPP_DRAFT_DIR']) / 'SKILL.md'\n"
+            "prompt = sys.argv[-1]\n"
+            "assert 'A: always x' in prompt, prompt\n"
+            "t = re.sub(r'## Open questions[\\s\\S]*?(?=\\n---)', '', d.read_text())\n"
+            "d.write_text(t.replace('# Body', '# Body\\n\\nIt is always x.'))\n")
+        self._drafted("x")
+        skill = self.config.root / "drafts" / "x" / "SKILL.md"
+        skill.write_text(skill.read_text() + "\n" + self.QUESTIONS)
+        self.assertFalse(answer_questions(self.config, "x", [
+            {"question": "Which runner?", "answer": "  "}])["ok"], "nothing answered")
+        self.assertTrue(answer_questions(self.config, "x", [
+            {"question": "Is it always `x`, or can it also be `y`?",
+             "answer": "always x"}])["ok"])
+        self._wait_for_draft("x")
+        draft = collect_state(self.config)["drafts"][0]
+        self.assertEqual(draft["questions"], [], draft["message"])
+        self.assertIn("It is always x.", draft["body"])
+        self.assertIsNotNone(draft_zip(self.config, "x"))
+
     def test_every_state_has_its_own_label_on_the_page(self):
         """A dismissed row once rendered as "Agent declined" with a retry
         button, because both states were called "declined"."""
