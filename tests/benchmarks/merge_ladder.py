@@ -67,9 +67,57 @@ def r1(entry: Entry) -> str:
     return FILE.sub("<file>", r0(entry))
 
 
+LIST_ITEM = re.compile(r"^\s*([-*•+]|\d+[.)])\s+")
+BOLD_LINE = re.compile(r"^\s*\*\*[^*].*\*\*:?\s*$")
+
+
+def strip_deliverable(reply: str) -> str:
+    """The reply without what it delivered: the agent's own sentences stay.
+
+    Dropped: text between `---` separators (a drafted post), fenced code,
+    table rows, headings, whole-line bold labels (slide titles), and list items
+    with any lines indented under them.
+    """
+    out: list[str] = []
+    in_fence = in_rule = in_item = False
+    for line in reply.splitlines():
+        text = line.strip()
+        if text.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if re.fullmatch(r"-{3,}|\*{3,}|_{3,}", text):
+            in_rule = not in_rule
+            continue
+        if in_fence or in_rule:
+            continue
+        if not text:
+            in_item = False
+            continue
+        if (text.startswith("|") or text.startswith("#") or BOLD_LINE.match(line)
+                or LIST_ITEM.match(line) or (in_item and line[:1].isspace())):
+            in_item = bool(LIST_ITEM.match(line)) or in_item
+            continue
+        in_item = False
+        out.append(text)
+    return "\n".join(out)
+
+
+def r2(entry: Entry) -> str:
+    """R1, with each reply's deliverable blocks removed.
+
+    Measured, not kept: the two-procedures-two-files gap rose to +0.098, but the
+    danger line moved to a coding pair (add-eval-case ~ compare-adk-docs, 0.854)
+    whose replies carry their topic in plain sentences this cannot see, so the
+    safe floor rose to 0.86 and merges fell from 12 to 10.
+    """
+    turns = [{**t, "reply": strip_deliverable(t.get("reply", ""))} for t in entry.turns]
+    return FILE.sub("<file>", turns_text(turns))
+
+
 RENDERINGS = {
     "R0": r0,
     "R1": r1,
+    "R2": r2,
 }
 
 
