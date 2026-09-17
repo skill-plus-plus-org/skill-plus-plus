@@ -3467,6 +3467,18 @@ class TestWeb(TempRoot):
                          "not the agent's 'declined', which offers a retry")
         self.assertFalse(accept(self.config, "d")["ok"], "declined stays declined")
 
+    def test_a_declined_candidate_can_be_reinstated(self):
+        from skillpp.ledger import STATUS_CANDIDATE
+        from skillpp.web import decline, reinstate
+        self._save("d")
+        self.assertFalse(reinstate(self.config, "d")["ok"], "not declined yet")
+        decline(self.config, "d")
+        self.assertTrue(reinstate(self.config, "d")["ok"])
+        self.assertEqual(Ledger(self.config).get("d").status, STATUS_CANDIDATE)
+        self.assertEqual(self._rows()["d"]["state"], "undecided")
+        log = (self.config.root / "decisions.jsonl").read_text()
+        self.assertIn("declined, reinstated", log)
+
     def test_create_skill_needs_an_accepted_candidate(self):
         from skillpp.web import create_skill
         self._save("u")

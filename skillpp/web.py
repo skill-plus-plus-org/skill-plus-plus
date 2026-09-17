@@ -368,6 +368,19 @@ def decline(config: Config, entry_id: str) -> dict:
     return _decide(config, entry_id, "dismiss")
 
 
+def reinstate(config: Config, entry_id: str) -> dict:
+    """Reinstate a declined candidate: `skillpp reopen <id>`."""
+    entry = Ledger(config).get(entry_id)
+    if not entry:
+        return {"ok": False, "error": "no such entry"}
+    if entry.status != STATUS_DISMISSED:
+        return {"ok": False, "error": f"{entry.id} is not declined"}
+    proc = _run(config, "reopen", entry.id)
+    if proc.returncode != 0:
+        return {"ok": False, "error": _tail(proc.stderr or proc.stdout)}
+    return {"ok": True}
+
+
 def _draft_job(config: Config, entry_id: str) -> None:
     try:
         proc = _run(config, "draft", entry_id, "--apply")
@@ -482,6 +495,7 @@ def make_handler(config: Config):
         "/api/accept": lambda p: accept(config, str(p.get("id", ""))),
         "/api/summary": lambda p: summarise(config, str(p.get("id", ""))),
         "/api/decline": lambda p: decline(config, str(p.get("id", ""))),
+        "/api/reinstate": lambda p: reinstate(config, str(p.get("id", ""))),
         "/api/create": lambda p: create_skill(config, str(p.get("id", ""))),
         "/api/revise": lambda p: revise(config, str(p.get("id", "")),
                                         str(p.get("instruction", ""))),
@@ -585,6 +599,9 @@ PAGE = r"""<!doctype html>
  button:disabled{opacity:.5;cursor:default}
  button.accept:hover{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
  button.decline:hover{color:var(--no);border-color:var(--noline);background:var(--nobg)}
+ button.reinstate:hover{color:var(--fg);border-color:var(--dim)}
+ .cand.declined{opacity:.7}
+ .cand.declined:hover{opacity:1}
  button.create{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .state{font:12px var(--mono);color:var(--dim);white-space:nowrap}
  .state.ok{color:var(--ok)} .state.no{color:var(--no)}
@@ -693,7 +710,7 @@ function actions(r){
     case "failed": case "declined":
       return `<span class="msg" title="${esc(r.message)}">${r.state==="declined" ? "Agent declined" : "Failed"}: ${esc(r.message)}</span>
         <button class="create" data-act="create" data-id="${id}"${off}>Create Skill</button>`;
-    case "dismissed": return `<span class="state no">Declined</span>`;
+    case "dismissed": return `<button class="reinstate" data-act="reinstate" data-id="${id}"${off}>Reinstate</button>`;
     default: return "";
   }
 }
@@ -894,19 +911,23 @@ function render(){
   renderNav();
   const list = document.getElementById("list");
   if(view === "drafts") return renderDrafts(list);
-  const card = r => `<div class="cand ${r.ready?"ready":""} ${openRows.has(r.id)?"open":""}">
+  const card = r => `<div class="cand ${r.state==="dismissed"?"declined":r.ready?"ready":""} ${openRows.has(r.id)?"open":""}">
       <div class="row" data-row="${esc(r.id)}">
       <span class="chev">›</span>
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
       <span class="seen count" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span>
       <span class="acts">${actions(r)}</span></div>
       <div class="body">${candidateBody(r)}</div></div>`;
-  const ready = S.rows.filter(r => r.ready), collecting = S.rows.filter(r => !r.ready);
+  const declined = S.rows.filter(r => r.state === "dismissed");
+  const live = S.rows.filter(r => r.state !== "dismissed");
+  const ready = live.filter(r => r.ready), collecting = live.filter(r => !r.ready);
   list.innerHTML = `
     <div class="section"><h2>Ready to decide</h2><span>${S.threshold}× or more · ${ready.length}</span></div>
     ${ready.length ? ready.map(card).join("") : `<p class="empty">Nothing has reached ${S.threshold}× yet.</p>`}
     <div class="section"><h2>Still collecting</h2><span>below ${S.threshold}× · ${collecting.length}</span></div>
-    ${collecting.length ? collecting.map(card).join("") : `<p class="empty">Nothing else.</p>`}`;
+    ${collecting.length ? collecting.map(card).join("") : `<p class="empty">Nothing else.</p>`}
+    ${declined.length ? `<div class="section"><h2>Declined</h2><span>reinstate to put one back · ${declined.length}</span></div>
+    ${declined.map(card).join("")}` : ""}`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
   list.querySelectorAll("[data-row]").forEach(h => h.onclick = ev => {
     if(ev.target.closest("a, button")) return;

@@ -655,10 +655,11 @@ def cmd_accuracy(args: argparse.Namespace) -> int:
 
 
 def cmd_reopen(args: argparse.Namespace) -> int:
-    """Undo a sift verdict.
+    """Put a parked candidate back: undo a sift verdict or a decline.
 
     The filter's judgement comes from a model, so being able to put an entry
-    back is what makes parking it acceptable in the first place.
+    back is what makes parking it acceptable in the first place. A person's
+    decline is undone the same way, so nothing declined is lost for good.
     """
     from .ledger import STATUS_CANDIDATE, STATUS_ONE_OFF
 
@@ -667,16 +668,19 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     for entry in ledger.all():
         if entry.id != args.id:
             continue
-        if entry.status != STATUS_ONE_OFF:
-            print(f"{entry.id} is {entry.status}, not parked by sift.")
+        if entry.status not in (STATUS_ONE_OFF, STATUS_DISMISSED):
+            print(f"{entry.id} is {entry.status}, not parked or declined.")
             return 1
+        was = entry.status
         entry.status = STATUS_CANDIDATE
+        entry.parked_at_occurrences = 0
         ledger.save(entry)
         # A reopen is a false drop caught in the act, and the most informative
-        # label there is: a model parked something a person wanted back.
+        # label there is: something parked that a person wanted back.
         from . import decisions
         decisions.record(config, entry, decisions.REOPENED,
-                         "parked by sift, wanted back")
+                         "parked by sift, wanted back" if was == STATUS_ONE_OFF
+                         else "declined, reinstated")
         print(f"reopened {entry.id} — {entry.title[:60]}")
         return 0
     print(f"No entry {args.id}.")
@@ -1198,7 +1202,7 @@ def build_parser() -> argparse.ArgumentParser:
                             "promote/dismiss decisions")
     p.set_defaults(func=cmd_accuracy)
 
-    p = sub.add_parser("reopen", help="undo a sift verdict; put a candidate back")
+    p = sub.add_parser("reopen", help="put a parked or declined candidate back")
     p.add_argument("id")
     p.set_defaults(func=cmd_reopen)
 
