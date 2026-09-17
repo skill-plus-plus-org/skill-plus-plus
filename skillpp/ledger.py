@@ -75,6 +75,10 @@ class Entry:
     sessions: list[str] = field(default_factory=list)
     intents: list[str] = field(default_factory=list)
     steps: list[dict] = field(default_factory=list)
+    # The run as a conversation — `[{"prompt", "reply", "used"}]` — from the
+    # run that created the entry. What `skillpp draft` writes from; see
+    # `capture._turns`. Empty on entries saved before it existed.
+    turns: list[dict] = field(default_factory=list)
     variants: list[list[dict]] = field(default_factory=list)
     deps_mcp: list[str] = field(default_factory=list)
     deps_cli: list[str] = field(default_factory=list)

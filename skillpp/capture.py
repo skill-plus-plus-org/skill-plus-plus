@@ -319,6 +319,77 @@ _ENVELOPE_PREFIXES = ("<task-notification", "<system-reminder",
                       "<!-- attach")
 
 
+# How much of the agent's reply to one prompt a candidate keeps. The reply is
+# where a conversation-driven procedure lives — the proposal, the fact-check,
+# the question before building — and measured on three real runs the longest
+# was 7.6k characters. Replies to consecutive prompts with no tool call between
+# them used to overwrite each other in `_narration`, so run 1 of a real session
+# kept none of 4,900 characters.
+_REPLY_CHARS = 8000
+# A `user` row with string content that is not something the person typed: a
+# tool's image result is recorded this way.
+_NOT_A_PROMPT = ("[Image",)
+
+
+def _transcript_turns(path: str | None) -> list[tuple[str, list[str]]]:
+    """Each real prompt in a transcript, with the text the agent replied.
+
+    `text` blocks only, never `thinking`: the reply is what the person read.
+    Best effort — no path or an unreadable file is no turns.
+    """
+    if not path:
+        return []
+    turns: list[tuple[str, list[str]]] = []
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                content = (row.get("message") or {}).get("content")
+                if row.get("type") == "user" and isinstance(content, str):
+                    text = content.strip()
+                    if text and not text.startswith(_ENVELOPE_PREFIXES + _NOT_A_PROMPT):
+                        turns.append((text, []))
+                elif row.get("type") == "assistant" and turns and isinstance(content, list):
+                    turns[-1][1].extend(
+                        block["text"] for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                        and (block.get("text") or "").strip())
+    except OSError:
+        return []
+    return turns
+
+
+def _reply_before(path: str | None, current: str | None = None) -> str:
+    """The agent's reply to the latest finished prompt, scrubbed and clipped.
+
+    *current* is a prompt just submitted. Its row may already be in the
+    transcript when the hook runs, and then the finished prompt is the one
+    before it.
+    """
+    turns = _transcript_turns(path)
+    if turns and current is not None and turns[-1][0] == current.strip():
+        turns = turns[:-1]
+    if not turns:
+        return ""
+    text = scrub("\n\n".join(part.strip() for part in turns[-1][1]))
+    if len(text) > _REPLY_CHARS:
+        text = text[:_REPLY_CHARS].rsplit(" ", 1)[0] + " …"
+    return text
+
+
+def _attach_reply(session: dict, path: str | None, current: str | None = None) -> None:
+    """Give the last prompt marker its reply, once."""
+    marker = next((s for s in reversed(session.get("steps", [])) if is_prompt(s)), None)
+    if marker is None or marker.get("reply"):
+        return
+    reply = _reply_before(path, current)
+    if reply:
+        marker["reply"] = reply
+
+
 def handle_prompt(config: Config, payload: dict) -> None:
     """UserPromptSubmit — capture stated intent."""
     session_id = str(payload.get("session_id", "unknown"))
@@ -327,6 +398,11 @@ def handle_prompt(config: Config, payload: dict) -> None:
         return
     session = _load_session(config, session_id)
     session.setdefault("cwd", payload.get("cwd", ""))
+    if payload.get("transcript_path"):
+        session["transcript"] = payload["transcript_path"]
+    # The previous prompt's reply is complete now that the next one arrived.
+    _attach_reply(session, session.get("transcript"),
+                  current=str(payload.get("prompt", "")))
     if len(session["prompts"]) < 40:
         session["prompts"].append(prompt[: config.max_field_chars])
     # Also record the prompt *in the step stream*, so the interleaving of what
@@ -349,6 +425,8 @@ def handle_tool(config: Config, payload: dict) -> None:
     tool = str(payload.get("tool_name", "")) or "unknown"
     session = _load_session(config, session_id)
     session.setdefault("cwd", payload.get("cwd", ""))
+    if payload.get("transcript_path"):
+        session["transcript"] = payload["transcript_path"]
 
     if len(session["steps"]) >= config.max_steps_per_session:
         return
@@ -449,6 +527,8 @@ def handle_session_end(config: Config, payload: dict) -> dict:
             judge_session(config, session)
         except Exception as exc:  # noqa: BLE001 - a hook never raises at a dev
             log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
+
+    _attach_reply(session, payload.get("transcript_path") or session.get("transcript"))
 
     # The last task's own completion report, said after its final tool call.
     # Attached before folding so the episode carries it.
@@ -571,6 +651,37 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
     return summary
 
 
+def _turns(steps: list[dict], cwd: str = "") -> list[dict]:
+    """The run as a conversation: each prompt, the agent's reply, what it used.
+
+    This is what a draft is written from. Measured by drafting one real run
+    four ways, the raw tool steps buried the procedure under another skill's
+    internals and session paths, while the prompts and replies carried it —
+    the review checkpoints and how each check was done. The one fact only a
+    tool call held was *which skill* built the result, hence `used`.
+    """
+    turns: list[dict] = []
+    for step in steps:
+        if is_prompt(step):
+            turns.append({
+                "prompt": parameterize(str((step.get("input") or {}).get("text", "")), cwd),
+                "reply": parameterize(str(step.get("reply", "")), cwd),
+                "used": []})
+            continue
+        if not turns:
+            continue
+        tool = str(step.get("tool", ""))
+        if tool == "Skill":
+            used = f"skill {(step.get('input') or {}).get('skill', '')}"
+        elif tool.startswith("mcp__"):
+            used = f"mcp {tool}"
+        else:
+            continue
+        if used not in turns[-1]["used"]:
+            turns[-1]["used"].append(used)
+    return turns
+
+
 def _fold_steps(config: Config, session: dict, steps: list[dict],
                 source: str = "capture", *, match: bool = True) -> dict:
     """Fold one episode's steps into a new or updated ledger entry.
@@ -645,6 +756,7 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
         sessions=[session.get("session_id", "")] if session.get("session_id") else [],
         intents=intents,
         steps=substantive,
+        turns=_turns(steps, cwd),
         variants=[substantive],
         deps_mcp=deps_mcp,
         deps_cli=deps_cli,
@@ -964,6 +1076,7 @@ def keep_current(config: Config, session_id: str | None = None) -> dict:
     from .segment import is_prompt
     if not [s for s in session.get("steps", []) if not is_prompt(s)]:
         return {"status": "nothing-yet"}
+    _attach_reply(session, session.get("transcript"))
     # Boundaries are normally found at `SessionEnd`; this folds mid-session, so
     # ask now for whatever gaps the buffer already holds — unless a held fold
     # already fixed them (see `handle_session_end`).

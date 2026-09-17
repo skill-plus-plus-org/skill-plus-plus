@@ -4016,6 +4016,166 @@ class TestFoldResumesAfterOutage(TempRoot):
                          [("npm test", 1, False), ("pytest -q", 1, True)])
 
 
+class TestTurns(TempRoot):
+    """A candidate keeps its run as a conversation: prompt, reply, what it used.
+
+    The reply to a prompt was lost at capture — `_narration` only looks when a
+    tool fires, so replies to consecutive prompts overwrote each other and a
+    real run kept none of 4,900 characters. A draft written from the steps
+    alone restated another skill's internals instead of the procedure.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.transcript = self.root / "transcript.jsonl"
+        self.rows: list[dict] = []
+
+    # -- a transcript written as the session goes ----------------------------
+    def _user(self, text):
+        self.rows.append({"type": "user", "message": {"role": "user", "content": text}})
+        self._flush()
+
+    def _agent(self, *blocks):
+        self.rows.append({"type": "assistant", "message": {"content": list(blocks)}})
+        self._flush()
+
+    def _flush(self):
+        self.transcript.write_text(
+            "".join(json.dumps(r) + "\n" for r in self.rows), encoding="utf-8")
+
+    def _prompt(self, text, *, written_first=True):
+        from skillpp.capture import handle_prompt
+        if written_first:
+            self._user(text)
+        handle_prompt(self.config, {"session_id": "s", "cwd": "/r", "prompt": text,
+                                    "transcript_path": str(self.transcript)})
+        if not written_first:
+            self._user(text)
+
+    def _tool(self, name, tool_input):
+        from skillpp.capture import handle_tool
+        self._agent({"type": "tool_use", "name": name, "input": tool_input})
+        handle_tool(self.config, {"session_id": "s", "cwd": "/r", "tool_name": name,
+                                  "tool_input": tool_input,
+                                  "transcript_path": str(self.transcript)})
+
+    def _markers(self):
+        from skillpp.capture import _load_session
+        return [st for st in _load_session(self.config, "s")["steps"] if is_prompt(st)]
+
+    def _run(self):
+        """Three prompts: a tool call after the first, none after the second."""
+        self._prompt("propose the slides")
+        self._agent({"type": "thinking", "thinking": "SECRET REASONING"},
+                    {"type": "text", "text": "Reading the source."})
+        self._tool("Bash", {"command": "npm test"})
+        self._agent({"type": "text", "text": "Here are 9 slides."})
+        self._prompt("check every claim and cut to 6")
+        self._agent({"type": "text", "text": "All claims backed. Cut to 6."})
+        self._user("<system-reminder>not typed by anyone</system-reminder>")
+        self._user("[Image: original 2001x1125]")
+        self._agent({"type": "text", "text": "Slide render looks fine."})
+        self._prompt("build it", written_first=False)
+        self._agent({"type": "text", "text": "Building with the pptx skill."})
+        self._tool("Skill", {"skill": "anthropic-skills:pptx"})
+        self._tool("mcp__notion__search", {"query": "house style"})
+        self._tool("Skill", {"skill": "anthropic-skills:pptx"})
+
+    def test_each_prompt_gets_the_reply_that_followed_it(self):
+        from skillpp.capture import _load_session, _save_session, _attach_reply
+        self._run()
+        first, second, third = self._markers()
+        self.assertEqual(first["reply"], "Reading the source.\n\nHere are 9 slides.")
+        # No tool call in between: the case that was lost.
+        self.assertEqual(second["reply"],
+                         "All claims backed. Cut to 6.\n\nSlide render looks fine.")
+        self.assertNotIn("reply", third)
+        session = _load_session(self.config, "s")
+        _attach_reply(session, str(self.transcript))
+        _save_session(self.config, session)
+        self.assertEqual(self._markers()[2]["reply"], "Building with the pptx skill.")
+
+    def test_thinking_is_not_the_reply(self):
+        self._run()
+        self.assertNotIn("SECRET REASONING", json.dumps(self._markers()))
+
+    def test_a_long_reply_is_clipped_and_scrubbed(self):
+        from skillpp.capture import _REPLY_CHARS
+        token = "ghp_" + "a" * 36
+        self._prompt("go")
+        self._agent({"type": "text", "text": token + " " + "word " * 3000})
+        self._prompt("next")
+        reply = self._markers()[0]["reply"]
+        self.assertNotIn(token, reply)
+        self.assertLessEqual(len(reply), _REPLY_CHARS + 2)
+        self.assertTrue(reply.endswith(" …"))
+
+    def test_the_candidate_keeps_the_turns_and_what_each_used(self):
+        from skillpp.capture import handle_session_end
+        self._run()
+        handle_session_end(self.config, {"session_id": "s",
+                                         "transcript_path": str(self.transcript)})
+        (entry,) = Ledger(self.config).all()
+        self.assertEqual([t["prompt"] for t in entry.turns],
+                         ["propose the slides", "check every claim and cut to 6", "build it"])
+        self.assertEqual(entry.turns[2]["reply"], "Building with the pptx skill.")
+        self.assertEqual([t["used"] for t in entry.turns],
+                         [[], [], ["skill anthropic-skills:pptx", "mcp mcp__notion__search"]])
+
+    def test_each_episode_holds_only_its_own_turns(self):
+        from skillpp.capture import handle_session_end
+        self._prompt("release the backend")
+        self._agent({"type": "text", "text": "Releasing."})
+        self._tool("Bash", {"command": "npm test"})
+        self._tool("Bash", {"command": "git commit -m 'backend'"})
+        self._prompt("now write the changelog")
+        self._agent({"type": "text", "text": "Writing it."})
+        self._tool("Write", {"file_path": "/r/CHANGELOG.md", "content": "x"})
+        self._tool("Bash", {"command": "git commit -m 'changelog'"})
+        handle_session_end(self.config, {"session_id": "s",
+                                         "transcript_path": str(self.transcript)})
+        turns = sorted([t["prompt"] for t in e.turns] for e in Ledger(self.config).all())
+        self.assertEqual(turns, [["now write the changelog"], ["release the backend"]])
+
+    def test_a_merge_keeps_the_first_runs_turns(self):
+        from skillpp.capture import fold_session
+        def run(prompt):
+            return {"session_id": prompt, "cwd": "/r", "steps": [
+                {"tool": "UserPrompt", "input": {"text": prompt}, "reply": "ok"},
+                {"tool": "Bash", "input": {"command": "npm test"}, "end": False},
+                {"tool": "Bash", "input": {"command": "git commit -m x"}, "end": True}]}
+        fold_session(self.config, run("first run"))
+        result = fold_session(self.config, run("second run"))
+        self.assertEqual(result["status"], "merged")
+        (entry,) = Ledger(self.config).all()
+        self.assertEqual([t["prompt"] for t in entry.turns], ["first run"])
+
+    def test_show_for_a_draft_gives_turns_not_steps(self):
+        import io
+        from contextlib import redirect_stdout
+        from skillpp.cli import main
+        Ledger(self.config).save(Entry(
+            id="aaaaaaaaaaaa", title="t",
+            steps=[{"tool": "Bash", "input": {"command": "npm test"}}],
+            turns=[{"prompt": "p", "reply": "r", "used": []}]))
+        Ledger(self.config).save(Entry(
+            id="bbbbbbbbbbbb", title="old",
+            steps=[{"tool": "Bash", "input": {"command": "npm test"}}]))
+
+        def show(*args):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--root", str(self.config.root), "show", *args])
+            return json.loads(out.getvalue())
+        drafted = show("aaaaaaaaaaaa", "--json", "--draft")
+        self.assertEqual(drafted["turns"], [{"prompt": "p", "reply": "r", "used": []}])
+        self.assertNotIn("steps", drafted)
+        self.assertNotIn("questions", drafted)
+        self.assertIn("steps", show("aaaaaaaaaaaa", "--json"))
+        self.assertEqual(show("bbbbbbbbbbbb", "--json", "--draft"),
+                         show("bbbbbbbbbbbb", "--json"))
+
+
 class TestEmbedEndpoint(TempRoot):
     """`local.embed` truncates at the model's limit instead of failing.
 

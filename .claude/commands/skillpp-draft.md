@@ -19,11 +19,17 @@ rejected before it runs.
 ## 1. Load it
 
 ```bash
-python3 bin/skillpp show <id> --json
+python3 bin/skillpp show <id> --json --draft
 ```
 
-That gives the effect summary, the evidence it came from, declared dependencies,
-and the questions the engine generated.
+If it has `turns`, that is the run as it happened: each thing the person asked,
+what the agent replied, and which skills or MCP tools it used. Write the
+procedure from those — the requests, checkpoints and checks are the method,
+the tool calls were only how it was carried out. Where a skill did the work,
+tell the reader to use that skill rather than restating how it works.
+
+Without `turns` (an older candidate), the same command gives the steps, declared
+dependencies and the questions the engine generated.
 
 ## 2. One procedure, or two?
 
@@ -32,8 +38,9 @@ Where a single request did two things and neither finished in a way a regex
 recognises — a deploy then a smoke test, an MCP call then another — both arrive
 here as one candidate.
 
-Read the steps and ask whether they are **one procedure or two**. If two, say
-where the second begins and split before doing anything else:
+Read the turns (or the steps) and ask whether they are **one procedure or two**.
+If two, say where the second begins and split before doing anything else —
+`show <id> --json` lists the steps with the indices `split` takes:
 
 ```bash
 python3 bin/skillpp split <id> --at <index of the first step of the second procedure>

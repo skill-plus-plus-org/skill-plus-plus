@@ -813,6 +813,16 @@ def cmd_show(args: argparse.Namespace) -> int:
     if not entry:
         print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
         return 1
+    if args.json and args.draft and entry.turns:
+        # What a draft is written from: the conversation, not the raw steps or
+        # the questions generated from them, which buried the procedure under
+        # mechanics and session paths when a real run was drafted both ways.
+        print(json.dumps({
+            "id": entry.id, "title": entry.title, "occurrences": entry.occurrences,
+            "turns": entry.turns,
+            "deps_cli": entry.deps_cli, "deps_mcp": entry.deps_mcp,
+        }, indent=2))
+        return 0
     if args.json:
         print(json.dumps({
             "id": entry.id, "title": entry.title, "occurrences": entry.occurrences,
@@ -1231,6 +1241,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("show", help="effect summary, evidence and open questions")
     p.add_argument("id")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--draft", action="store_true",
+                   help="with --json: the input a draft is written from")
     p.set_defaults(func=cmd_show)
 
     p = sub.add_parser("search", help="search the ledger of your own past work")
