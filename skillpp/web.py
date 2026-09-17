@@ -685,6 +685,10 @@ PAGE = r"""<!doctype html>
  .badge.accepted{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .badge.drafted{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .cand.drafted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
+ .draft.review{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
+ .draft.downloaded{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.07),var(--panel) 40%)}
+ .badge.review{color:var(--go);border-color:var(--goline);background:var(--gobg)}
+ .badge.downloaded{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
  .badge.declined{color:var(--no);border-color:var(--noline);background:var(--nobg)}
  .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
  .clock:empty{display:none}
@@ -913,10 +917,11 @@ function reviseBlock(d){
 }
 
 function renderDrafts(list){
-  const card = d => `<div class="draft ${open.has(d.id)?"open":""}">
+  const card = d => `<div class="draft ${d.downloaded_at ? "downloaded" : "review"} ${open.has(d.id)?"open":""}">
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
+        <span class="badge ${d.downloaded_at ? "downloaded" : "review"}">${d.downloaded_at ? "Downloaded" : "To review"}</span>
         <span class="acts">${d.questions.length
           ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
           : `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">${d.downloaded_at ? "Download again" : "Download skill"}</a>`}</span>
