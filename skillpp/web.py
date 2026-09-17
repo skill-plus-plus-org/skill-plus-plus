@@ -264,7 +264,12 @@ def collect_state(config: Config) -> dict:
                      "outline": step_outline(entry.steps),
                      "flags": warning_flags(entry.steps),
                      "summary": _cached_summary(summaries, entry)})
-    rows.sort(key=lambda r: (-r["occurrences"], (r["title"] or "").lower()))
+    # Most-recognized first; at the same count, the one closest to expiring
+    # first. Rows that never expire (no clock) come after those that do.
+    rows.sort(key=lambda r: (-r["occurrences"],
+                             r["days_left"] is None,
+                             r["days_left"] if r["days_left"] is not None else 0,
+                             (r["title"] or "").lower()))
     return {"threshold": threshold, "ttl": config.candidate_ttl_days,
             "rows": rows, "drafts": list_drafts(config)}
 

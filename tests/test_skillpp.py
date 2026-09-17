@@ -3483,6 +3483,17 @@ class TestWeb(TempRoot):
                           "a candidate at the threshold is kept for review")
         self.assertIsNone(days_left(self.config, entry(30, status=STATUS_PROMOTED), now))
 
+    def test_at_the_same_count_the_candidate_closest_to_expiring_comes_first(self):
+        from datetime import datetime, timedelta, timezone
+        from skillpp.web import collect_state
+        ago = lambda d: (datetime.now(timezone.utc) - timedelta(days=d)).isoformat()
+        self._save("fresh", occurrences=1, last_seen=ago(1))
+        self._save("old", occurrences=1, last_seen=ago(12))
+        self._save("gone", occurrences=1, last_seen=ago(30))
+        self._save("more", occurrences=2, last_seen=ago(0))
+        order = [r["id"] for r in collect_state(self.config)["rows"]]
+        self.assertEqual(order, ["more", "gone", "old", "fresh"])
+
     def test_a_declined_candidate_can_be_reinstated(self):
         from skillpp.ledger import STATUS_CANDIDATE
         from skillpp.web import decline, reinstate
