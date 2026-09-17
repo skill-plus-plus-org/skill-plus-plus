@@ -637,11 +637,13 @@ PAGE = r"""<!doctype html>
  .empty{color:var(--muted);padding:32px 0;text-align:center}
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
  .cand.ready{border-left:3px solid #fbbf24;background:linear-gradient(90deg,rgba(251,191,36,.07),var(--panel) 40%)}
- .cand.ready .seen{color:#fbbf24}
  .cand.accepted{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.07),var(--panel) 40%)}
- .cand.accepted .seen{color:var(--ok)}
  .cand.declined{border-left:3px solid var(--no);background:linear-gradient(90deg,rgba(244,63,94,.07),var(--panel) 40%)}
- .cand.declined .seen{color:var(--no)}
+ .badge{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;
+   border-radius:4px;white-space:nowrap;border:1px solid}
+ .badge.ready{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.1)}
+ .badge.accepted{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
+ .badge.declined{color:var(--no);border-color:var(--noline);background:var(--nobg)}
  .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
  .clock.soon{color:#fbbf24}
  .clock.gone{color:var(--no)}
@@ -949,6 +951,7 @@ function render(){
       <div class="row" data-row="${esc(r.id)}">
       <span class="chev">›</span>
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
+      ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Accepted", declined: "Declined"}[highlight(r)]}</span>` : ""}
       ${r.days_left === null ? "" : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
         title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless it reaches ${S.threshold}× first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
       <span class="seen count" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span>
