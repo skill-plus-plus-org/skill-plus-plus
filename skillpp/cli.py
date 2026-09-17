@@ -76,6 +76,13 @@ def cmd_hook(args: argparse.Namespace) -> int:
 # ledger inspection
 # --------------------------------------------------------------------------
 
+def _agent_argv(config: Config, prompt: str) -> list[str]:
+    """The agent command with the prompt as one argument. Raises ValueError."""
+    import shlex
+    return [prompt if part == "{PROMPT}" else part.replace("{PROMPT}", prompt)
+            for part in shlex.split(config.agent_command)]
+
+
 def cmd_draft(args: argparse.Namespace) -> int:
     """Have the developer's own agent write a draft SKILL.md for a candidate.
 
@@ -110,9 +117,7 @@ def cmd_draft(args: argparse.Namespace) -> int:
     # process rather than expanded in a shell.
     prompt = f"/skillpp-draft {entry.id} {out_dir}"
     try:
-        template = config.agent_command
-        argv = [prompt if part == "{PROMPT}" else part.replace("{PROMPT}", prompt)
-                for part in shlex.split(template)]
+        argv = _agent_argv(config, prompt)
     except ValueError as exc:
         print(f"SKILLPP_AGENT is not a valid command: {exc}", file=sys.stderr)
         return 1
@@ -201,6 +206,109 @@ def cmd_draft(args: argparse.Namespace) -> int:
     print("Read it, then install with: skillpp promote "
           f"{entry.id} --skill-path <path>")
     return proc.returncode
+
+
+# The instruction is the developer's own words; the rest pins the agent to the
+# one file, so a revision can never land somewhere nobody looks or install
+# itself. Kept inline rather than as a slash command: it is short, and it needs
+# no install step to work.
+_REVISE_PROMPT = """Revise a draft skill. The file is {skill_md}
+
+What the developer wants changed:
+{instruction}
+
+Rules:
+- Edit only {skill_md}, in place. Do not create or write any other file.
+- Keep the YAML frontmatter valid: a `name`, and a `description` of at most 200
+  characters that says when the skill applies.
+- Change what was asked and keep everything else as it is.
+- To look at the evidence the draft was written from, run
+  `python3 bin/skillpp show {entry_id}`.
+- Do not run `python3 bin/skillpp promote` and do not write into any skills
+  directory.
+- If the request cannot be done, say why in one line starting with
+  SKILLPP-DECLINE: and leave the file unchanged."""
+
+
+def cmd_revise(args: argparse.Namespace) -> int:
+    """Have the developer's agent change a draft SKILL.md as instructed.
+
+    Only an existing draft under `<root>/drafts/<id>/` is revised, in place. The
+    version before the revision is kept in `.revisions/` beside it, which the
+    web page leaves out of the download. Like `draft`, nothing is installed.
+    """
+    import hashlib
+    import subprocess
+    from datetime import datetime, timezone
+
+    config = Config(args.root)
+    entry = Ledger(config).get(args.id)
+    if not entry:
+        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
+        return 1
+    instruction = (args.instruction or "").strip()
+    if not instruction:
+        print("Say what to change with --instruction.", file=sys.stderr)
+        return 1
+    drafted = sorted((config.root / "drafts" / entry.id).rglob("SKILL.md"))
+    drafted = [p for p in drafted if ".revisions" not in p.parts]
+    if not drafted:
+        print(f"No draft for {entry.id}. Create one first: skillpp draft "
+              f"{entry.id} --apply", file=sys.stderr)
+        return 1
+    skill_md = drafted[0]
+    prompt = _REVISE_PROMPT.format(skill_md=skill_md, instruction=instruction,
+                                   entry_id=entry.id)
+    try:
+        argv = _agent_argv(config, prompt)
+    except ValueError as exc:
+        print(f"SKILLPP_AGENT is not a valid command: {exc}", file=sys.stderr)
+        return 1
+    print(f"candidate  {entry.id}  {entry.title[:60]}")
+    print(f"draft      {skill_md}")
+    print(f"change     {instruction[:200]}")
+    if not args.apply:
+        print("\nDry run. Re-run with --apply to spend one model call.")
+        return 0
+
+    before = skill_md.read_bytes()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    history = skill_md.parent / ".revisions"
+    history.mkdir(exist_ok=True)
+    (history / f"SKILL.{stamp}.md").write_bytes(before)
+    env = dict(os.environ, SKILLPP_INTERNAL="1", SKILLPP_ROOT=str(config.root),
+               SKILLPP_DRAFT_DIR=str(skill_md.parent))
+    try:
+        proc = subprocess.run(argv, cwd=args.cwd or Path(__file__).resolve().parent.parent,
+                              timeout=args.timeout, capture_output=True, text=True,
+                              env=env, stdin=subprocess.DEVNULL)
+        print((proc.stdout or "") + (proc.stderr or ""), end="")
+    except FileNotFoundError:
+        print(f"\nNo such agent: {argv[0]}. Set SKILLPP_AGENT to how yours is "
+              f"invoked.", file=sys.stderr)
+        return 1
+    except subprocess.TimeoutExpired:
+        print(f"\nThe agent did not finish within {args.timeout}s.", file=sys.stderr)
+        return 1
+
+    if proc.returncode != 0:
+        print(f"\nThe agent failed (exit {proc.returncode}).", file=sys.stderr)
+        return proc.returncode
+    said = (proc.stdout or "") + (proc.stderr or "")
+    for line in said.splitlines():
+        if line.strip().startswith("SKILLPP-DECLINE:"):
+            print(f"\nNot revised: {line.split(':', 1)[1].strip()}", file=sys.stderr)
+            return 1
+    if not skill_md.exists():
+        skill_md.write_bytes(before)
+        print("\nThe agent removed the draft; the previous version was restored.",
+              file=sys.stderr)
+        return 1
+    if hashlib.sha256(skill_md.read_bytes()).digest() == hashlib.sha256(before).digest():
+        print("\nThe agent made no change to the draft.", file=sys.stderr)
+        return 1
+    print(f"\nrevised {skill_md}  (previous version in {history.name}/SKILL.{stamp}.md)")
+    return 0
 
 
 # A skill's description is the only thing read when deciding whether to load it,
@@ -1024,6 +1132,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cwd", help="run the agent from here")
     p.add_argument("--timeout", type=int, default=900)
     p.set_defaults(func=cmd_draft)
+
+    p = sub.add_parser("revise",
+                       help="have your own agent change a draft SKILL.md as "
+                            "instructed; never installs it")
+    p.add_argument("id")
+    p.add_argument("--instruction", required=True, help="what to change")
+    p.add_argument("--apply", action="store_true",
+                   help="actually invoke the agent; one model call")
+    p.add_argument("--cwd", help="run the agent from here")
+    p.add_argument("--timeout", type=int, default=900)
+    p.set_defaults(func=cmd_revise)
 
     p = sub.add_parser("name",
                        help="give a candidate a task-shaped title and a "

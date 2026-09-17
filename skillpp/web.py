@@ -90,13 +90,21 @@ def row_state(config: Config, entry) -> dict:
     if entry.skill_path and Path(entry.skill_path).expanduser().exists():
         return {"state": "installed", "path": entry.skill_path}
     status = _read_status(config, entry.id)
+    fresh = time.time() - status.get("started", 0) < DRAFT_STALE_SECONDS
+    drafted = sorted(p for p in _draft_dir(config, entry.id).rglob("SKILL.md")
+                     if ".revisions" not in p.parts)
     if status.get("state") == "running":
-        if time.time() - status.get("started", 0) < DRAFT_STALE_SECONDS:
+        if fresh:
             return {"state": "creating"}
         return {"state": "failed", "message": "the draft run did not finish"}
-    drafted = sorted(_draft_dir(config, entry.id).rglob("SKILL.md"))
+    if drafted and status.get("state") == "revising" and fresh:
+        return {"state": "revising", "path": str(drafted[0])}
     if drafted:
-        return {"state": "drafted", "path": str(drafted[0])}
+        stale = status.get("state") == "revising"
+        message = ("the revision did not finish" if stale else
+                   status.get("message", "") if status.get("state") == "revise-failed"
+                   else "")
+        return {"state": "drafted", "path": str(drafted[0]), "message": message}
     if status.get("state") in ("failed", "declined"):
         return {"state": status["state"], "message": status.get("message", "")}
     return {"state": "accepted"}
@@ -128,16 +136,19 @@ def _draft_files(config: Config, entry_id: str) -> list[Path]:
     root = _draft_dir(config, entry_id)
     return sorted(p for p in root.rglob("*")
                   if p.is_file() and p.name not in _NOT_SKILL_FILES
-                  and not p.name.endswith(".tmp"))
+                  and not p.name.endswith(".tmp")
+                  # `.revisions/` holds the versions before each revision.
+                  and not any(part.startswith(".") for part in p.relative_to(root).parts))
 
 
 def list_drafts(config: Config) -> list[dict]:
     """Every finished draft, with the SKILL.md text to review."""
     drafts = []
     for entry in Ledger(config).all():
-        if row_state(config, entry)["state"] != "drafted":
+        state = row_state(config, entry)
+        if state["state"] not in ("drafted", "revising"):
             continue
-        skill_md = sorted(_draft_dir(config, entry.id).rglob("SKILL.md"))[0]
+        skill_md = Path(state["path"])
         text = skill_md.read_text(encoding="utf-8")
         front = parse_frontmatter(text)
         drafts.append({
@@ -147,6 +158,8 @@ def list_drafts(config: Config) -> list[dict]:
             "body": text,
             "files": [str(p.relative_to(_draft_dir(config, entry.id)))
                       for p in _draft_files(config, entry.id)],
+            "revising": state["state"] == "revising",
+            "message": state.get("message", ""),
         })
     drafts.sort(key=lambda d: d["name"].lower())
     return drafts
@@ -163,7 +176,7 @@ def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
     if not entry or row_state(config, entry)["state"] != "drafted":
         return None
     root = _draft_dir(config, entry.id)
-    name = _skill_name(entry, sorted(root.rglob("SKILL.md"))[0])
+    name = _skill_name(entry, Path(row_state(config, entry)["path"]))
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in _draft_files(config, entry.id):
@@ -236,9 +249,57 @@ def create_skill(config: Config, entry_id: str) -> dict:
     return {"ok": True}
 
 
+MAX_INSTRUCTION = 2000
+
+
+def _revise_job(config: Config, entry_id: str, instruction: str) -> None:
+    try:
+        proc = _run(config, "revise", entry_id, "--instruction", instruction, "--apply")
+        if proc.returncode != 0:
+            _write_status(config, entry_id, state="revise-failed",
+                          message=_tail((proc.stderr or "") or (proc.stdout or ""), 2))
+        else:
+            _write_status(config, entry_id, state="ready")
+    except Exception as exc:  # noqa: BLE001 - the thread must record, not raise
+        _write_status(config, entry_id, state="revise-failed",
+                      message=f"{type(exc).__name__}: {exc}")
+    finally:
+        with _jobs_lock:
+            _jobs.pop(entry_id, None)
+
+
+def revise(config: Config, entry_id: str, instruction: str) -> dict:
+    """Revise: `skillpp revise <id> --instruction … --apply`, in the background."""
+    instruction = (instruction or "").strip()
+    if not instruction:
+        return {"ok": False, "error": "say what to change"}
+    if len(instruction) > MAX_INSTRUCTION:
+        return {"ok": False, "error": f"keep it under {MAX_INSTRUCTION} characters"}
+    entry = Ledger(config).get(entry_id)
+    if not entry:
+        return {"ok": False, "error": "no such entry"}
+    with _jobs_lock:
+        state = row_state(config, entry)["state"]
+        if entry.id in _jobs or state == "revising":
+            return {"ok": False, "error": "already running"}
+        if state != "drafted":
+            return {"ok": False, "error": f"no draft to revise ({state})"}
+        _write_status(config, entry.id, state="revising", started=time.time())
+        job = threading.Thread(target=_revise_job, args=(config, entry.id, instruction),
+                               daemon=True)
+        _jobs[entry.id] = job
+    job.start()
+    return {"ok": True}
+
+
 def make_handler(config: Config):
-    actions = {"/api/accept": accept, "/api/decline": decline,
-               "/api/create": create_skill}
+    actions = {
+        "/api/accept": lambda p: accept(config, str(p.get("id", ""))),
+        "/api/decline": lambda p: decline(config, str(p.get("id", ""))),
+        "/api/create": lambda p: create_skill(config, str(p.get("id", ""))),
+        "/api/revise": lambda p: revise(config, str(p.get("id", "")),
+                                        str(p.get("instruction", ""))),
+    }
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -282,7 +343,7 @@ def make_handler(config: Config):
             action = actions.get(self.path)
             if not action:
                 return self._send(404, json.dumps({"error": "not found"}))
-            self._send(200, json.dumps(action(config, str(payload.get("id", "")))))
+            self._send(200, json.dumps(action(payload)))
 
     return Handler
 
@@ -371,6 +432,12 @@ PAGE = r"""<!doctype html>
    white-space:nowrap;vertical-align:top;width:1%}
  .md .fm td{color:var(--dim);padding:3px 0;word-break:break-word}
  .files{font:11.5px var(--mono);color:var(--muted);margin:0 0 10px}
+ .revise{margin:0 0 14px}
+ .revise textarea{width:100%;min-height:72px;resize:vertical;font:13px/1.5 var(--sans);
+   color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;
+   padding:10px;margin:0 0 8px}
+ .revise .bar{display:flex;gap:8px;align-items:center}
+ .revise .err{font:12px var(--mono);color:var(--no);margin:0 0 8px}
  a.download{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;text-decoration:none;
    color:var(--ok);border:1px solid var(--okline);background:var(--okbg);white-space:nowrap}
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
@@ -380,7 +447,7 @@ PAGE = r"""<!doctype html>
 <main id="list"></main>
 <script>
 let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
-let view = "candidates", open = new Set();
+let view = "candidates", open = new Set(), writing = new Set(), drafts = {};
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -392,6 +459,7 @@ function actions(r){
     case "accepted": return `<button class="create" data-act="create" data-id="${id}"${off}>Create Skill</button>`;
     case "creating": return `<span class="state"><span class="spin"></span>Creating skill…</span>`;
     case "drafted": return `<a class="state ok" data-goto="${id}" title="Review in Drafts">Draft ready →</a>`;
+    case "revising": return `<span class="state"><span class="spin"></span>Revising…</span>`;
     case "installed": return `<span class="state ok" title="${esc(r.path)}">Skill installed</span>`;
     case "failed": case "declined":
       return `<span class="msg" title="${esc(r.message)}">${r.state==="declined" ? "Agent declined" : "Failed"}: ${esc(r.message)}</span>
@@ -491,6 +559,17 @@ function md(src){
   return head + out.join("\n");
 }
 
+function reviseBlock(d){
+  const id = esc(d.id);
+  const err = d.message ? `<p class="err">Last revision: ${esc(d.message)}</p>` : "";
+  if(d.revising) return `<div class="revise"><span class="state"><span class="spin"></span>Revising… the draft below updates when the agent is done</span></div>`;
+  if(!writing.has(d.id)) return `<div class="revise">${err}<button class="create" data-revise-open="${id}">Revise</button></div>`;
+  return `<div class="revise">${err}
+    <textarea data-instruction="${id}" placeholder="What should change? e.g. also cover handbook fact cases, not only walkthrough cards">${esc(drafts[d.id] || "")}</textarea>
+    <div class="bar"><button class="create" data-revise-send="${id}">Send to agent</button>
+    <button data-revise-cancel="${id}">Cancel</button></div></div>`;
+}
+
 function renderDrafts(list){
   list.innerHTML = S.drafts.length ? S.drafts.map(d => `<div class="draft ${open.has(d.id)?"open":""}">
       <div class="row" data-toggle="${esc(d.id)}">
@@ -503,11 +582,29 @@ function renderDrafts(list){
       <p class="desc">${esc(d.description)}</p>
       <div class="body">
         <p class="files">${d.files.map(esc).join(" · ")}</p>
+        ${reviseBlock(d)}
         <div class="md">${md(d.body)}</div>
       </div></div>`).join("")
     : `<p class="empty">No drafts yet. Accept a candidate, then Create Skill.</p>`;
+  list.querySelectorAll("[data-revise-open]").forEach(b => b.onclick = () => {
+    writing.add(b.dataset.reviseOpen); render();
+    const box = document.querySelector(`[data-instruction="${CSS.escape(b.dataset.reviseOpen)}"]`);
+    if(box) box.focus();
+  });
+  list.querySelectorAll("[data-revise-cancel]").forEach(b => b.onclick = () => {
+    writing.delete(b.dataset.reviseCancel); delete drafts[b.dataset.reviseCancel]; render();
+  });
+  list.querySelectorAll("[data-instruction]").forEach(t => t.oninput = () => { drafts[t.dataset.instruction] = t.value; });
+  list.querySelectorAll("[data-revise-send]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.reviseSend, instruction = (drafts[id] || "").trim();
+    if(!instruction) return;
+    b.disabled = true;
+    const r = await (await fetch("/api/revise", {method:"POST", body: JSON.stringify({id, instruction})})).json();
+    if(!r.ok){ alert(r.error || "failed"); b.disabled = false; return; }
+    writing.delete(id); delete drafts[id]; await load();
+  });
   list.querySelectorAll("[data-toggle]").forEach(h => h.onclick = ev => {
-    if(ev.target.closest("a")) return;
+    if(ev.target.closest("a, button, textarea")) return;
     const id = h.dataset.toggle;
     open.has(id) ? open.delete(id) : open.add(id);
     h.parentElement.classList.toggle("open");
@@ -542,7 +639,7 @@ async function load(){
   S = await (await fetch("/api/state")).json();
   render();
   clearTimeout(timer);
-  if(S.rows.some(r => r.state === "creating")) timer = setTimeout(load, 5000);
+  if(S.rows.some(r => r.state === "creating" || r.state === "revising")) timer = setTimeout(load, 5000);
 }
 load();
 </script>

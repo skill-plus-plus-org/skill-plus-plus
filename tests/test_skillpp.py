@@ -2338,6 +2338,86 @@ class TestDraftCommand(TempRoot):
         self.assertEqual(cmd_draft(self._args(apply=True)), 1)
 
 
+class TestReviseCommand(TempRoot):
+    """`skillpp revise`: the agent changes an existing draft, in place, as told.
+
+    No agent is launched: `subprocess.run` is replaced by a function that edits
+    (or does not edit) the draft the way an agent would.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        import argparse
+        self.argparse = argparse
+        Ledger(self.config).save(Entry(id="cand1", title="add an eval case",
+                                       steps=[{"tool": "Bash", "input": {"command": "x"}}]))
+        self.skill = self.config.root / "drafts" / "cand1" / "SKILL.md"
+        self.skill.parent.mkdir(parents=True)
+        self.skill.write_text("---\nname: x\ndescription: d\n---\n# Body\n")
+
+    def _args(self, **kw):
+        base = dict(root=self.config.root, id="cand1", instruction="add a trap",
+                    apply=True, cwd=None, timeout=900)
+        base.update(kw)
+        return self.argparse.Namespace(**base)
+
+    def _agent(self, edit=None, exit_code=0, say=""):
+        import subprocess
+        seen = {}
+
+        def fake(argv, **kw):
+            seen["argv"], seen["kw"] = argv, kw
+            if edit:
+                edit(self.skill)
+            return subprocess.CompletedProcess(argv, exit_code, stdout=say, stderr="")
+        real, subprocess.run = subprocess.run, fake
+        self.addCleanup(lambda: setattr(subprocess, "run", real))
+        return seen
+
+    def test_a_dry_run_launches_nothing(self):
+        from skillpp.cli import cmd_revise
+        seen = self._agent()
+        self.assertEqual(cmd_revise(self._args(apply=False)), 0)
+        self.assertNotIn("argv", seen)
+
+    def test_the_instruction_and_the_file_reach_the_agent_as_one_prompt(self):
+        from skillpp.cli import cmd_revise
+        seen = self._agent(edit=lambda p: p.write_text(p.read_text() + "more\n"))
+        cmd_revise(self._args(instruction="also cover fact cases"))
+        prompt = next(a for a in seen["argv"] if "Revise a draft skill" in a)
+        self.assertIn("also cover fact cases", prompt)
+        self.assertIn(str(self.skill), prompt)
+        self.assertEqual(seen["kw"]["env"]["SKILLPP_INTERNAL"], "1")
+
+    def test_a_revision_keeps_the_previous_version(self):
+        from skillpp.cli import cmd_revise
+        self._agent(edit=lambda p: p.write_text(p.read_text() + "## Traps\n"))
+        self.assertEqual(cmd_revise(self._args()), 0)
+        self.assertIn("## Traps", self.skill.read_text())
+        kept = list((self.skill.parent / ".revisions").glob("SKILL.*.md"))
+        self.assertEqual(len(kept), 1)
+        self.assertNotIn("## Traps", kept[0].read_text())
+
+    def test_no_change_is_not_a_revision(self):
+        from skillpp.cli import cmd_revise
+        self._agent()
+        self.assertEqual(cmd_revise(self._args()), 1)
+
+    def test_a_stated_decline_is_reported_and_leaves_the_draft(self):
+        from skillpp.cli import cmd_revise
+        self._agent(say="SKILLPP-DECLINE: that would make it a different skill\n")
+        self.assertEqual(cmd_revise(self._args()), 1)
+        self.assertEqual(self.skill.read_text(), "---\nname: x\ndescription: d\n---\n# Body\n")
+
+    def test_there_must_be_a_draft_to_revise(self):
+        import shutil as sh
+        from skillpp.cli import cmd_revise
+        sh.rmtree(self.skill.parent)
+        seen = self._agent()
+        self.assertEqual(cmd_revise(self._args()), 1)
+        self.assertNotIn("argv", seen)
+
+
 class TestLeadingExplorationTrim(unittest.TestCase):
     """Ported from the capture branch — the one thing that design got right.
 
@@ -3535,11 +3615,58 @@ class TestWeb(TempRoot):
         self.assertNotIn("<script>", html)
         self.assertNotIn("<img", html)
 
+    def test_revise_needs_a_draft_and_an_instruction(self):
+        from skillpp.web import revise
+        self._save("u")
+        self.assertFalse(revise(self.config, "u", "change it")["ok"])
+        self._drafted("x")
+        self.assertFalse(revise(self.config, "x", "   ")["ok"])
+
+    def test_revise_changes_the_draft_and_keeps_history_out_of_the_download(self):
+        import io, zipfile
+        from skillpp.web import collect_state, draft_zip, revise
+        self._agent("d = pathlib.Path(os.environ['SKILLPP_DRAFT_DIR']) / 'SKILL.md'\n"
+                    "d.write_text(d.read_text() + '## Traps\\n')\n")
+        self._drafted("x")
+        self.assertTrue(revise(self.config, "x", "add a traps section")["ok"])
+        self._wait_for_draft("x")
+        draft = collect_state(self.config)["drafts"][0]
+        self.assertIn("## Traps", draft["body"])
+        self.assertFalse(draft["revising"])
+        self.assertEqual(draft["message"], "")
+        self.assertEqual(draft["files"], ["SKILL.md"])
+        _, data = draft_zip(self.config, "x")
+        self.assertEqual(zipfile.ZipFile(io.BytesIO(data)).namelist(),
+                         ["add-eval-case/SKILL.md"])
+
+    def test_a_failed_revision_keeps_the_draft_and_says_why(self):
+        from skillpp.web import collect_state, revise
+        self._agent("print('not logged in'); sys.exit(1)\n")
+        self._drafted("x")
+        revise(self.config, "x", "add a traps section")
+        self._wait_for_draft("x")
+        draft = collect_state(self.config)["drafts"][0]
+        self.assertIn("# Body", draft["body"])
+        self.assertIn("failed", draft["message"])
+        self.assertEqual(self._rows()["x"]["state"], "drafted")
+
+    def test_a_revision_in_progress_is_shown_and_not_started_twice(self):
+        import time
+        from skillpp.web import _write_status, collect_state, revise
+        self._drafted("x")
+        _write_status(self.config, "x", state="revising", started=time.time())
+        self.assertEqual(self._rows()["x"]["state"], "revising")
+        self.assertTrue(collect_state(self.config)["drafts"][0]["revising"])
+        self.assertFalse(revise(self.config, "x", "again")["ok"])
+        _write_status(self.config, "x", state="revising", started=0)
+        self.assertEqual(self._rows()["x"]["state"], "drafted")
+        self.assertIn("did not finish", self._rows()["x"]["message"])
+
     def test_every_state_has_its_own_label_on_the_page(self):
         """A dismissed row once rendered as "Agent declined" with a retry
         button, because both states were called "declined"."""
         from skillpp.web import PAGE
-        for state in ("undecided", "accepted", "creating", "drafted",
+        for state in ("undecided", "accepted", "creating", "drafted", "revising",
                       "installed", "failed", "declined", "dismissed"):
             self.assertIn(f'"{state}"', PAGE)
 
