@@ -575,7 +575,6 @@ function renderDrafts(list){
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
-        <span class="seen">${esc(d.title)}</span>
         <span class="acts"><a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}"
           download="${esc(d.name)}.zip">Download skill</a></span>
       </div>
