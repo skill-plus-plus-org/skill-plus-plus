@@ -155,7 +155,7 @@ The failure-then-retry case is the highest-value one: recovery behavior is the e
 
 1. **Cap at three questions.** If synthesis has ten, the candidate is not ready — return it to the ledger rather than interrogating the developer. The question count is a quality signal about the candidate, not a budget to spend.
 2. **Pre-fill a guess.** *"Staging — right?"* answered with Enter is a confirmation. An empty text box is composition, and composition is what people skip.
-3. **Skipping never blocks.** Unanswered gaps still produce a skill, with an explicit `## Known gaps` section, landed as **provisional**. Better than blocking, and far better than guessing silently — and it gives provisional→trusted promotion something concrete to resolve, since the gap closes the first time someone runs the skill and hits that branch.
+3. **Skipping never blocks.** Unanswered gaps still produce a skill, with an explicit `## Open questions` section, landed as **provisional**. Better than blocking, and far better than guessing silently — and it gives provisional→trusted promotion something concrete to resolve, since the gap closes the first time someone runs the skill and hits that branch.
 
 ### When there is no trace
 
@@ -337,7 +337,7 @@ The competitive pressure worth taking seriously is the fourth column: memory and
 
 * **Does fast review stay real review?** The effect-summary and evidence design targets a 20-second review. If approval rates approach 100%, the gate has become a rubber stamp and the design has failed.
 * **Is N ≥ 3 the right trigger?** Recurrence is a weak proxy for value. The searchable ledger hedges this, but the balance between pushed suggestions and pulled searches needs measurement.
-* **Do developers actually answer the clarifying questions?** §4 assumes three pre-filled questions get answered rather than skipped. If the skip rate is high, most skills land permanently provisional with open `## Known gaps`, and the judgment layer never materializes.
+* **Do developers actually answer the clarifying questions?** §4 assumes three pre-filled questions get answered rather than skipped. If the skip rate is high, most skills land permanently provisional with open `## Open questions`, and the judgment layer never materializes.
 * **Will infosec approve a background listener?** Sanitize-on-write and local-first storage are the mitigations. Hook-based capture (§8) sidesteps this almost entirely by removing the daemon, which is an argument for shipping the Claude Code integration first. This remains the primary enterprise adoption risk for the OS-daemon path.
 * **Provisional → trusted promotion:** Landing skills as hints that earn trust through successful use makes shallow review safe. The promotion threshold is unvalidated.
 
@@ -417,7 +417,7 @@ placeholders that keep step shapes stable), the ledger with embedding dedup and
 TTL expiry, all five trace gap signals from §4 with the three-question cap and
 duplicate suppression, the dictation path with its completeness check and
 threshold bypass, effect-first proposals, scaffolding with declared deps and
-`## Known gaps` that close when answered, pull-time dependency checking,
+`## Open questions` that close when answered, pull-time dependency checking,
 hot/cold/archived demotion, staleness by reference resolution, and usage
 tracking driven by observed `Skill` calls.
 

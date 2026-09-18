@@ -41,7 +41,7 @@ If a described format is missing, ask for an **example of the output**, not a
 description of it. One worked example is worth a paragraph of specification and
 takes them less time to give.
 
-Do not exceed three questions. Anything else becomes `## Known gaps`.
+Do not exceed three questions. Anything else becomes `## Open questions`.
 
 ## 4. Confirm before writing
 

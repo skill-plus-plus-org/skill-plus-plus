@@ -88,15 +88,30 @@ python3 bin/skillpp scaffold <id> --name <skill-name> \
 afterwards, so a draft written anywhere else is reported as no draft at all,
 however good it is.
 
-The scaffold gives structure, dependencies and the verbatim steps. Your job is
-the half code cannot do: prose worth reading, a name someone would recognise,
-and a description that says when the skill applies.
+The scaffold gives you the frontmatter, `## Requirements` and, where the run
+touched something destructive, `## Destructive operations`. Those are facts
+derived from tool calls you were not shown — leave them, and leave the
+frontmatter exactly as it is; the ledger and the review page read it.
 
-Then edit that file into something a colleague could follow.
+Where the candidate has `turns`, that is all the scaffold writes: it leaves a
+`<!-- skillpp:write-the-procedure -->` marker where the procedure belongs.
+Replace the marker. Write, in your own words:
 
-**The description is the only thing read when deciding whether to load a skill.**
-A candidate titled after a greeting or a shell command is a real failure mode
-here — name the *task*, never the prompt that happened to start it.
+- `## When to use` — the trigger, not a summary.
+- the procedure itself, as numbered steps a colleague could follow: what to do,
+  in what order, what to check before moving on. The requests and checkpoints
+  in the turns *are* the method; the commands were only how it was carried out
+  that day. Where a skill did the work, say to use that skill rather than
+  restating its internals.
+
+Do not paste the shell back in. If the conversation is too thin to write a
+procedure from — the replies are short and the work happened entirely in tool
+calls — the steps are still there: `python3 bin/skillpp show <id> --json`
+(without `--draft`) lists them, and you can write the procedure from those
+instead. Say in your reply that you did.
+
+A candidate with no captured conversation gets the old full scaffold, steps and
+all. Edit it into something worth reading.
 
 ## 5. Do not ask — record instead
 

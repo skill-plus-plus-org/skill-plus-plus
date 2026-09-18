@@ -210,7 +210,7 @@ def _render_dictated(entry: Entry, config: Config) -> str:
             if q.evidence:
                 lines.append(f"     ↳ {q.evidence}")
         if remaining > 0:
-            lines.append(f"  (+{remaining} more — these become ## Known gaps)")
+            lines.append(f"  (+{remaining} more — these become ## Open questions)")
         lines.append("")
     else:
         lines.append("NOT YET SPECIFIED\n  nothing — the description is complete.\n")
@@ -267,10 +267,26 @@ def _cli_of(entry, steps: list[dict]) -> list[str]:
     cannot be re-derived from the command text.
     """
     from .capture import _cli_dependencies
+    from .lifecycle import COREUTILS, PROGRAM_RE, SHELL_BUILTINS
+
+    # Filtered here, not only where it is parsed: entries banked before the
+    # parser learned that a heredoc body is not shell keep their junk on disk
+    # forever, and one real candidate reached a skill declaring `')` and
+    # `console.log('ok')"` as requirements.
+    clean = [dep for dep in entry.deps_cli
+             if PROGRAM_RE.match(dep) and dep not in SHELL_BUILTINS
+             and dep not in COREUTILS]
     if len(steps) == len(entry.steps):
-        return list(entry.deps_cli)
-    narrowed = sorted(set(entry.deps_cli) & _cli_dependencies(steps))
-    return narrowed or list(entry.deps_cli)
+        return clean
+    narrowed = sorted(set(clean) & _cli_dependencies(steps))
+    return narrowed or clean
+
+
+# The marker a facts-only scaffold leaves where the procedure belongs. Fixed
+# text on purpose: skillpp's own `<!-- TODO: replace with the real trigger
+# condition -->` shipped verbatim into two real skills because nothing could
+# tell a finished draft from an untouched one.
+WRITE_HERE = "<!-- skillpp:write-the-procedure -->"
 
 
 def scaffold_skill(
@@ -279,19 +295,42 @@ def scaffold_skill(
     description: str = "",
     answers: dict[str, str] | None = None,
     tier: str = "provisional",
+    *,
+    body: str = "auto",
+    limit: int | None = None,
 ) -> str:
     """Deterministic starting point for a SKILL.md.
 
-    The engine produces structure, dependencies and the verbatim steps. The
-    judgement — prose, naming, when *not* to use it — is the agent's job at
-    review time, editing this scaffold.
+    The engine produces the facts — frontmatter, declared dependencies, the
+    destructive-operations warning. Whether it also produces a *procedure*
+    depends on what the candidate holds:
+
+    * **facts** — the run was steered through conversation, so `entry.turns`
+      has the method and the tool calls were only how it was carried out.
+      Writing the steps out here hands the agent a finished-looking document
+      to leave alone; both of the first real drafts came back as pure scaffold,
+      TODO comment and all. The agent writes the procedure from the turns.
+    * **full** — no turns, so the steps are all the evidence there is.
+
+    `auto` chooses on `bool(entry.turns)`. Resolved here rather than in
+    `cmd_scaffold` so every caller gets it and a new one cannot get it wrong.
+    Requirements and destructive operations stay in both modes: they are
+    derived from tool calls, which `show --json --draft` withholds, so dropping
+    them would lose the "if a requirement is missing, stop" contract with no
+    way for the agent to recover it.
     """
+    full = body == "full" or (body == "auto" and not getattr(entry, "turns", None))
     answers = answers or {}
     # The steps that happened every time, not the ones that happened once.
     # Where an entry has only been seen once there is nothing to compare and
     # this is the whole episode.
     steps = recurring_steps(entry)
     eff = effects(steps)
+    # One list for the frontmatter and the Requirements section. They used to
+    # disagree: the bullets iterated `entry.deps_cli`, which is unioned across
+    # every occurrence while `entry.steps` keeps one run's, so a real skill
+    # listed 27 requirements where its own steps justified 15.
+    cli = _cli_of(entry, steps)
     dictated = getattr(entry, "source", "capture") == "dictated"
     desc = description or f"{entry.title}. Use when repeating this workflow."
     # A dictated entry's title is the raw description, which makes a poor
@@ -307,21 +346,23 @@ def scaffold_skill(
         f'  provenance: "ledger:{entry.id}"',
         f'  tier: "{tier}"',
         f"  occurrences: {entry.occurrences}",
-        f"  requires_cli: {_yaml_list(_cli_of(entry, steps))}",
+        f"  requires_cli: {_yaml_list(cli)}",
         f"  requires_mcp: {_yaml_list(entry.deps_mcp)}",
         "---",
         "",
         f"# {heading}",
         "",
-        "## When to use",
-        "",
-        answers.get("when_to_use", "<!-- TODO: replace with the real trigger condition -->"),
-        "",
     ]
+    if full:
+        lines += ["## When to use", "",
+                  answers.get("when_to_use",
+                              "<!-- TODO: replace with the real trigger "
+                              "condition -->"),
+                  ""]
 
-    if entry.deps_cli or entry.deps_mcp:
+    if cli or entry.deps_mcp:
         lines += ["## Requirements", ""]
-        for dep in entry.deps_cli:
+        for dep in cli:
             lines.append(f"- `{dep}` on PATH")
         for dep in entry.deps_mcp:
             lines.append(f"- MCP tool `{dep}`")
@@ -332,10 +373,17 @@ def scaffold_skill(
             "",
         ]
 
-    lines += ["## Steps", ""]
-    for n, step in enumerate(steps, 1):
-        lines.append(f"{n}. {describe_step(step)}")
-    lines.append("")
+    if full:
+        lines += ["## Steps", ""]
+        for n, step in enumerate(steps, 1):
+            lines.append(f"{n}. {describe_step(step)}")
+        lines.append("")
+    else:
+        lines += [WRITE_HERE, "",
+                  "Write the procedure here, from the turns in "
+                  "`skillpp show <id> --json --draft`: what was asked, what "
+                  "came back, which skills did the work. Leave the frontmatter "
+                  "and the sections above as they are.", ""]
 
     if eff["destructive"]:
         lines += ["## Destructive operations", "",
@@ -344,16 +392,20 @@ def scaffold_skill(
         lines.append("")
 
     answered = {k: v for k, v in answers.items() if k not in ("when_to_use",) and v}
-    if answered:
+    if full and answered:
         lines += ["## Judgement", ""]
         for key, value in answered.items():
             lines.append(f"- **{key.replace('_', ' ').capitalize()}:** {value}")
         lines.append("")
 
     closed = _answered_kinds(answers)
+    # Capped like `questions_for` does: these now block a draft's download, and
+    # an unbounded list is a wall rather than a review.
     open_questions = [q for q in detect(entry) if q.kind not in closed]
-    if open_questions:
-        lines += ["## Known gaps", "",
+    if limit is not None:
+        open_questions = open_questions[:limit]
+    if full and open_questions:
+        lines += ["## Open questions", "",
                   "Unresolved at approval time. Close these the first time the "
                   "skill is run and the branch is hit.", ""]
         lines += [f"- {q.text}" for q in open_questions]

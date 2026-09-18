@@ -27,17 +27,35 @@ from .config import Config
 
 _FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
-_PROGRAM_RE = re.compile(r"\A[a-zA-Z][\w.-]*\Z")
+PROGRAM_RE = re.compile(r"\A[a-zA-Z][\w.-]*\Z")
+# Kept: `_referenced` below reads it under the old name.
+_PROGRAM_RE = PROGRAM_RE
 
 # Sections that discuss the workflow rather than performing it. Scanning them
 # would report a command named in a question as a broken reference.
-_META_SECTIONS = {"known gaps", "judgement", "judgment", "notes", "when to use"}
+_META_SECTIONS = {"open questions", "known gaps", "judgement", "judgment",
+                  "notes", "when to use"}
 
 # Shell builtins resolve to nothing on PATH but are never missing.
-_SHELL_BUILTINS = {
+SHELL_BUILTINS = {
     "export", "cd", "echo", "source", "alias", "set", "unset", "eval", "exec",
     "read", "shift", "test", "true", "false", "trap", "wait", "local", "return",
     "if", "then", "else", "fi", "for", "while", "do", "done", "case", "esac",
+}
+_SHELL_BUILTINS = SHELL_BUILTINS
+
+# Present on any POSIX machine, so naming one as a requirement tells a reader
+# nothing and `check_dependencies`, which resolves with `shutil.which`, can
+# never fail on it. `capture._cli_dependencies` already made this call for
+# eight of them; this finishes the list rather than starting a new policy.
+# Deliberately excludes anything a machine might plausibly lack — `jq`, `rg`,
+# `gh`, `uv`, `pdftoppm` — which stay declared.
+COREUTILS = {
+    "awk", "basename", "cat", "chmod", "chown", "cmp", "cp", "cut", "date",
+    "dirname", "du", "env", "expr", "file", "find", "grep", "head", "id",
+    "kill", "ln", "ls", "mkdir", "mktemp", "mv", "od", "printf", "ps", "pwd",
+    "rm", "rmdir", "sed", "seq", "sh", "sleep", "sort", "stat", "tail", "tee",
+    "touch", "tr", "uname", "uniq", "wc", "which", "xargs",
 }
 
 

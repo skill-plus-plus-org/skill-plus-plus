@@ -846,7 +846,7 @@ class TestDictation(TempRoot):
         fm = parse_frontmatter(text)
         self.assertEqual(fm["name"], "fact-check")
         self.assertIn("search online", text)
-        self.assertIn("## Known gaps", text)
+        self.assertIn("## Open questions", text)
         self.assertIn("# Fact Check", text, "raw dictation is a poor heading")
 
     def test_answering_a_question_closes_its_gap(self):
@@ -856,7 +856,7 @@ class TestDictation(TempRoot):
             "output_format": "Claim / Verdict / Sources",
             "sources": "two independent primary sources",
         })
-        gaps = text.split("## Known gaps")[-1] if "## Known gaps" in text else ""
+        gaps = text.split("## Open questions")[-1] if "## Open questions" in text else ""
         self.assertNotIn("refer to a format", gaps, "answered gap must not reappear")
         self.assertNotIn("When should this fire", gaps)
         self.assertNotIn("good enough source", gaps)
@@ -870,7 +870,7 @@ class TestDictation(TempRoot):
             "sources": "two primary",
             "failure": "say what could not be verified",
         })
-        self.assertNotIn("## Known gaps", text)
+        self.assertNotIn("## Open questions", text)
 
 
 class TestScaffold(unittest.TestCase):
@@ -920,17 +920,118 @@ class TestScaffold(unittest.TestCase):
     def test_shell_keywords_are_not_dependencies(self):
         """A real skill declared `requires_cli: ["\\", "do", "done", "for"]`."""
         from skillpp.capture import _cli_dependencies
-        deps = _cli_dependencies([bash(
-            'cd s && for f in *.md; do printf x; wc -w < "$f"; done')])
-        self.assertEqual(deps, {"printf", "wc"})
+        # `printf` and `wc` were asserted here until coreutils stopped being
+        # declared; the keyword-stepping this test exists to guard is the
+        # second assertion, which is unchanged.
+        self.assertEqual(_cli_dependencies([bash(
+            'cd s && for f in *.md; do printf x; npm run lint "$f"; done')]),
+            {"npm"})
         self.assertEqual(_cli_dependencies([bash("for x in 1; do npm test; done")]),
                          {"npm"})
+
+    def test_a_heredoc_body_is_not_shell(self):
+        """`python3 - <<'EOF' … EOF` carries Python, whose `;` means nothing to
+        a shell. Splitting on it declared `print('deps` as a requirement."""
+        from skillpp.capture import _cli_dependencies
+        self.assertEqual(_cli_dependencies([bash(
+            "python3 - <<'EOF'\nprint('deps'); x = 1\nEOF")]), {"python3"})
+
+    def test_a_truncated_heredoc_drops_the_rest(self):
+        """`max_field_chars` cuts a long command at 2000 characters, so the
+        terminator is usually gone — this is where `frontend` came from."""
+        from skillpp.capture import _cli_dependencies
+        self.assertEqual(_cli_dependencies([bash(
+            "python3 - <<'EOF'\nr('frontend gets AGENT_URL'); print('py')")]),
+            {"python3"})
+
+    def test_code_in_a_quoted_argument_is_not_shell(self):
+        """Nothing here knows what `-e` means; staying inside the quotes is
+        enough. This declared `console.log('ok')\"` on a real skill."""
+        from skillpp.capture import _cli_dependencies
+        self.assertEqual(_cli_dependencies([bash(
+            'node -e "require(\'pptxgenjs\'); console.log(\'ok\')" && npm test')]),
+            {"node", "npm"})
+
+    def test_quoted_operators_do_not_split(self):
+        from skillpp.capture import _cli_dependencies
+        self.assertEqual(_cli_dependencies([bash('git commit -m "a && b; c"')]),
+                         {"git"})
+
+    def test_coreutils_are_not_declared_dependencies(self):
+        """The list is headed "if a requirement is missing, stop", and
+        `check_dependencies` resolves with `shutil.which` — which never fails
+        on `cp`. Declaring them is noise nothing can act on."""
+        from skillpp.capture import _cli_dependencies
+        self.assertEqual(_cli_dependencies([bash(
+            "cp a b; rm c; grep x d; sed -i '' s/a/b/ e; pdftoppm f g")]),
+            {"pdftoppm"})
+
+    def test_stored_garbage_dependencies_never_reach_the_skill(self):
+        """14 entries were banked before the parser was fixed and keep their
+        junk on disk, so the filter has to run at read time too."""
+        entry = Entry(id="abc", signature="s", title="build",
+                      deps_cli=["')", "','const", "console.log('ok')\"", "cp",
+                                "npm"],
+                      steps=[bash("npm run build"), bash("npm test")])
+        text = scaffold_skill(entry, "build", "Build.")
+        fm = parse_frontmatter(text)
+        self.assertEqual(fm["metadata"]["requires_cli"], ["npm"])
+        self.assertIn("- `npm` on PATH", text)
+        self.assertNotIn("')", text.split("## Requirements")[1].split("##")[0])
+
+    def test_a_candidate_with_turns_gets_no_procedure(self):
+        """Both of the first real drafts came back as pure scaffold — TODO
+        comment and all — because the scaffold had already written a document
+        that looked finished."""
+        from skillpp.summary import WRITE_HERE
+        entry = Entry(id="abc", signature="s", title="build a deck",
+                      deps_cli=["node"],
+                      steps=[bash("npm run build"), bash("rm -rf dist")],
+                      turns=[{"prompt": "check the slides", "reply": "checked",
+                              "used": []}])
+        text = scaffold_skill(entry, "deck", "Build a deck.")
+        self.assertIn(WRITE_HERE, text)
+        self.assertNotIn("## Steps", text)
+        self.assertNotIn("<!-- TODO", text)
+        self.assertNotIn("## When to use", text)
+        # Facts derived from tool calls the agent is never shown.
+        self.assertIn("## Requirements", text)
+        self.assertIn("## Destructive operations", text)
+
+    def test_the_frontmatter_is_the_same_in_both_modes(self):
+        """`provenance`, `tier` and `occurrences` are read back by the ledger
+        and the review page, so the agent must never have to write them."""
+        entry = Entry(id="abc", signature="s", title="build a deck",
+                      deps_cli=["node"], occurrences=3,
+                      steps=[bash("npm run build")],
+                      turns=[{"prompt": "go", "reply": "done", "used": []}])
+        facts = parse_frontmatter(scaffold_skill(entry, "deck", "d"))
+        full = parse_frontmatter(scaffold_skill(entry, "deck", "d", body="full"))
+        self.assertEqual(facts, full)
+
+    def test_the_mode_can_be_forced_either_way(self):
+        with_turns = Entry(id="a", signature="s", title="t",
+                           steps=[bash("npm test")],
+                           turns=[{"prompt": "go", "reply": "ok", "used": []}])
+        without = Entry(id="b", signature="s", title="t",
+                        steps=[bash("npm test")])
+        self.assertIn("## Steps", scaffold_skill(with_turns, "n", "d", body="full"))
+        self.assertNotIn("## Steps", scaffold_skill(without, "n", "d", body="facts"))
+        self.assertIn("## Steps", scaffold_skill(without, "n", "d"))
+
+    def test_questions_are_capped_when_a_limit_is_given(self):
+        entry = Entry(id="abc", signature="s", title="deploy",
+                      steps=[bash("npm run build"), bash("./deploy.sh prod")])
+        text = scaffold_skill(entry, "deploy", "Deploy.", limit=1)
+        gaps = text.split("## Open questions")[-1]
+        self.assertLessEqual(len([l for l in gaps.splitlines()
+                                  if l.startswith("- ")]), 1)
 
     def test_unanswered_questions_become_known_gaps(self):
         entry = Entry(id="abc", signature="s", title="deploy",
                       steps=[bash("npm run build"), bash("./deploy.sh prod")])
         text = scaffold_skill(entry, "deploy", "Deploy.")
-        self.assertIn("## Known gaps", text)
+        self.assertIn("## Open questions", text)
 
     def test_destructive_steps_are_called_out(self):
         entry = Entry(id="abc", signature="s", title="reset",
@@ -971,6 +1072,17 @@ class TestLifecycle(TempRoot):
             f"  requires_cli: [\"git\"]\n  tier: \"provisional\"\n---\n\n{body}",
             encoding="utf-8")
         return path
+
+    def test_open_questions_are_not_scanned_for_stale_references(self):
+        """`_META_SECTIONS` skipped `## Known gaps`; the section was renamed,
+        so without the new name a question mentioning a command reports it as
+        a broken reference."""
+        hot = self.root / "skills"
+        path = self._write_skill(hot, "alpha", body=(
+            "## Open questions\n\n- Does `definitely-not-a-real-binary-xyz` "
+            "matter here?\n"))
+        skill = {s.name: s for s in scan(hot, self.config, self.root)}["alpha"]
+        self.assertEqual(skill.stale_refs, [], path.read_text())
 
     def test_scan_reports_tiers_and_usage(self):
         hot = self.root / "skills"
@@ -3719,6 +3831,20 @@ class TestWeb(TempRoot):
     QUESTIONS = ("# Body\n\n## Open questions\n\n- Is it always `x`, or can it\n"
                  "  also be `y`?\n2. Which runner?\n\n---\n\n_footer_\n")
 
+    GAPS = ("# Body\n\n## Known gaps\n\n- Is it always `x`?\n\n---\n\n_f_\n")
+
+    def test_the_scaffolds_old_heading_is_read_as_questions_too(self):
+        """`## Known gaps` was the scaffold's name for the same section and
+        nothing read it, so two real drafts carried four unanswered questions,
+        showed no answer fields and downloaded freely."""
+        from skillpp.web import draft_zip, split_open_questions
+        questions, rest = split_open_questions(self.GAPS)
+        self.assertEqual(questions, ["Is it always `x`?"])
+        self.assertNotIn("Known gaps", rest)
+        self._drafted("x", extra={"SKILL.md": self.GAPS})
+        self.assertIsNone(draft_zip(self.config, "x"),
+                          "a draft with unanswered gaps downloaded")
+
     def test_open_questions_are_read_out_of_the_draft(self):
         from skillpp.web import split_open_questions
         questions, rest = split_open_questions(self.QUESTIONS)
@@ -4516,6 +4642,62 @@ class TestDoctor(TempRoot):
                             **doc}), encoding="utf-8")
         _, out = self._run("--settings", str(self.root / "absent.json"))
         self.assertIn("1 waiting to be banked", out)
+
+
+class TestScaffoldCommand(TempRoot):
+    """`skillpp scaffold` had no test at all — `--out`, the mode it picks, and
+    the missing-entry path were all unexercised."""
+
+    def _entry(self, eid, *, turns=None):
+        entry = Entry(id=eid, signature="s", title=f"work {eid}",
+                      deps_cli=["npm"], steps=[bash("npm run build")],
+                      turns=turns or [])
+        Ledger(self.config).save(entry)
+        return entry
+
+    def _run(self, *argv):
+        import io
+        from skillpp.cli import main
+        out, err = io.StringIO(), io.StringIO()
+        real_out, real_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = out, err
+        try:
+            code = main(["--root", str(self.config.root), "scaffold", *argv])
+        finally:
+            sys.stdout, sys.stderr = real_out, real_err
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_conversational_candidate_is_scaffolded_facts_only(self):
+        self._entry("a", turns=[{"prompt": "go", "reply": "done", "used": []}])
+        path = self.root / "SKILL.md"
+        code, out, err = self._run("a", "--name", "n", "--description", "d",
+                                   "--out", str(path))
+        self.assertEqual(code, 0)
+        text = path.read_text()
+        self.assertNotIn("## Steps", text)
+        self.assertIn("skillpp:write-the-procedure", text)
+        self.assertIn("facts only", err)
+        self.assertIn(str(path), out)
+
+    def test_a_candidate_without_turns_keeps_its_steps(self):
+        self._entry("b")
+        path = self.root / "b.md"
+        _, _, err = self._run("b", "--name", "n", "--description", "d",
+                              "--out", str(path))
+        self.assertIn("## Steps", path.read_text())
+        self.assertIn("full", err)
+
+    def test_the_mode_can_be_overridden(self):
+        self._entry("c", turns=[{"prompt": "go", "reply": "ok", "used": []}])
+        path = self.root / "c.md"
+        self._run("c", "--name", "n", "--description", "d", "--body", "full",
+                  "--out", str(path))
+        self.assertIn("## Steps", path.read_text())
+
+    def test_an_unknown_candidate_writes_nothing(self):
+        code, _, err = self._run("nope", "--name", "n")
+        self.assertEqual(code, 1)
+        self.assertIn("No ledger entry", err)
 
 
 class TestSessionEndIsAsync(TempRoot):

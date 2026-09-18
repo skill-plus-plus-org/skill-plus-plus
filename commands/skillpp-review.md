@@ -83,7 +83,7 @@ Then improve it:
   re-derived on every run.
 - Prefer a portable CLI over an MCP call wherever the trace shows both would
   work (`gh` over a GitHub MCP, `psql` over a Postgres MCP).
-- Keep any unanswered questions under a `## Known gaps` heading. Do not guess
+- Keep any unanswered questions under a `## Open questions` heading. Do not guess
   and do not silently drop them.
 
 Skills land as `tier: provisional`. They earn `trusted` through successful use,

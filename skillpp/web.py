@@ -316,7 +316,12 @@ def _draft_files(config: Config, entry_id: str) -> list[Path]:
                   and not any(part.startswith(".") for part in p.relative_to(root).parts))
 
 
-_QUESTIONS_HEADING = re.compile(r"^##\s+Open questions\s*$", re.IGNORECASE)
+# `## Known gaps` was the scaffold's name for the same section and nothing read
+# it, so a draft carrying four unanswered questions rendered no answer fields
+# and downloaded freely. One name now — the old one stays matchable for drafts
+# written before the rename.
+_QUESTIONS_HEADING = re.compile(r"^##\s+(?:Open questions|Known gaps)\s*$",
+                                re.IGNORECASE)
 _ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*)$")
 
 

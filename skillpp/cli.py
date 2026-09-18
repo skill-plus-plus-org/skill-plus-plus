@@ -13,6 +13,8 @@ import json
 import os
 import shutil
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
@@ -101,6 +103,28 @@ def _agent_argv(config: Config, prompt: str) -> list[str]:
             for part in shlex.split(config.agent_command)]
 
 
+def _write_agent_log(out_dir: Path, argv: list[str], started: float,
+                     said: str, outcome: str) -> None:
+    """Keep what the drafting agent said, beside the draft, on every run.
+
+    The draft stage's only other output is the file, and two real runs produced
+    a SKILL.md that was pure scaffold — no prose, skillpp's own TODO comment
+    shipped verbatim — while exiting 0. Nothing recorded whether a tool call
+    was refused, what the agent thought it was doing, or which model answered,
+    so the runs could not be diagnosed at all. Written for successes too: a
+    failure explains itself, a bad success does not.
+    """
+    import shlex
+    try:
+        (out_dir / "agent.log").write_text(
+            f"# {datetime.now(timezone.utc).isoformat(timespec='seconds')}"
+            f"  {outcome}  {time.time() - started:.1f}s\n"
+            f"# {' '.join(shlex.quote(a) for a in argv)}\n\n{said}",
+            encoding="utf-8")
+    except OSError:
+        pass
+
+
 def cmd_draft(args: argparse.Namespace) -> int:
     """Have the developer's own agent write a draft SKILL.md for a candidate.
 
@@ -153,6 +177,7 @@ def cmd_draft(args: argparse.Namespace) -> int:
         return 0
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    started = time.time()
     try:
         # Default to the package root: the allowed-tools pattern names
         # `python3 bin/skillpp`, which only resolves from there.
@@ -175,12 +200,18 @@ def cmd_draft(args: argparse.Namespace) -> int:
                               # Without this the agent waits on a tty it will
                               # never get, and stalls before starting.
                               stdin=subprocess.DEVNULL)
-        print((proc.stdout or "") + (proc.stderr or ""), end="")
+        said = (proc.stdout or "") + (proc.stderr or "")
+        _write_agent_log(out_dir, argv, started, said,
+                         f"exit {proc.returncode}")
+        print(said, end="")
     except FileNotFoundError:
+        _write_agent_log(out_dir, argv, started, "", "agent not found")
         print(f"\nNo such agent: {argv[0]}. Set SKILLPP_AGENT to how yours is "
               f"invoked.", file=sys.stderr)
         return 1
     except subprocess.TimeoutExpired:
+        _write_agent_log(out_dir, argv, started, "",
+                         f"timed out after {args.timeout}s")
         print(f"\nThe agent did not finish within {args.timeout}s.",
               file=sys.stderr)
         return 1
@@ -1131,7 +1162,18 @@ def cmd_scaffold(args: argparse.Namespace) -> int:
         print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
         return 1
     answers = json.loads(args.answers) if args.answers else {}
-    text = scaffold_skill(entry, args.name, args.description, answers, args.tier)
+    text = scaffold_skill(entry, args.name, args.description, answers,
+                          args.tier, body=args.body,
+                          limit=config.max_questions)
+    # Said out loud, because the mode decides whether the caller is expected to
+    # write a procedure — and a scaffold that quietly wrote one is how two real
+    # drafts shipped as nothing but scaffold.
+    if entry.turns and args.body != "full":
+        print(f"scaffold: facts only — this candidate has {len(entry.turns)} "
+              f"turn(s); write the procedure from them", file=sys.stderr)
+    else:
+        print("scaffold: full — no conversation was captured for this "
+              "candidate, so its steps are the evidence", file=sys.stderr)
     if args.out:
         out = Path(args.out).expanduser()
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -1612,6 +1654,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--answers", help="JSON object of answered questions")
     p.add_argument("--tier", default="provisional", choices=["provisional", "trusted"])
     p.add_argument("--out", help="write to this path instead of stdout")
+    p.add_argument("--body", choices=["auto", "full", "facts"], default="auto",
+                   help="whether the scaffold writes a procedure. auto: only "
+                        "when the candidate has no captured conversation")
     p.set_defaults(func=cmd_scaffold)
 
     p = sub.add_parser("promote", help="mark a candidate promoted")

@@ -1223,9 +1223,98 @@ def _within_budget(prompts: list[str]) -> list[str]:
     return out
 
 
+# A heredoc body is not shell. `python3 - <<'EOF' … EOF` carries Python whose
+# `;` and `&&` mean nothing to a shell, and splitting on them produced
+# requirements like `print('deps` and `frontend` — three of the junk entries on
+# one real candidate came from inside a single heredoc.
+_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1")
+
+
+def _strip_heredocs(command: str) -> str:
+    """The command with every heredoc body removed.
+
+    An unterminated heredoc takes the rest of the string with it:
+    `max_field_chars` truncates a long command at 2000 characters, so the
+    terminator is usually not there to match — the same reason
+    `_COMMIT_HEREDOC_RE` does not look for one.
+    """
+    out: list[str] = []
+    rest = command
+    while True:
+        match = _HEREDOC_RE.search(rest)
+        if not match:
+            out.append(rest)
+            return "".join(out)
+        line_end = rest.find("\n", match.end())
+        if line_end == -1:
+            out.append(rest[:match.start()])
+            return "".join(out)
+        out.append(rest[:match.start()])
+        body = rest[line_end + 1:]
+        closer = re.search(rf"^\s*{re.escape(match.group(2))}\s*$", body,
+                           re.MULTILINE)
+        if not closer:
+            return "".join(out)
+        rest = body[closer.end():]
+
+
+def _shell_chunks(command: str) -> list[str]:
+    """Split on shell operators, never inside quotes or parentheses.
+
+    Walked character by character rather than `str.split`, because the code a
+    program is handed is a quoted argument: `node -e "require('p');
+    console.log('ok')"` is one command, and splitting its body on `;` asked the
+    reader to install `console.log('ok')"`. Nothing here needs to know which
+    flags carry code — staying inside the quotes is enough. It also stops `&&`
+    inside a commit message being rewritten as a separator.
+    """
+    chunks: list[str] = []
+    current: list[str] = []
+    quote = ""
+    depth = 0
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if quote:
+            current.append(char)
+            if char == "\\" and quote == '"' and index + 1 < len(command):
+                current.append(command[index + 1])
+                index += 2
+                continue
+            if char == quote:
+                quote = ""
+            index += 1
+            continue
+        if char in "'\"":
+            quote = char
+            current.append(char)
+        elif char == "\\" and index + 1 < len(command):
+            current.append(char)
+            current.append(command[index + 1])
+            index += 2
+            continue
+        elif char in "({":
+            depth += 1
+            current.append(char)
+        elif char in ")}":
+            depth = max(0, depth - 1)
+            current.append(char)
+        elif depth == 0 and char in ";|&\n":
+            chunks.append("".join(current))
+            current = []
+            # `&&` and `||` are one separator, not two empty commands.
+            if index + 1 < len(command) and command[index + 1] == char:
+                index += 1
+        else:
+            current.append(char)
+        index += 1
+    chunks.append("".join(current))
+    return [c for c in chunks if c.strip()]
+
+
 def _cli_dependencies(steps: list[dict]) -> set[str]:
     """Programs the workflow shells out to — declared deps (README 5)."""
-    common = {"cd", "ls", "echo", "cat", "true", "false", "export", "source"}
+    from .lifecycle import COREUTILS, PROGRAM_RE, SHELL_BUILTINS
     # Shell grammar, not programs. A real skill declared `requires_cli: ["\\",
     # "do", "done", "for", "grep"]` — it was telling the reader to install `do`
     # and `done`, because a `for f in *.md; do …; done` loop splits on `;` into
@@ -1243,7 +1332,7 @@ def _cli_dependencies(steps: list[dict]) -> set[str]:
         if step.get("tool") != "Bash":
             continue
         command = str((step.get("input") or {}).get("command", ""))
-        for chunk in command.replace("&&", ";").replace("||", ";").split(";"):
+        for chunk in _shell_chunks(_strip_heredocs(command)):
             tokens = chunk.strip().split()
             if not tokens:
                 continue
@@ -1264,7 +1353,17 @@ def _cli_dependencies(steps: list[dict]) -> set[str]:
                 # A path-invoked script is a file in the repo, not a PATH
                 # dependency. Staleness checking covers those instead.
                 continue
-            if program and program not in common and program.isascii():
+            # A declared dependency is something a reader might have to
+            # install. A token that is not shaped like a program name never
+            # was one — `')`, `','const`, `console.log('ok')"` all reached a
+            # real skill — and a builtin or a coreutil is on every machine, so
+            # naming it in a list headed "if a requirement is missing, stop"
+            # is noise `check_dependencies` can never act on.
+            if not PROGRAM_RE.match(program):
+                continue
+            if program in SHELL_BUILTINS or program in COREUTILS:
+                continue
+            if program.isascii():
                 found.add(program)
     return found
 
