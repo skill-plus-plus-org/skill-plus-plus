@@ -17,7 +17,7 @@ from pathlib import Path
 
 from . import __version__
 from .capture import (fold_dictation, handle_prompt, handle_session_end,
-                      handle_tool, log_error)
+                      handle_tool, log_error, mark_ending)
 from .config import Config, default_skills_dir
 from .ledger import Ledger, STATUS_DISMISSED, STATUS_PROMOTED
 from .lifecycle import move_tier, scan
@@ -55,8 +55,24 @@ def cmd_hook(args: argparse.Namespace) -> int:
             handle_prompt(config, payload)
         elif event == "PostToolUse":
             handle_tool(config, payload)
-        elif event in ("SessionEnd", "Stop"):
-            result = handle_session_end(config, payload)
+        elif event == "SessionEnd":
+            # Stamp and hand off. The judge and the embeddings used to run
+            # here, inside the hook: one cold model call can reach
+            # `boundary.DEFAULT_TIMEOUT`, Claude Code's hook budget is about a
+            # minute, and quitting the app gives less — so the hook was killed
+            # and the session waited out `PENDING_IDLE_HOURS` before anything
+            # banked it.
+            #
+            # `Stop` is deliberately not handled. It fires at the end of every
+            # agent turn, not at the end of a session, so folding there would
+            # cut one procedure into per-turn fragments — and now that the fold
+            # is a detached worker that unlinks the session file, it would also
+            # race `handle_tool` still appending to it.
+            sid = str(payload.get("session_id", "unknown"))
+            result = mark_ending(config, sid, payload.get("transcript_path"))
+            if result.get("status") == "ending":
+                proc = _spawn_background_process(config, "fold-session", sid)
+                result = {"status": "spawned", "session": sid, "pid": proc.pid}
             if args.verbose:
                 print(json.dumps(result))
         elif event == "SessionStart":
@@ -522,6 +538,33 @@ def cmd_merge(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fold_session(args: argparse.Namespace) -> int:
+    """Bank one session that has ended. What the `SessionEnd` hook spawns.
+
+    This process is nobody's child and its stdio is `DEVNULL`, so it is the one
+    component in the system with no observable output at all. Every run writes
+    a line to the log, success or failure, because otherwise "why was my
+    session not banked?" has no answer anywhere.
+    """
+    from .capture import fold_session_now
+
+    config = Config(args.root)
+    config.ensure_dirs()
+    short = args.session_id[:8]
+    try:
+        result = fold_session_now(config, args.session_id,
+                                  transcript=args.transcript)
+    except Exception as exc:  # noqa: BLE001 - detached; a traceback goes nowhere
+        log_error(config, f"fold-session {short} failed: "
+                          f"{type(exc).__name__}: {exc}")
+        return 1
+    log_error(config, f"fold-session {short}: {result.get('status')}"
+                      + (f" {result['id']}" if result.get("id") else ""))
+    if args.verbose:
+        print(json.dumps(result))
+    return 0
+
+
 def _spawn_background_process(config: Config, *argv: str):
     """Start a skillpp command detached, and do not wait for it.
 
@@ -553,6 +596,8 @@ def cmd_fold_pending(args: argparse.Namespace) -> int:
         episodes = [e for e in (r.get("episodes") or []) if e.get("status") in ("created", "merged")]
         if r["status"] == "live":
             what = "still live, skipped"
+        elif r["status"] == "folding":
+            what = "a worker is folding it"
         elif r["status"] == "offline":
             what = f"held again: {r.get('reason', '')}"
         elif episodes:
@@ -941,6 +986,108 @@ def cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def _available_models(config: Config) -> tuple[list[str], str]:
+    """(model names Ollama holds, error). One call, read-only."""
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{config.ollama_url}/api/tags", timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as exc:
+        return [], str(exc)
+    return [str(m.get("name", "")) for m in data.get("models", [])], ""
+
+
+def _waiting_sessions(config: Config) -> dict:
+    """Session files grouped by what is happening to them."""
+    from .capture import (_FOLD_LOCK_SECONDS, _is_pending, _lock_alive,
+                          _lock_file, PENDING_IDLE_HOURS)
+    import time as _time
+
+    out = {"held": [], "waiting": [], "folding": [], "live": []}
+    for path in sorted(config.sessions_dir.glob("*.json")):
+        sid = path.stem
+        try:
+            session = json.loads(path.read_text(encoding="utf-8"))
+            idle = (_time.time() - path.stat().st_mtime) / 3600
+        except (OSError, json.JSONDecodeError):
+            continue
+        if _lock_alive(_lock_file(config, sid), _FOLD_LOCK_SECONDS):
+            out["folding"].append(sid)
+        elif session.get("held"):
+            out["held"].append(sid)
+        elif _is_pending(session, idle, PENDING_IDLE_HOURS):
+            out["waiting"].append(sid)
+        else:
+            out["live"].append(sid)
+    return out
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Is skillpp actually running? The question nothing could answer.
+
+    Hooks were wired into one project and nowhere else for weeks, and the only
+    symptom was an empty review page — which looks exactly like having done no
+    repeated work. Every silent failure this tool has had shows up here: hooks
+    not wired, a hook wired but not `SessionEnd`, a model missing, sessions
+    captured and never banked.
+    """
+    from .install import HOOK_EVENTS, installed_events
+
+    config = Config(args.root)
+    config.ensure_dirs()
+
+    if args.settings:
+        scopes = [("settings", Path(args.settings).expanduser())]
+    else:
+        scopes = [("project", Path.cwd() / ".claude" / "settings.json"),
+                  ("user", Path.home() / ".claude" / "settings.json")]
+    for label, path in scopes:
+        wired = installed_events(path)
+        missing = [e for e in HOOK_EVENTS if e not in wired]
+        if not wired:
+            flag = f"--{label}" if label in ("user", "project") else f"--settings {path}"
+            print(f"hooks     {label:8} not wired — skillpp install {flag} --apply")
+        elif missing:
+            # Naming the missing ones matters: PostToolUse without SessionEnd
+            # captures every step and banks none of it, and reads as working.
+            print(f"hooks     {label:8} {', '.join(wired)}")
+            print(f"          {'':8} MISSING {', '.join(missing)} — nothing will be banked")
+        else:
+            print(f"hooks     {label:8} all four wired")
+
+    models, err = _available_models(config)
+    if err:
+        print(f"models    ollama   unreachable at {config.ollama_url}: {err}")
+        print(f"          {'':8} without it nothing is judged, matched or named")
+    else:
+        print(f"models    ollama   reachable at {config.ollama_url}")
+        for want in (config.local_model, config.embed_model):
+            here = any(name == want or name.startswith(f"{want}:") for name in models)
+            print(f"          {'':8} {want} {'✓' if here else '✗ not pulled'}")
+
+    s = _waiting_sessions(config)
+    pending = len(s["held"]) + len(s["waiting"])
+    if pending or s["folding"]:
+        parts = []
+        if pending:
+            parts.append(f"{pending} waiting to be banked")
+        if s["folding"]:
+            parts.append(f"{len(s['folding'])} folding now")
+        print(f"sessions  {'':8} {', '.join(parts)}")
+        if pending:
+            print(f"          {'':8} run `skillpp fold-pending` to bank them now")
+    else:
+        print(f"sessions  {'':8} nothing waiting"
+              + (f", {len(s['live'])} live" if s["live"] else ""))
+
+    stats = Ledger(config).stats()
+    print(f"ledger    {'':8} {stats['candidates']} candidate(s) "
+          f"({stats['ready']} ready), {stats['promoted']} promoted"
+          f"   {config.ledger_dir}")
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     config = Config(args.root)
     stats = Ledger(config).stats()
@@ -1179,34 +1326,114 @@ def cmd_bundle(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_install(args: argparse.Namespace) -> int:
-    from .install import apply_settings, hook_command, install_command_file, plan_settings
+def _settings_target(args: argparse.Namespace) -> tuple[Path, Path] | None:
+    """(settings file, commands dir) for the chosen scope, or None if unchosen.
 
-    settings_path = Path(args.settings).expanduser() if args.settings else (
-        Path.home() / ".claude" / "settings.json")
+    There is deliberately no default. The old default was user-level and
+    silent, which is how this repo ended up with hooks wired by hand into one
+    project while `~/.claude/settings.json` had none for weeks — the command
+    never said which file it was about to write.
+    """
+    if args.settings:
+        path = Path(args.settings).expanduser()
+        return path, path.parent / "commands"
+    if args.user:
+        home = Path.home() / ".claude"
+        return home / "settings.json", home / "commands"
+    if args.project is not None:
+        root = Path(args.project).expanduser() if args.project else Path.cwd()
+        return root / ".claude" / "settings.json", root / ".claude" / "commands"
+    return None
+
+
+def _usable_interpreter(python: str | None) -> str:
+    """Empty if this interpreter can run skillpp, else why it cannot.
+
+    Checked before writing, because a hook whose command cannot start fails
+    silently: Claude Code runs it, it exits non-zero, and nothing is captured
+    with nothing said. That is the failure this whole change exists to remove,
+    so the installer must not reintroduce it.
+    """
+    import shutil as _shutil
+    import subprocess
+
+    name = python or "python3"
+    if not python and not _shutil.which("python3"):
+        return "no `python3` on PATH — pass --python /path/to/python3"
     try:
-        merged, changes = plan_settings(settings_path)
+        out = subprocess.run(
+            [name, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"cannot run {name}: {exc}"
+    if out.returncode != 0:
+        return f"{name} exited {out.returncode}: {out.stderr.strip()[:120]}"
+    try:
+        major, minor = (int(part) for part in out.stdout.strip().split("."))
+    except ValueError:
+        return f"{name} did not report a version: {out.stdout.strip()[:60]}"
+    if (major, minor) < (3, 10):
+        return f"{name} is {major}.{minor}; skillpp needs 3.10 or newer"
+    return ""
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    from .install import (apply_settings, hook_command, install_command_file,
+                          plan_removal, plan_settings)
+
+    target = _settings_target(args)
+    if target is None:
+        print("Choose where to install:\n"
+              f"  --user              {Path.home() / '.claude' / 'settings.json'}"
+              "   (every project)\n"
+              f"  --project [DIR]     {Path.cwd() / '.claude' / 'settings.json'}"
+              "   (this repo only)\n"
+              "  --settings PATH     somewhere else\n\n"
+              "Add --apply to write, or leave it off for a dry run.",
+              file=sys.stderr)
+        return 2
+    settings_path, commands_dir = target
+
+    try:
+        if args.remove:
+            merged, changes = plan_removal(settings_path)
+        else:
+            merged, changes = plan_settings(settings_path, args.python)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
     print(f"settings file : {settings_path}")
-    print(f"hook command  : {hook_command()}")
+    if not args.remove:
+        print(f"hook command  : {hook_command(args.python)}")
     print("planned changes:")
     for change in changes:
         print(f"  - {change}")
 
     if not args.apply:
         print("\nDry run. Nothing was written.")
-        print("Re-run with --apply to install, or copy the hooks block below "
-              "into your settings manually:\n")
-        print(json.dumps({"hooks": merged.get("hooks", {})}, indent=2))
+        if not args.remove:
+            print("Re-run with --apply to install, or copy the hooks block below "
+                  "into your settings manually:\n")
+            print(json.dumps({"hooks": merged.get("hooks", {})}, indent=2))
         return 0
+
+    settled = ("no change", "nothing to remove", "skillpp is not wired")
+    if all(change.endswith("no change") or change.startswith(settled[1:])
+           for change in changes):
+        print("\nAlready in that state. Nothing written.")
+        return 0
+
+    if not args.remove:
+        why = _usable_interpreter(args.python)
+        if why:
+            print(f"\nrefusing to write: {why}", file=sys.stderr)
+            return 1
 
     backup = apply_settings(settings_path, merged)
     print(f"\nwrote {settings_path}" + (f" (backup: {backup})" if backup else ""))
-    commands_dir = Path(args.commands_dir).expanduser() if args.commands_dir else (
-        Path.cwd() / ".claude" / "commands")
+    if args.remove:
+        return 0
     try:
         dest = install_command_file(commands_dir)
         print(f"wrote {dest}")
@@ -1284,6 +1511,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--session-id", help="which session; defaults to the newest")
     p.set_defaults(func=cmd_keep)
 
+    p = sub.add_parser("fold-session",
+                       help="bank one session that has ended; spawned by the "
+                            "SessionEnd hook")
+    p.add_argument("session_id")
+    p.add_argument("--transcript",
+                   help="transcript path, if the session file has none")
+    p.add_argument("-v", "--verbose", action="store_true")
+    p.set_defaults(func=cmd_fold_session)
+
     p = sub.add_parser("fold-pending",
                        help="bank sessions that ended without being banked")
     p.add_argument("--exclude", help="a live session to leave alone")
@@ -1360,6 +1596,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=10)
     p.set_defaults(func=cmd_search)
 
+    p = sub.add_parser("doctor",
+                       help="is skillpp wired, reachable and keeping up?")
+    p.add_argument("--settings", help="check this settings file instead of "
+                                      "the project and user ones")
+    p.set_defaults(func=cmd_doctor)
+
     p = sub.add_parser("stats", help="ledger size and status counts")
     p.set_defaults(func=cmd_stats)
 
@@ -1422,8 +1664,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("install", help="wire Claude Code hooks (dry run by default)")
     p.add_argument("--apply", action="store_true", help="actually write settings.json")
-    p.add_argument("--settings")
-    p.add_argument("--commands-dir")
+    p.add_argument("--user", action="store_true",
+                   help="wire ~/.claude/settings.json — every project")
+    p.add_argument("--project", nargs="?", const="", metavar="DIR",
+                   help="wire DIR/.claude/settings.json — this repo only "
+                        "(default: the current directory)")
+    p.add_argument("--settings", help="wire this settings file instead")
+    p.add_argument("--remove", action="store_true",
+                   help="take skillpp's hooks back out, leaving any others")
+    p.add_argument("--python",
+                   help="interpreter for the hook command (default: python3 from PATH)")
     p.set_defaults(func=cmd_install)
 
     return parser

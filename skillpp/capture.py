@@ -5,7 +5,9 @@ Wired to Claude Code hooks (README 8):
 * ``UserPromptSubmit`` records stated intent — the half of the picture a raw
   command log can never recover.
 * ``PostToolUse`` records what actually ran.
-* ``SessionEnd`` / ``Stop`` folds the session into the ledger.
+* ``SessionEnd`` stamps the session and spawns the fold; the judge and the
+  embeddings run in that detached worker, never in the hook.
+* ``SessionStart`` sweeps whatever an earlier session left behind.
 
 **Every handler is fail-safe.** A hook that raises could disrupt the
 developer's session, so all errors are swallowed to a log file and the process
@@ -14,9 +16,11 @@ always exits 0. Capture is never worth breaking someone's work over.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
+import socket
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -540,7 +544,7 @@ def handle_session_end(config: Config, payload: dict) -> dict:
             work[-1].setdefault("closing_note", trailing)
             _save_session(config, session)
     try:
-        result = fold_session(config, session)
+        result = fold_session(config, session, persist=True)
     except Exception:
         raise
     else:
@@ -565,6 +569,56 @@ def handle_session_end(config: Config, payload: dict) -> dict:
     return result
 
 
+
+def mark_ending(config: Config, session_id: str, transcript: str | None = None) -> dict:
+    """Record that a session ended. The fold itself happens elsewhere.
+
+    All `SessionEnd` does now. The judge and the embeddings used to run inside
+    the hook, which is how nine desktop sessions ended up held: one cold model
+    call can reach `boundary.DEFAULT_TIMEOUT`, Claude Code's hook budget is
+    around a minute, and quitting the app gives less — so the hook was killed
+    and the work waited twelve hours for `fold_pending`'s idle rule.
+
+    The stamp is written here, by the hook, and not by the worker: a worker that
+    never starts must still leave a trace, and that trace is what lets
+    `fold_pending` tell "launched and died" from "still running".
+    """
+    path = _session_file(config, session_id)
+    if not path.exists():
+        return {"status": "no-session"}
+    session = _load_session(config, session_id)
+    session.setdefault("session_id", session_id)
+    if transcript:
+        session["transcript"] = transcript
+    session["ending"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _save_session(config, session)
+    return {"status": "ending", "session": session_id}
+
+
+def fold_session_now(config: Config, session_id: str, *,
+                     transcript: str | None = None) -> dict:
+    """Fold one ended session, alone. The only way into `handle_session_end`.
+
+    Both the detached worker and the pending sweep come through here, which is
+    what stops the two of them banking the same session twice — measured once
+    already, when a live `SessionEnd` fold and a manual one ran together and an
+    entry's `occurrences` went to 2.
+    """
+    path = _session_file(config, session_id)
+    if not path.exists():
+        return {"status": "no-session"}
+    with _locked(_lock_file(config, session_id), _FOLD_LOCK_SECONDS,
+                 "fold-session") as got:
+        if not got:
+            # Someone is already on it. Touch nothing: the holder owns the file.
+            return {"status": "folding", "session": session_id}
+        session = _load_session(config, session_id)
+        return handle_session_end(config, {
+            "session_id": session_id,
+            "transcript_path": (transcript or session.get("transcript")
+                                or _find_transcript(session_id)),
+        })
+
 # How long a session file may sit untouched before it counts as ended. A
 # session that never fires `SessionEnd` — a CLI window closed, an app killed —
 # otherwise waits forever. Long, because a desktop session can be picked up again
@@ -572,6 +626,107 @@ def handle_session_end(config: Config, payload: dict) -> dict:
 PENDING_IDLE_HOURS = 12.0
 # A `fold-pending` run older than this is assumed dead, not still folding.
 _PENDING_LOCK_SECONDS = 3600
+# A session stamped `ending` whose worker has not taken the lock by now was
+# launched and died — the app was force-quit, or the machine went to sleep
+# mid-fold. Short, because the point of stamping is to recover in minutes
+# instead of waiting out `PENDING_IDLE_HOURS`.
+_FOLD_GRACE_SECONDS = 120.0
+# A ceiling on one session's fold. Bounds the damage a recycled pid can do:
+# past this the lock is stale whatever `os.kill` says.
+_FOLD_LOCK_SECONDS = 1800
+
+
+def _lock_file(config: Config, session_id: str) -> Path:
+    """The lock guarding one session's fold, beside the session it guards.
+
+    `fold_pending` globs `*.json`, so a `.lock` sibling is never mistaken for a
+    session, and a directory listing shows at a glance what is being folded.
+    """
+    safe = "".join(c for c in session_id if c.isalnum() or c in "-_")[:64] or "unknown"
+    return config.sessions_dir / f"{safe}.lock"
+
+
+def _lock_alive(path: Path, max_age: float) -> bool:
+    """Is the process that took this lock still working?
+
+    The worker is started with `start_new_session=True`, so it is nobody's
+    child and `waitpid` is not available to anyone — `os.kill(pid, 0)` is the
+    only liveness signal left, which is why the pid is written into the lock.
+
+    Every ambiguous case answers **alive**: unreadable contents, no pid, a lock
+    taken on another machine. Waiting costs at most *max_age*; folding a session
+    a live worker is already folding counts its episodes twice, and
+    `occurrences` cannot be un-incremented without hand-editing the ledger.
+    """
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
+        return False
+    if age > max_age:
+        return False
+    try:
+        held = json.loads(path.read_text(encoding="utf-8"))
+        pid = int(held["pid"])
+        host = str(held.get("host", ""))
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return True
+    if host and host != socket.gethostname():
+        # Another machine's pid says nothing about this one. Age it out instead.
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Someone else's process, still running.
+        return True
+    except OSError:
+        return True
+    return True
+
+
+def _acquire_lock(path: Path, max_age: float, what: str) -> bool:
+    """Take the lock, breaking it once if the holder is gone."""
+    for attempt in (1, 2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            if attempt == 2 or _lock_alive(path, max_age):
+                return False
+            try:
+                path.unlink()
+            except OSError:
+                return False
+            # One retry, never a loop: two processes that keep breaking each
+            # other's locks would livelock instead of one of them folding.
+            continue
+        except OSError:
+            return False
+        try:
+            os.write(fd, json.dumps({
+                "pid": os.getpid(), "host": socket.gethostname(), "what": what,
+                "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            }).encode("utf-8"))
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+        return True
+    return False
+
+
+@contextlib.contextmanager
+def _locked(path: Path, max_age: float, what: str):
+    """Yield whether the lock was taken; release it however the body ends."""
+    got = _acquire_lock(path, max_age, what)
+    try:
+        yield got
+    finally:
+        if got:
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
 
 def _find_transcript(session_id: str) -> str | None:
@@ -590,25 +745,20 @@ def fold_pending(config: Config, *, exclude: str | None = None,
     boundary judge got no answer from the local model in time, so each was held.
     Nothing ever read `held` again. The tenth was a CLI session that never ended.
 
-    Held sessions are retried now; a session untouched for *idle_hours* is
-    treated as ended. Either way it goes through `handle_session_end`, so the
-    judge, the fold and the held stamp are the ones a normal end uses, and
+    The fold no longer runs inside that hook — `SessionEnd` stamps `ending` and
+    spawns a worker — so this sweep is the safety net rather than the cure: it
+    catches a worker that was launched and died with the app, a session held
+    because no model answered, and one where `SessionEnd` never fired at all.
+    Everything goes through `fold_session_now`, so the judge, the fold, the
+    per-session lock and the held stamp are the ones a normal end uses, and
     `folded` keeps a partial retry from counting an episode twice. *exclude* is
     the session that is starting, which is live by definition.
     """
-    lock = config.root / "fold-pending.lock"
-    try:
-        if time.time() - lock.stat().st_mtime > _PENDING_LOCK_SECONDS:
-            lock.unlink()
-    except OSError:
-        pass
-    try:
-        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        return [{"status": "locked"}]
-    os.close(fd)
     results = []
-    try:
+    with _locked(config.root / "fold-pending.lock", _PENDING_LOCK_SECONDS,
+                 "fold-pending") as got:
+        if not got:
+            return [{"status": "locked"}]
         for path in sorted(config.sessions_dir.glob("*.json")):
             sid = path.stem
             if sid == exclude:
@@ -618,23 +768,70 @@ def fold_pending(config: Config, *, exclude: str | None = None,
                 idle = (time.time() - path.stat().st_mtime) / 3600
             except (OSError, json.JSONDecodeError):
                 continue
-            if not session.get("held") and idle < idle_hours:
+            if not _is_pending(session, idle, idle_hours):
                 results.append({"session": sid, "status": "live"})
                 continue
-            transcript = session.get("transcript") or _find_transcript(sid)
-            result = handle_session_end(config, {"session_id": sid,
-                                                 "transcript_path": transcript})
-            results.append({"session": sid, **result})
-    finally:
+            # Checked before folding only so the outcome can say "folding"
+            # rather than "locked"; `fold_session_now` takes the lock itself,
+            # so nothing rests on this being race-free.
+            if _lock_alive(_lock_file(config, sid), _FOLD_LOCK_SECONDS):
+                results.append({"session": sid, "status": "folding"})
+                continue
+            results.append({"session": sid, **fold_session_now(config, sid)})
+        _sweep_orphan_locks(config)
+    return results
+
+
+def _is_pending(session: dict, idle: float, idle_hours: float) -> bool:
+    """Has this session ended without being banked?
+
+    Three rules, covering three different failures, none of them redundant:
+
+    * ``held`` — a fold that ran and could not reach a model.
+    * ``ending`` past the grace — a fold that was launched and died with it,
+      which before the stamp existed was indistinguishable from a live session
+      and so waited out the idle rule.
+    * idle — the only rule that catches a session where `SessionEnd` never
+      fired at all: a window closed, a laptop shut down.
+    """
+    if session.get("held"):
+        return True
+    ending = session.get("ending")
+    if ending:
+        try:
+            stamped = datetime.fromisoformat(str(ending))
+        except ValueError:
+            # A corrupt stamp may delay a fold; it must never cause one.
+            stamped = None
+        if stamped is not None:
+            if stamped.tzinfo is None:
+                stamped = stamped.replace(tzinfo=timezone.utc)
+            waited = (datetime.now(timezone.utc) - stamped).total_seconds()
+            if waited > _FOLD_GRACE_SECONDS:
+                return True
+    return idle >= idle_hours
+
+
+def _sweep_orphan_locks(config: Config) -> None:
+    """Drop lock files whose session is gone and whose holder is not running.
+
+    A fold that is SIGKILLed never runs the `finally` that releases its lock,
+    and the session file it banked is already unlinked — so without this the
+    lock outlives everything it was guarding.
+    """
+    for lock in config.sessions_dir.glob("*.lock"):
+        if lock.with_suffix(".json").exists():
+            continue
+        if _lock_alive(lock, _FOLD_LOCK_SECONDS):
+            continue
         try:
             lock.unlink()
         except OSError:
             pass
-    return results
 
 
 def fold_session(config: Config, session: dict, *, force: bool = False,
-                 source: str = "capture") -> dict:
+                 source: str = "capture", persist: bool = False) -> dict:
     """Turn a finished session into ledger entries — one per task.
 
     A session holding several unrelated tasks used to become a single entry
@@ -713,6 +910,14 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
         result["ended_by"] = episode.ended_by
         results.append(result)
         folded.append(index)
+        # Written out per episode, not once at the end. `folded` is what stops
+        # a retry re-banking what is already banked, and until this it only
+        # reached disk on the offline path — so a worker killed mid-fold lost
+        # it, and the retry counted those episodes a second time. `occurrences`
+        # counts every recognition, so one crash could reach the threshold on
+        # its own. One small write against an embedding call is free.
+        if persist:
+            _save_session(config, session)
 
     flagged = [e for e in episodes if e.flagged]
     if not results:
@@ -1211,9 +1416,16 @@ def keep_current(config: Config, session_id: str | None = None) -> dict:
             if not is_prompt(step):
                 step["end"] = False
 
-    result = fold_session(config, session, force=True, source="kept")
-    try:
-        path.unlink()
-    except OSError:
-        pass
+    # The same lock the worker and the sweep take: this folds and unlinks
+    # mid-session, so without it an explicit keep can race a fold of the very
+    # same session and bank its episodes twice.
+    with _locked(_lock_file(config, session_id), _FOLD_LOCK_SECONDS,
+                 "keep") as got:
+        if not got:
+            return {"status": "folding", "session": session_id}
+        result = fold_session(config, session, force=True, source="kept")
+        try:
+            path.unlink()
+        except OSError:
+            pass
     return result

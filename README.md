@@ -260,7 +260,7 @@ Claude Code in the terminal is the reference host for passive capture: hooks fir
 
 ### Capture: hooks, not a daemon
 
-Claude Code fires hooks — shell commands receiving JSON on stdin — at `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`, `PreCompact`, and `Stop`, configured through `settings.json`. `PostToolUse` supplies the tool name, its input, and its result: a structured trace stream, considerably cleaner than parsing shell history. `SessionEnd` is the natural batching point for ledger writes and the pull-review nudge. No OS daemon, no separate install, and a far smaller infosec surface than a background listener.
+Claude Code fires hooks — shell commands receiving JSON on stdin — at `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`, `PreCompact`, and `Stop`, configured through `settings.json`. `PostToolUse` supplies the tool name, its input, and its result: a structured trace stream, considerably cleaner than parsing shell history. `SessionEnd` is the natural batching point for ledger writes and the pull-review nudge — it *triggers* the fold rather than performing it, because a hook that waits on a local model is a hook Claude Code kills. No OS daemon, no separate install, and a far smaller infosec surface than a background listener.
 
 **The decisive advantage is `UserPromptSubmit`.** It captures what the developer *asked for* next to what actually *ran*. Intent is the half of the picture a raw command log can never recover, and having it in the same session materially improves synthesis — it is what reduces §4's clarification pass from an interview to a confirmation.
 
@@ -273,7 +273,8 @@ It earns its keep twice over, because a prompt is also a **task boundary**. Prom
 | Trace capture | `PostToolUse` / `PreToolUse` hooks |
 | Intent capture | `UserPromptSubmit` hook |
 | Task boundaries | `UserPromptSubmit` — recorded in the step stream, so a prompt's position marks where one task ends and the next begins |
-| Segmentation + ledger write + review nudge | `SessionEnd` hook |
+| Segmentation + ledger write + review nudge | `SessionEnd` hook — stamps the session and spawns `skillpp fold-session`, which does the work detached |
+| Banking what an earlier session left behind | `SessionStart` hook → `skillpp fold-pending` |
 | Pull-based review UI | `.claude/commands/skillpp-review.md` → `/skillpp-review` |
 | Skill output | `.claude/skills/<name>/SKILL.md` + `scripts/` |
 | Dependency check at pull | Diff declared deps against `.mcp.json` and connected `mcp__<server>__<tool>` names |
@@ -381,7 +382,10 @@ worth reading. Neither half is useful alone.
 
 | Command | Purpose |
 | --- | --- |
+| `skillpp install --user\|--project [DIR]` | Wire the hooks, for every project or just this one. Dry run without `--apply`; `--remove` takes them back out |
+| `skillpp doctor` | Whether the hooks are wired, the models answer, and anything is waiting to be banked |
 | `skillpp hook --event <E>` | Hook entry point; reads JSON on stdin, always exits 0 |
+| `skillpp fold-session <id>` | Bank one ended session; what the `SessionEnd` hook spawns |
 | `skillpp dictate --text "…"` | Create a candidate from a description instead of a trace |
 | `skillpp review [--all]` | Candidates at or above the recurrence threshold |
 | `skillpp sift [--apply]` | Ask a local model which candidates are methods rather than one-off jobs; parks the rest. Dry run without `--apply`. See [docs/episode-filter.md](docs/episode-filter.md) |

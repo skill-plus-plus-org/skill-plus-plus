@@ -28,10 +28,17 @@ def hook_command(python: str | None = None, package_root: Path | None = None) ->
     ``PYTHONPATH`` makes ``-m skillpp`` importable from a checkout without
     installing the package. The ledger root is deliberately *not* passed, so it
     defaults to ``~/.claude/skillpp`` rather than landing inside the repo.
+
+    The interpreter is looked up on PATH rather than pinned. This used to write
+    ``sys.executable`` — on the machine this was developed on, that is
+    ``/opt/homebrew/opt/python@3.14/bin/python3.14``, which stops existing at
+    the next upgrade and means nothing on anyone else's machine. skillpp
+    imports nothing outside the standard library, so any ``python3`` runs it.
+    Pass *python* to pin one deliberately.
     """
-    python = python or sys.executable
     root = package_root or Path(__file__).resolve().parent.parent
-    return f'PYTHONPATH="{root}" "{python}" -m skillpp hook'
+    interpreter = f'"{python}"' if python else "python3"
+    return f'PYTHONPATH="{root}" {interpreter} -m skillpp hook'
 
 
 def desired_hooks(python: str | None = None, package_root: Path | None = None) -> dict:
@@ -69,6 +76,62 @@ def plan_settings(settings_path: Path, python: str | None = None,
             changes.append(f"append to existing {event} hooks ({len(current) - 1} already there)")
         else:
             changes.append(f"{event} already wired — no change")
+    return merged, changes
+
+
+def installed_events(settings_path: Path) -> list[str]:
+    """Which hook events in this settings file are wired to skillpp.
+
+    The predicate `plan_settings` applies inline, extracted so `doctor` can ask
+    the question without re-implementing what `MARKER` and `HOOK_EVENTS` mean.
+    A missing or unreadable file is not an error here — it is an answer.
+    """
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    if not isinstance(hooks, dict):
+        return []
+    return [event for event in HOOK_EVENTS
+            if _has_marker(hooks.get(event) or [])]
+
+
+def plan_removal(settings_path: Path) -> tuple[dict, list[str]]:
+    """Return (settings without skillpp's hooks, change list) without writing.
+
+    Only entries carrying `MARKER` go. Anything else in the same event stays —
+    a settings file is the developer's, not ours, and an installer that cannot
+    take itself out cleanly should not be writing there in the first place. An
+    event left with no entries is dropped rather than left as an empty list.
+    """
+    if not settings_path.exists():
+        return {}, ["nothing to remove — no settings file"]
+    try:
+        existing = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise RuntimeError(f"cannot parse {settings_path}: {exc}") from exc
+
+    merged = json.loads(json.dumps(existing))  # deep copy
+    hooks = merged.get("hooks")
+    changes: list[str] = []
+    if not isinstance(hooks, dict):
+        return merged, ["nothing to remove — no hooks"]
+    for event in HOOK_EVENTS:
+        current = hooks.get(event)
+        if not isinstance(current, list) or not _has_marker(current):
+            continue
+        kept = [entry for entry in current if MARKER not in json.dumps(entry)]
+        if kept:
+            hooks[event] = kept
+            changes.append(f"remove skillpp from {event} ({len(kept)} other(s) kept)")
+        else:
+            del hooks[event]
+            changes.append(f"remove {event} hook")
+    if not hooks:
+        merged.pop("hooks", None)
+    if not changes:
+        changes.append("skillpp is not wired here — nothing to remove")
     return merged, changes
 
 

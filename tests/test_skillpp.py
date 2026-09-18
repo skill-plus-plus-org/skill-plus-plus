@@ -4007,6 +4007,33 @@ class TestFoldResumesAfterOutage(TempRoot):
         return sorted((e.steps[0]["input"]["command"], e.occurrences, e.unmatched)
                       for e in Ledger(self.config).all())
 
+    def test_a_worker_killed_after_one_episode_does_not_count_twice(self):
+        """`folded` is what stops a retry re-banking. It used to reach disk only
+        on the offline path, so a worker killed mid-fold lost it — and every
+        recognition counts, so one crash could reach the threshold alone."""
+        import skillpp.capture as capture
+        from skillpp.capture import fold_session_now, handle_session_end
+
+        self._capture()
+        real = capture._fold_steps
+        seen = []
+
+        def die_after_one(config, session, steps, **kw):
+            if seen:
+                raise KeyboardInterrupt("worker killed")
+            seen.append(steps)
+            return real(config, session, steps, **kw)
+
+        capture._fold_steps = die_after_one
+        self.addCleanup(lambda: setattr(capture, "_fold_steps", real))
+        with self.assertRaises(KeyboardInterrupt):
+            handle_session_end(self.config, {"session_id": "two"})
+
+        capture._fold_steps = real
+        fold_session_now(self.config, "two")
+        self.assertEqual(self._occurrences(),
+                         [("npm test", 1, False), ("pytest -q", 1, False)])
+
     def test_an_outage_mid_fold_holds_the_session(self):
         from skillpp.capture import _session_file, handle_session_end
         self._capture()
@@ -4215,7 +4242,9 @@ class TestFoldPending(TempRoot):
     ever retried a held session.
     """
 
-    def _session(self, sid, *, held=False, hours_ago=0.0):
+    def _session(self, sid, *, held=False, hours_ago=0.0, ending_minutes_ago=None):
+        from datetime import datetime, timedelta, timezone
+
         from skillpp.capture import _session_file
         steps = [{"tool": "UserPrompt", "input": {"text": f"ship {sid}"}},
                  {"tool": "Bash", "input": {"command": "npm test"}},
@@ -4223,6 +4252,10 @@ class TestFoldPending(TempRoot):
         doc = {"session_id": sid, "cwd": "/r", "prompts": [], "steps": steps}
         if held:
             doc["held"] = {"at": "2026-09-07T13:02:00+00:00", "reason": "no verdicts"}
+        if ending_minutes_ago is not None:
+            stamped = (datetime.now(timezone.utc)
+                       - timedelta(minutes=ending_minutes_ago))
+            doc["ending"] = stamped.isoformat(timespec="seconds")
         path = _session_file(self.config, sid)
         path.write_text(json.dumps(doc), encoding="utf-8")
         stamp = time.time() - hours_ago * 3600
@@ -4284,6 +4317,73 @@ class TestFoldPending(TempRoot):
         self.assertEqual(result["status"], "too-thin")
         self.assertFalse(path.exists())
 
+    def test_a_killed_worker_is_retried_in_minutes_not_hours(self):
+        """A hook killed mid-fold leaves no `held` stamp, so before `ending`
+        existed it was indistinguishable from a live session and waited out the
+        12-hour idle rule."""
+        from skillpp.capture import fold_pending
+        path = self._session("killed", ending_minutes_ago=5, hours_ago=0)
+        (result,) = fold_pending(self.config)
+        self.assertEqual(result["status"], "created")
+        self.assertFalse(path.exists())
+        self.assertEqual(len(list(Ledger(self.config).all())), 1)
+
+    def test_a_session_ending_moments_ago_is_not_stolen(self):
+        """The grace is what stops the sweep racing a worker that is still
+        starting up."""
+        from skillpp.capture import fold_pending
+        self._session("fresh", ending_minutes_ago=0.1, hours_ago=0)
+        (result,) = fold_pending(self.config)
+        self.assertEqual(result["status"], "live")
+
+    def test_a_worker_still_folding_is_left_alone(self):
+        import socket
+        from skillpp.capture import _lock_file, fold_pending
+        path = self._session("busy", ending_minutes_ago=5, hours_ago=0)
+        _lock_file(self.config, "busy").write_text(
+            json.dumps({"pid": os.getpid(), "host": socket.gethostname()}),
+            encoding="utf-8")
+        (result,) = fold_pending(self.config)
+        self.assertEqual(result["status"], "folding")
+        self.assertTrue(path.exists())
+        self.assertEqual(list(Ledger(self.config).all()), [])
+
+    def test_the_sweep_folds_inline_rather_than_spawning(self):
+        """Ten pending sessions must not become ten model calls at once: they
+        serialise at Ollama anyway, and that is the failure being fixed."""
+        from skillpp.capture import fold_pending
+        self._session("one", held=True)
+        with mock.patch("subprocess.Popen") as popen:
+            fold_pending(self.config)
+        popen.assert_not_called()
+        self.assertEqual(len(list(Ledger(self.config).all())), 1)
+
+    def test_an_orphan_lock_is_cleaned_up(self):
+        """A SIGKILLed fold never runs the `finally`, and the session it banked
+        is already gone — so nothing else would ever remove its lock."""
+        import socket
+        from skillpp.capture import _lock_file, fold_pending
+        lock = _lock_file(self.config, "gone")
+        lock.write_text(json.dumps({"pid": 999999,
+                                    "host": socket.gethostname()}),
+                        encoding="utf-8")
+        fold_pending(self.config)
+        self.assertFalse(lock.exists())
+
+    def test_an_orphan_lock_from_another_machine_is_left_to_age(self):
+        """A foreign pid says nothing about this box, so the age ceiling is the
+        only safe way to decide — never `os.kill` on a number from elsewhere."""
+        from skillpp.capture import _FOLD_LOCK_SECONDS, _lock_file, fold_pending
+        lock = _lock_file(self.config, "elsewhere")
+        lock.write_text(json.dumps({"pid": 999999, "host": "another-machine"}),
+                        encoding="utf-8")
+        fold_pending(self.config)
+        self.assertTrue(lock.exists())
+        stamp = time.time() - _FOLD_LOCK_SECONDS - 60
+        os.utime(lock, (stamp, stamp))
+        fold_pending(self.config)
+        self.assertFalse(lock.exists())
+
     def test_session_start_spawns_the_fold_and_does_not_wait(self):
         import io
         from skillpp.cli import main
@@ -4297,6 +4397,307 @@ class TestFoldPending(TempRoot):
         self.assertEqual(argv[-3:], ["fold-pending", "--exclude", "s1"])
         self.assertTrue(popen.call_args.kwargs["start_new_session"])
         popen.return_value.wait.assert_not_called()
+
+
+class TestInstallScopes(TempRoot):
+    """Where the hooks go is said out loud, and they come back out cleanly.
+
+    The default used to be user-level and silent, which is how this repo ran
+    for weeks with hooks wired by hand into one project and none in
+    `~/.claude/settings.json` — the command never named the file it wrote.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.root / "proj"
+        (self.project / ".claude").mkdir(parents=True)
+        self.settings = self.project / ".claude" / "settings.json"
+
+    def _run(self, *argv):
+        from skillpp.cli import main
+        return main(["--root", str(self.config.root), "install", *argv])
+
+    def _events(self):
+        from skillpp.install import installed_events
+        return installed_events(self.settings)
+
+    def test_no_scope_writes_nothing_and_says_so(self):
+        self.assertEqual(self._run("--apply"), 2)
+
+    def test_a_project_install_touches_only_that_project(self):
+        home_before = (Path.home() / ".claude" / "settings.json")
+        stamp = home_before.stat().st_mtime if home_before.exists() else None
+        self.assertEqual(self._run("--project", str(self.project), "--apply"), 0)
+        self.assertEqual(len(self._events()), 4)
+        if stamp is not None:
+            self.assertEqual(home_before.stat().st_mtime, stamp,
+                             "wrote the user's settings during a project install")
+
+    def test_a_second_apply_changes_nothing(self):
+        self._run("--project", str(self.project), "--apply")
+        before = self.settings.read_text()
+        self._run("--project", str(self.project), "--apply")
+        self.assertEqual(self.settings.read_text(), before)
+
+    def test_remove_leaves_a_foreign_hook_in_place(self):
+        self.settings.write_text(json.dumps({
+            "theme": "dark",
+            "hooks": {"PostToolUse": [{"matcher": "*", "hooks": [
+                {"type": "command", "command": "echo mine"}]}]},
+        }), encoding="utf-8")
+        self._run("--project", str(self.project), "--apply")
+        self.assertEqual(len(self._events()), 4)
+
+        self.assertEqual(self._run("--project", str(self.project),
+                                   "--remove", "--apply"), 0)
+        self.assertEqual(self._events(), [])
+        left = json.loads(self.settings.read_text())
+        self.assertEqual(left["theme"], "dark")
+        self.assertIn("echo mine", json.dumps(left["hooks"]["PostToolUse"]))
+
+    def test_the_hook_command_pins_no_interpreter(self):
+        """It used to write `/opt/homebrew/opt/python@3.14/bin/python3.14`,
+        which stops existing at the next upgrade and means nothing on anyone
+        else's machine. skillpp is stdlib-only, so any python3 runs it."""
+        from skillpp.install import hook_command
+        command = hook_command()
+        self.assertIn("python3 -m skillpp hook", command)
+        self.assertNotIn(sys.executable, command)
+        self.assertIn("-m skillpp hook", hook_command("/usr/bin/python3"))
+
+    def test_installed_events_reads_the_marker(self):
+        from skillpp.install import installed_events
+        self.assertEqual(installed_events(self.settings), [])
+        self.settings.write_text(json.dumps({"hooks": {"PostToolUse": [
+            {"matcher": "*", "hooks": [{"type": "command",
+                                        "command": "echo mine"}]}]}}),
+            encoding="utf-8")
+        self.assertEqual(installed_events(self.settings), [])
+        self.assertEqual(installed_events(self.root / "nope.json"), [])
+
+
+class TestDoctor(TempRoot):
+    """One command that answers "is skillpp actually running?"."""
+
+    def _run(self, *argv):
+        import io
+        from skillpp.cli import main
+        out = io.StringIO()
+        real = sys.stdout
+        sys.stdout = out
+        try:
+            code = main(["--root", str(self.config.root), "doctor", *argv])
+        finally:
+            sys.stdout = real
+        return code, out.getvalue()
+
+    def test_it_names_the_missing_events(self):
+        """PostToolUse without SessionEnd captures every step and banks none of
+        it, which reads as working."""
+        from skillpp.install import desired_hooks
+        settings = self.root / "settings.json"
+        hooks = desired_hooks()
+        del hooks["SessionEnd"]
+        settings.write_text(json.dumps({"hooks": hooks}), encoding="utf-8")
+        _, out = self._run("--settings", str(settings))
+        self.assertIn("MISSING SessionEnd", out)
+        self.assertIn("nothing will be banked", out)
+
+    def test_it_says_when_nothing_is_wired(self):
+        _, out = self._run("--settings", str(self.root / "absent.json"))
+        self.assertIn("not wired", out)
+
+    def test_it_counts_sessions_waiting(self):
+        from skillpp.capture import _session_file
+        for sid, doc in (("held1", {"held": {"at": "x", "reason": "y"}}),
+                         ("live1", {})):
+            _session_file(self.config, sid).write_text(
+                json.dumps({"session_id": sid, "prompts": [], "steps": [],
+                            **doc}), encoding="utf-8")
+        _, out = self._run("--settings", str(self.root / "absent.json"))
+        self.assertIn("1 waiting to be banked", out)
+
+
+class TestSessionEndIsAsync(TempRoot):
+    """`SessionEnd` stamps and hands off; the fold happens in its own process.
+
+    The judge and the embeddings used to run inside the hook. Measured on the
+    live fixtures that is 45 judge calls over 21 sessions and 13s for the worst
+    one *warm* — but a cold call can reach `boundary.DEFAULT_TIMEOUT`, the hook
+    budget is about a minute, and quitting the app gives less. Nine real
+    desktop sessions were held that way.
+    """
+
+    def _capture(self, sid="s1"):
+        from skillpp.capture import handle_prompt, handle_tool
+        handle_prompt(self.config, {"session_id": sid, "cwd": "/r",
+                                    "prompt": "ship it"})
+        handle_tool(self.config, {"session_id": sid, "cwd": "/r",
+                                  "tool_name": "Bash",
+                                  "tool_input": {"command": "npm test"}})
+        handle_tool(self.config, {"session_id": sid, "cwd": "/r",
+                                  "tool_name": "Bash",
+                                  "tool_input": {"command": "git commit -m x"}})
+
+    def _hook(self, payload, event="SessionEnd"):
+        import io
+        from skillpp.cli import main
+        real_stdin = sys.stdin
+        sys.stdin = io.StringIO(json.dumps(payload))
+        self.addCleanup(lambda: setattr(sys, "stdin", real_stdin))
+        with mock.patch("subprocess.Popen") as popen:
+            code = main(["--root", str(self.config.root), "hook",
+                         "--event", event])
+        return code, popen
+
+    def test_session_end_stamps_and_spawns_instead_of_folding(self):
+        from skillpp.capture import _session_file
+        self._capture()
+        self.judged.clear()
+        code, popen = self._hook({"session_id": "s1"})
+
+        self.assertEqual(code, 0)
+        argv = popen.call_args.args[0]
+        self.assertEqual(argv[-2:], ["fold-session", "s1"])
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        popen.return_value.wait.assert_not_called()
+        # The thing being bought: no model was asked anything in the hook.
+        self.assertEqual(self.judged, [], "the judge ran inside the hook")
+        self.assertEqual(list(Ledger(self.config).all()), [], "banked in the hook")
+        doc = json.loads(_session_file(self.config, "s1").read_text())
+        self.assertIn("ending", doc)
+
+    def test_the_stamp_keeps_the_transcript_for_the_worker(self):
+        from skillpp.capture import _session_file
+        self._capture()
+        self._hook({"session_id": "s1", "transcript_path": "/tmp/t.jsonl"})
+        doc = json.loads(_session_file(self.config, "s1").read_text())
+        self.assertEqual(doc["transcript"], "/tmp/t.jsonl")
+
+    def test_an_unknown_session_spawns_nothing(self):
+        code, popen = self._hook({"session_id": "never-seen"})
+        self.assertEqual(code, 0)
+        popen.assert_not_called()
+
+    def test_stop_is_not_a_session_end(self):
+        """`Stop` fires every turn. Folding there cuts one procedure into
+        per-turn fragments, and the worker would unlink the session file while
+        capture is still appending to it."""
+        from skillpp.capture import _session_file
+        self._capture()
+        code, popen = self._hook({"session_id": "s1"}, event="Stop")
+        self.assertEqual(code, 0)
+        popen.assert_not_called()
+        self.assertTrue(_session_file(self.config, "s1").exists())
+
+    def test_the_worker_banks_what_the_hook_stamped(self):
+        from skillpp.capture import _lock_file, _session_file
+        from skillpp.cli import main
+        self._capture()
+        self._hook({"session_id": "s1"})
+
+        code = main(["--root", str(self.config.root), "fold-session", "s1"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(list(Ledger(self.config).all())), 1)
+        self.assertFalse(_session_file(self.config, "s1").exists())
+        self.assertFalse(_lock_file(self.config, "s1").exists(), "lock left behind")
+
+    def test_the_worker_logs_its_outcome(self):
+        """Its stdio is DEVNULL, so the log is the only place it can answer
+        "why was my session not banked?"."""
+        from skillpp.cli import main
+        self._capture()
+        self._hook({"session_id": "s1"})
+        main(["--root", str(self.config.root), "fold-session", "s1"])
+        self.assertIn("fold-session s1", self.config.log_file.read_text())
+
+
+class TestFoldLock(TempRoot):
+    """One session is folded by one process at a time.
+
+    A live `SessionEnd` fold and a manual one once ran together and pushed an
+    entry's `occurrences` to 2. `occurrences` counts every recognition and
+    cannot be un-incremented without hand-editing the ledger, so every
+    ambiguous lock is read as *alive*: waiting costs a delay, folding twice
+    costs the count.
+    """
+
+    def _session(self, sid="s1"):
+        from skillpp.capture import _session_file
+        steps = [{"tool": "UserPrompt", "input": {"text": "ship it"}},
+                 {"tool": "Bash", "input": {"command": "npm test"}},
+                 {"tool": "Bash", "input": {"command": "git commit -m x"}}]
+        path = _session_file(self.config, sid)
+        path.write_text(json.dumps({"session_id": sid, "cwd": "/r",
+                                    "prompts": [], "steps": steps}),
+                        encoding="utf-8")
+        return path
+
+    def _lock(self, sid="s1", **held):
+        import socket
+        from skillpp.capture import _lock_file
+        path = _lock_file(self.config, sid)
+        payload = {"pid": os.getpid(), "host": socket.gethostname(),
+                   "what": "fold-session", **held}
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_a_second_worker_leaves_the_session_alone(self):
+        from skillpp.capture import fold_session_now
+        path = self._session()
+        lock = self._lock()
+        self.assertEqual(fold_session_now(self.config, "s1"),
+                         {"status": "folding", "session": "s1"})
+        self.assertEqual(list(Ledger(self.config).all()), [])
+        self.assertTrue(path.exists())
+        self.assertTrue(lock.exists(), "the loser deleted the winner's lock")
+
+    def test_a_dead_workers_lock_is_broken(self):
+        from skillpp.capture import fold_session_now
+        self._session()
+        lock = self._lock(pid=999999)
+        self.assertEqual(fold_session_now(self.config, "s1")["status"], "created")
+        self.assertFalse(lock.exists())
+
+    def test_a_lock_from_another_machine_is_aged_out_not_pid_checked(self):
+        from skillpp.capture import _FOLD_LOCK_SECONDS, fold_session_now
+        self._session()
+        lock = self._lock(pid=999999, host="somewhere-else")
+        self.assertEqual(fold_session_now(self.config, "s1")["status"], "folding")
+        stamp = time.time() - _FOLD_LOCK_SECONDS - 60
+        os.utime(lock, (stamp, stamp))
+        self.assertEqual(fold_session_now(self.config, "s1")["status"], "created")
+
+    def test_a_corrupt_lock_falls_back_to_age(self):
+        from skillpp.capture import _FOLD_LOCK_SECONDS, _lock_file, fold_session_now
+        self._session()
+        lock = _lock_file(self.config, "s1")
+        lock.write_text("not json", encoding="utf-8")
+        self.assertEqual(fold_session_now(self.config, "s1")["status"], "folding")
+        stamp = time.time() - _FOLD_LOCK_SECONDS - 60
+        os.utime(lock, (stamp, stamp))
+        self.assertEqual(fold_session_now(self.config, "s1")["status"], "created")
+
+    def test_the_lock_is_released_when_the_fold_raises(self):
+        import skillpp.capture as capture
+        from skillpp.capture import _lock_file, fold_session_now
+        self._session()
+        real = capture.handle_session_end
+
+        def boom(*a, **k):
+            raise RuntimeError("nope")
+        capture.handle_session_end = boom
+        self.addCleanup(lambda: setattr(capture, "handle_session_end", real))
+        with self.assertRaises(RuntimeError):
+            fold_session_now(self.config, "s1")
+        self.assertFalse(_lock_file(self.config, "s1").exists())
+
+    def test_keep_takes_the_same_lock(self):
+        from skillpp.capture import keep_current
+        self._session()
+        self._lock()
+        self.assertEqual(keep_current(self.config, "s1")["status"], "folding")
+        self.assertEqual(list(Ledger(self.config).all()), [])
 
 
 class TestTranscriptExtract(TempRoot):
