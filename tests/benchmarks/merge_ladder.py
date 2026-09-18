@@ -32,6 +32,7 @@ A step on the ladder changes one thing. Nothing here decides; it prints.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import sys
@@ -240,6 +241,61 @@ def a4(entry: Entry) -> str:
     return a2(entry) + "\n" + FILE.sub("<file>", step_notes(entry))
 
 
+# One sentence per turn from the local model, with the subject taken out. The
+# question is deliberately about the *kind* of work: every deterministic
+# ingredient so far (skills, files, tools, step notes) describes how a run was
+# carried out, so two runs of one procedure through different tools stay apart.
+ACTION_PROMPT = """A person asked an assistant for something, and the assistant answered.
+
+ASKED:
+{ASK}
+
+ANSWERED:
+{REPLY}
+
+In one sentence of at most 20 words, say what was asked for and what the
+assistant did. Describe the *kind* of work only. Do not name any file, product,
+person, tool, topic or number. Start with a verb."""
+
+ACTIONS = Path(tempfile.gettempdir()) / "skillpp-turn-actions.json"
+
+
+def turn_action(turn: dict, config: Config, cache: dict) -> str:
+    from skillpp.local import LocalModelUnavailable, ask
+    ask_text = " ".join(str(turn.get("prompt", "")).split())[:600]
+    reply = " ".join(str(turn.get("reply", "")).split())[:600]
+    key = f"{ask_text}||{reply}"
+    if key not in cache:
+        prompt = ACTION_PROMPT.replace("{ASK}", ask_text or "(nothing)").replace("{REPLY}", reply or "(nothing)")
+        try:
+            cache[key] = " ".join(ask(config.local_model, prompt, host=config.ollama_url,
+                                      timeout=60.0, think=False).split())
+        except LocalModelUnavailable:
+            cache[key] = ""
+    return cache[key]
+
+
+def a5(entry: Entry) -> str:
+    """A2 plus one topic-free sentence per turn, written by the local model.
+
+    Measured, not kept: same-procedure pairs rose (2x2 0.856 -> 0.876) and
+    different-procedure pairs rose further (0.784 -> 0.813), so the danger line
+    went 0.849 -> 0.855, the safe floor to 0.86, merges stayed at 14/61 and the
+    gap fell to +0.063. Asked to describe the kind of work without subjects, a
+    small model writes in one house style — "Generated a presentation outline…",
+    "Drafted a short social media update…", "The user inquired…; the assistant…"
+    — and the shared frame is itself similarity that no procedure earns. Also
+    the slowest rendering by far: one model call per turn.
+    """
+    config = Config()
+    cache = json.loads(ACTIONS.read_text()) if ACTIONS.exists() else {}
+    before = len(cache)
+    lines = [turn_action(t, config, cache) for t in entry.turns]
+    if len(cache) != before:
+        ACTIONS.write_text(json.dumps(cache))
+    return a2(entry) + "\n\n" + "\n".join(f"Turn: {line}" for line in lines if line)
+
+
 RENDERINGS = {
     "R0": r0,
     "R1": r1,
@@ -250,6 +306,7 @@ RENDERINGS = {
     "A2": a2,
     "A3": a3,
     "A4": a4,
+    "A5": a5,
 }
 
 
