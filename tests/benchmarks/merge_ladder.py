@@ -49,7 +49,8 @@ import recurrence                                   # noqa: E402
 from skillpp.config import Config                   # noqa: E402
 from skillpp.ledger import Entry, Ledger            # noqa: E402
 from skillpp.local import cosine, embed             # noqa: E402
-from skillpp.matching import turns_text             # noqa: E402
+from skillpp.matching import (conversation_text,    # noqa: E402
+                              turns_text)
 
 # Two procedures on two source files — the pairs that separate procedure from material.
 PRESENTATION = {"article": "3e035b46", "handoff": "bfb9ecdc"}
@@ -121,9 +122,11 @@ REPLY_HEAD = 300
 
 
 def r3(entry: Entry) -> str:
-    """R1, with each reply cut to its first 300 characters — what `matching`
-    now embeds, so this row is the shipped rendering."""
-    return turns_text(entry.turns)
+    """R1, with each reply cut to its first 300 characters. Frozen here: the
+    shipped `matching.turns_text` has since grown the `Used:` line of A1."""
+    turns = [{**t, "reply": " ".join(str(t.get("reply", "")).split())[:REPLY_HEAD], "used": []}
+             for t in entry.turns]
+    return FILE.sub("<file>", turns_text(turns))
 
 
 def r4(entry: Entry) -> str:
@@ -152,14 +155,7 @@ def a1(entry: Entry) -> str:
     only one family here uses a skill at all. The unscripted runs built their
     decks with the `Artifact` tool, which is not a skill and adds no line.
     """
-    lines = []
-    for turn in entry.turns:
-        reply = " ".join(str(turn.get("reply", "")).split())[:REPLY_HEAD]
-        block = f"User: {turn.get('prompt', '')}\nAgent: {reply}"
-        if turn.get("used"):
-            block += "\nUsed: " + "; ".join(turn["used"])
-        lines.append(block)
-    return FILE.sub("<file>", "\n\n".join(lines))
+    return turns_text(entry.turns)          # what `matching` embeds per turn
 
 
 DOC_EXT = re.compile(r"\.(pptx|pdf|docx|xlsx|html|md|csv)\b")
@@ -178,7 +174,7 @@ def deliverable(entry: Entry) -> str:
             + ("; handed the file over" if sent else ""))
 
 
-def a2(entry: Entry) -> str:
+def a2(entry: Entry) -> str:  # noqa: D401 - shipped; see matching.conversation_text
     """A1 plus one closing line: the kinds of file the run produced.
 
     Kept, marginally: merged 13 -> 14 of 61, danger and the two-procedures-two-
@@ -189,7 +185,7 @@ def a2(entry: Entry) -> str:
     cases alike, so this line says little outside file-producing work, and the
     lowest floor with no wrong merge fell to 0.81.
     """
-    return a1(entry) + "\n\n" + deliverable(entry)
+    return conversation_text(entry.turns, entry.steps)
 
 
 def tool_sequence(entry: Entry) -> str:

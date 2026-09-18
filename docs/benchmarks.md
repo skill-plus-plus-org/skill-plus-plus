@@ -1495,11 +1495,40 @@ word for word, while the unscripted coding sessions gained nothing (4/21 either
 way). Two later runs phrased by the developer scored 0.882 and 0.837 against the
 same candidate — the spread prompts alone cannot survive.
 
-**R3 shipped.** The lowest floor with no wrong merge now equals the safe floor,
+After the removals, ingredients were added one at a time, on top of R3:
+
+| step | adds | danger | safe | merged | gap | kept |
+| --- | --- | --- | --- | --- | --- | --- |
+| A1 | the skills/MCP a turn used | 0.848 | 0.85 | 13/61 | +0.071 | ✅ |
+| A2 | the file kinds produced, and whether one was handed over | 0.849 | 0.85 | **14/61** | +0.072 | ✅ shipped |
+| A3 | the tool sequence | 0.849 | 0.85 | 14/61 | +0.075 | ✗ |
+| A4 | the agent's step descriptions | 0.850 | 0.86 | 12/61 | +0.083 | ✗ |
+| A5 | one topic-free sentence per turn from `gemma3n:e4b` | 0.855 | 0.86 | 14/61 | +0.063 | ✗ |
+
+A3 adds nothing: two ways of building a deck share no tokens (`Skill, Bash x4,
+Write, Bash x11, SendUserFile` against `Artifact x2, Bash, Write x7, Artifact
+x2`), so it only strengthens runs that already executed alike. A4 raises
+same-procedure pairs *and* one different-procedure pair past the 0.85 boundary,
+which steps the floor to 0.86 and costs two merges. A5 raises unrelated pairs
+faster than related ones: asked to describe the kind of work without subjects, a
+small model writes one house style ("Generated a presentation outline…",
+"Drafted a short social media update…"), and the shared frame is similarity no
+procedure earned.
+
+The wall is a real pair, not noise: `assemble-article ~ create-presentation` at
+0.849. Writing an article from documents and building a deck from documents are
+close procedures, and nothing measured here separates them further — which is
+what sets the floor at 0.85.
+
+**R3 shipped, then A1 and A2.** The lowest floor with no wrong merge now equals the safe floor,
 so no merge survives on fold order; the text is 73% shorter (104k → 28k
 characters over 19 sessions), so nothing reaches the embedding's token limit;
 and the real fold unifies the three LinkedIn runs and the two coverage
-write-ups with no wrong merge.
+write-ups with no wrong merge. With A1 and A2 the corpus reaches 14 of 61 with
+the danger line unmoved, and on the real ledger the two scripted presentation
+runs cross the floor (0.856). The unscripted Artifact-built decks stay apart
+(0.745-0.807): every ingredient that helped describes execution, and they
+executed differently.
 
 Why commands lost here: three runs of the presentation procedure scored
 0.66–0.83 on them — scratchpad paths, `sed` against `Read`, and a run that also

@@ -4329,7 +4329,9 @@ class TestConversationMatching(TempRoot):
         self.assertEqual(turns_text(turns), "User: propose the slides\nAgent: Here are 9.")
         self.assertTrue(has_conversation(turns))
         self.assertFalse(has_conversation([{"prompt": "p", "reply": "", "used": []}]))
-        self.assertEqual(entry_text(self._entry("aaaaaaaaaaaa", turns)), turns_text(turns))
+        from skillpp.matching import conversation_text
+        entry = self._entry("aaaaaaaaaaaa", turns)
+        self.assertEqual(entry_text(entry), conversation_text(turns, entry.steps))
         self.assertIn("npm test", entry_text(self._entry("bbbbbbbbbbbb")))
 
     def test_the_material_is_kept_out_of_the_text(self):
@@ -4342,6 +4344,19 @@ class TestConversationMatching(TempRoot):
         self.assertIn("Agent: Reading <file>.", text)
         self.assertNotIn("ARTICLE.md", text)
         self.assertLessEqual(len(text.split("Agent: ")[1]), REPLY_HEAD)
+
+    def test_what_did_the_work_and_what_came_out_of_it(self):
+        """Two lines the conversation does not carry, each measured on its own."""
+        from skillpp.matching import conversation_text, deliverable_text
+        turns = [{"prompt": "build the deck", "reply": "Building it.",
+                  "used": ["skill anthropic-skills:pptx"]}]
+        steps = [{"tool": "Write", "input": {"file_path": "/s/build.js"}},
+                 {"tool": "Bash", "input": {"command": "node build.js && ls talk.pptx"}},
+                 {"tool": "SendUserFile", "input": {}}]
+        text = conversation_text(turns, steps)
+        self.assertIn("Used: skill anthropic-skills:pptx", text)
+        self.assertIn("Produced: .js, .pptx; handed the file over", text)
+        self.assertEqual(deliverable_text([]), "Produced: nothing")
 
     def test_like_is_only_compared_with_like(self):
         from skillpp.matching import find_same

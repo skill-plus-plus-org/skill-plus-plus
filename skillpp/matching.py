@@ -124,8 +124,42 @@ def turns_text(turns: list[dict]) -> str:
     lines = []
     for turn in turns:
         reply = " ".join(str(turn.get("reply", "")).split())[:REPLY_HEAD]
-        lines.append(f"User: {turn.get('prompt', '')}\nAgent: {reply}")
+        block = f"User: {turn.get('prompt', '')}\nAgent: {reply}"
+        if turn.get("used"):
+            # Which skill or MCP tool did the work: a capability, not a subject.
+            block += "\nUsed: " + "; ".join(turn["used"])
+        lines.append(block)
     return _FILE.sub("<file>", "\n\n".join(lines))
+
+
+# File kinds, for the line below. A name says what a run was about; a kind says
+# what came out of it.
+_DOC_EXT = re.compile(r"\.(pptx|pdf|docx|xlsx|html|md|csv)\b")
+
+
+def deliverable_text(steps: list[dict]) -> str:
+    """One line: the kinds of file the run produced, and whether it handed one over."""
+    kinds = {Path(str((s.get("input") or {}).get("file_path") or "")).suffix
+             for s in steps if s.get("tool") in ("Write", "Edit", "NotebookEdit")}
+    for step in steps:
+        kinds |= {"." + m for m in _DOC_EXT.findall(
+            str((step.get("input") or {}).get("command") or ""))}
+    kinds = sorted(k for k in kinds if k)
+    handed = any(s.get("tool") == "SendUserFile" for s in steps)
+    return (f"Produced: {', '.join(kinds) or 'nothing'}"
+            + ("; handed the file over" if handed else ""))
+
+
+def conversation_text(turns: list[dict], steps: list[dict]) -> str:
+    """What a run with a conversation embeds: its turns, then what it produced.
+
+    The two added lines were measured one at a time (`merge_ladder`): the skills
+    a turn used took merges from 12 to 13 of 61, naming the produced file kinds
+    to 14, both with the danger line unmoved. Tool sequences, the agent's step
+    descriptions and model-written summaries were each measured after them and
+    each cost more than they gave.
+    """
+    return turns_text(turns) + "\n\n" + deliverable_text(steps)
 
 
 def has_conversation(turns: list[dict] | None) -> bool:
@@ -136,7 +170,7 @@ def has_conversation(turns: list[dict] | None) -> bool:
 def entry_text(entry: Entry) -> str:
     """What is embedded for an entry: its first run's conversation, else its steps."""
     if has_conversation(entry.turns):
-        return turns_text(entry.turns)
+        return conversation_text(entry.turns, entry.steps)
     return steps_text(entry.steps)
 
 
@@ -221,7 +255,7 @@ def find_same(steps: list[dict], entries: list[Entry],
         return None
     cache = load_cache(config)
     try:
-        query = embed(turns_text(turns) if talk else steps_text(steps),
+        query = embed(conversation_text(turns, steps) if talk else steps_text(steps),
                       model=config.embed_model, host=config.ollama_url,
                       on_truncate=_log_truncation(config, "new episode"))
         best, best_score = None, -1.0
