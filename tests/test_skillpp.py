@@ -3855,7 +3855,7 @@ class TestLiveSessions(unittest.TestCase):
         self.assertEqual(sizes.get("add-eval-case"), 7)
         self.assertEqual(sizes.get("coverage-writeup"), 2)
         # Five runs, two of them cut at the review prompt: a recorded gap.
-        self.assertEqual(sizes.get("create-presentation"), 7)
+        self.assertEqual(sizes.get("create-presentation"), 9)
         self.assertEqual(sizes.get("write-linkedin-post"), 3)
 
     def test_there_are_live_sessions_to_score(self):
