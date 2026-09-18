@@ -215,6 +215,31 @@ def a3(entry: Entry) -> str:
     return a2(entry) + "\n" + tool_sequence(entry)
 
 
+def step_notes(entry: Entry) -> str:
+    """The agent's own one-line description of each step, where it wrote one."""
+    lines = []
+    for step in entry.steps:
+        payload = step.get("input") or {}
+        note = " ".join(str(payload.get("description") or "").split())
+        if not note:
+            target = payload.get("file_path") or payload.get("path")
+            note = f"{step.get('tool', '?')}" + (f" {Path(str(target)).name}" if target else "")
+        lines.append(note)
+    return "Steps: " + "; ".join(lines)
+
+
+def a4(entry: Entry) -> str:
+    """A2 plus the agent's step descriptions (A3, the tool sequence, was dropped).
+
+    Measured, not kept: same-procedure pairs rose (2x2 0.856 -> 0.864) but so did
+    one different-procedure pair, 0.849 -> 0.850, which pushes the safe floor to
+    0.86 and costs two correct merges (14 -> 12 of 61). The descriptions are
+    written in tool vocabulary — "Install pptxgenjs in scratchpad workspace"
+    against "Write cover.html" — plus verbs every procedure's steps contain.
+    """
+    return a2(entry) + "\n" + FILE.sub("<file>", step_notes(entry))
+
+
 RENDERINGS = {
     "R0": r0,
     "R1": r1,
@@ -224,6 +249,7 @@ RENDERINGS = {
     "A1": a1,
     "A2": a2,
     "A3": a3,
+    "A4": a4,
 }
 
 
