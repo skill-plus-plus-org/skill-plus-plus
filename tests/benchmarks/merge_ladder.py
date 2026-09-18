@@ -116,6 +116,9 @@ def r2(entry: Entry) -> str:
     return FILE.sub("<file>", turns_text(turns))
 
 
+REPLY_HEAD = 300
+
+
 def r3(entry: Entry) -> str:
     """R1, with each reply cut to its first 300 characters — what `matching`
     now embeds, so this row is the shipped rendering."""
@@ -134,12 +137,37 @@ def r4(entry: Entry) -> str:
     return FILE.sub("<file>", "\n\n".join(f"User: {t.get('prompt', '')}" for t in entry.turns))
 
 
+def a1(entry: Entry) -> str:
+    """R3 plus, per turn, the skills and MCP tools that turn used.
+
+    The one fact a conversation does not carry: which skill did the work. It is
+    already on the turn (`capture._turns`), costs one short line, and names a
+    capability rather than a subject.
+
+    Kept: merged 12 -> 13 of 61, danger 0.849 -> 0.848, the two-procedures-two-
+    files gap +0.057 -> +0.071, and the two scripted presentation runs crossed
+    the floor (0.844 -> 0.851) because both used `anthropic-skills:pptx`. Not
+    measurable on this corpus: two *different* procedures sharing one skill —
+    only one family here uses a skill at all. The unscripted runs built their
+    decks with the `Artifact` tool, which is not a skill and adds no line.
+    """
+    lines = []
+    for turn in entry.turns:
+        reply = " ".join(str(turn.get("reply", "")).split())[:REPLY_HEAD]
+        block = f"User: {turn.get('prompt', '')}\nAgent: {reply}"
+        if turn.get("used"):
+            block += "\nUsed: " + "; ".join(turn["used"])
+        lines.append(block)
+    return FILE.sub("<file>", "\n\n".join(lines))
+
+
 RENDERINGS = {
     "R0": r0,
     "R1": r1,
     "R2": r2,
     "R3": r3,
     "R4": r4,
+    "A1": a1,
 }
 
 
