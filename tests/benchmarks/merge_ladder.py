@@ -191,6 +191,30 @@ def a2(entry: Entry) -> str:
     return a1(entry) + "\n\n" + deliverable(entry)
 
 
+def tool_sequence(entry: Entry) -> str:
+    """The tools in order, runs of one tool collapsed: `Read, Bash x3, Write`."""
+    out: list[str] = []
+    for step in entry.steps:
+        tool = str(step.get("tool", "?"))
+        if out and out[-1][0] == tool:
+            out[-1][1] += 1
+        else:
+            out.append([tool, 1])
+    return "Tools: " + ", ".join(t if n == 1 else f"{t} x{n}" for t, n in out)
+
+
+def a3(entry: Entry) -> str:
+    """A2 plus one line: the tools the run used, in order.
+
+    Measured, not kept: merged 14/61 either way, danger unchanged, the gap
+    +0.072 -> +0.075. Two ways of building a deck share no tokens — `Skill,
+    Bash x4, Write, Bash x11, SendUserFile` against `Artifact x2, Bash, Write
+    x7, Artifact x2` — so it only strengthens runs that already executed alike,
+    which A1 and A2 covered; `Bash` and `Write` are in nearly every session.
+    """
+    return a2(entry) + "\n" + tool_sequence(entry)
+
+
 RENDERINGS = {
     "R0": r0,
     "R1": r1,
@@ -199,6 +223,7 @@ RENDERINGS = {
     "R4": r4,
     "A1": a1,
     "A2": a2,
+    "A3": a3,
 }
 
 
