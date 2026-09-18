@@ -161,6 +161,36 @@ def a1(entry: Entry) -> str:
     return FILE.sub("<file>", "\n\n".join(lines))
 
 
+DOC_EXT = re.compile(r"\.(pptx|pdf|docx|xlsx|html|md|csv)\b")
+
+
+def deliverable(entry: Entry) -> str:
+    """One line naming what the run produced, by kind, not by name."""
+    exts = {Path(str((s.get("input") or {}).get("file_path") or "")).suffix
+            for s in entry.steps if s.get("tool") in ("Write", "Edit", "NotebookEdit")}
+    for step in entry.steps:
+        exts |= {"." + m for m in DOC_EXT.findall(
+            str((step.get("input") or {}).get("command") or ""))}
+    exts = sorted(e for e in exts if e)
+    sent = any(s.get("tool") == "SendUserFile" for s in entry.steps)
+    return (f"Produced: {', '.join(exts) or 'nothing'}"
+            + ("; handed the file over" if sent else ""))
+
+
+def a2(entry: Entry) -> str:
+    """A1 plus one closing line: the kinds of file the run produced.
+
+    Kept, marginally: merged 13 -> 14 of 61, danger and the two-procedures-two-
+    files gap unchanged (0.849, +0.072). Both changes are inside the scripted
+    presentation family — the two pptx runs score 0.856 — while the unscripted
+    runs, which produced `.html, .json` through the Artifact tool, gained
+    nothing. `.md` is produced by LinkedIn posts, coverage write-ups and eval
+    cases alike, so this line says little outside file-producing work, and the
+    lowest floor with no wrong merge fell to 0.81.
+    """
+    return a1(entry) + "\n\n" + deliverable(entry)
+
+
 RENDERINGS = {
     "R0": r0,
     "R1": r1,
@@ -168,6 +198,7 @@ RENDERINGS = {
     "R3": r3,
     "R4": r4,
     "A1": a1,
+    "A2": a2,
 }
 
 
