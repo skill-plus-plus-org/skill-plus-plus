@@ -77,6 +77,13 @@ class Config:
         # step and it is what lets a later stage read intent instead of parsing
         # a command. `SKILLPP_DESCRIBE=0` turns it off.
         self.describe_steps = _bool_env("SKILLPP_DESCRIBE", True)
+        # Ask the same model, once per banked candidate, to name the procedure
+        # and say in one sentence what the run did. Without it a candidate is
+        # titled with a string capture happened to observe: on the real ledger
+        # that produced `.pptx`, `go` and `Looks good. What's next?`. It runs
+        # at fold time, not while the developer waits, and the sentence it also
+        # returns is what the review page shows. `SKILLPP_NAME=0` turns it off.
+        self.name_candidates = _bool_env("SKILLPP_NAME", True)
         # A boundary that would close an episode smaller than this is ignored:
         # one step is not a workflow.
         # Where a local model is served, and which one to ask. The episode

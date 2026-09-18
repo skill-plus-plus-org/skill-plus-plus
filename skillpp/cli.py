@@ -736,6 +736,51 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_retitle(args: argparse.Namespace) -> int:
+    """Name candidates the fold could not name, because no model answered.
+
+    Capture asks the local model for a name when it banks a candidate. When the
+    model is down the entry keeps the string capture observed — a prompt, or a
+    command — and that is what this walks. A title written by the person who
+    did the work (`--source commit`) or already written by the model is left
+    alone unless `--all` says otherwise.
+    """
+    from .ledger import STATUS_CANDIDATE
+    from .local import LocalModelUnavailable
+    from .summary import name_and_sentence, store_summary
+
+    config = Config(args.root)
+    ledger = Ledger(config)
+    entries = [e for e in ledger.all() if e.status == STATUS_CANDIDATE]
+    if args.id:
+        entries = [e for e in entries if e.id in set(args.id)]
+    if not args.all:
+        entries = [e for e in entries if e.title_source not in ("commit", "model")]
+    if not entries:
+        print("Nothing to retitle.")
+        return 0
+
+    renamed = 0
+    for entry in entries:
+        before = entry.title
+        try:
+            name, sentence = name_and_sentence(config, entry)
+        except LocalModelUnavailable as exc:
+            print(f"no local model: {exc}")
+            return 1
+        if sentence:
+            store_summary(config, entry, sentence)
+        if not name:
+            print(f"  {entry.id}  (no name returned, kept {before!r})")
+            continue
+        entry.title, entry.title_source = name, "model"
+        ledger.save(entry)
+        renamed += 1
+        print(f"  {entry.id}  {before!r}\n      → {name!r}")
+    print(f"{renamed} of {len(entries)} renamed.")
+    return 0
+
+
 def cmd_sift(args: argparse.Namespace) -> int:
     """Rank the review queue: what looks repeatable first, doubtful last.
 
@@ -1282,6 +1327,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", help="local model to ask; defaults to "
                                    "SKILLPP_LOCAL_MODEL")
     p.set_defaults(func=cmd_sift)
+
+    p = sub.add_parser("retitle",
+                       help="name candidates that were banked without a model "
+                            "(needs Ollama)")
+    p.add_argument("id", nargs="*", help="only these candidates")
+    p.add_argument("--all", action="store_true",
+                   help="also rename commit subjects and names already written "
+                        "by the model")
+    p.set_defaults(func=cmd_retitle)
 
     p = sub.add_parser("review", help="list candidates ready for review")
     p.add_argument("--all", action="store_true", help="include below-threshold candidates")

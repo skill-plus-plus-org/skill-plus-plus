@@ -67,6 +67,12 @@ class Entry:
     # decide anything, and new entries leave it empty.
     signature: str = ""
     title: str = ""
+    # Where `title` came from: "commit" (the subject of the commit that closed
+    # the episode), "model" (the local model named the procedure), "prompt" or
+    # "command" (a string capture observed and had to reuse), "" (dictated, or
+    # saved before this was recorded). Only the first two are names of a
+    # procedure; `skillpp retitle` walks the rest.
+    title_source: str = ""
     status: str = STATUS_CANDIDATE
     occurrences: int = 1
     created: str = field(default_factory=_now)
@@ -79,6 +85,12 @@ class Entry:
     # run that created the entry. What `skillpp draft` writes from; see
     # `capture._turns`. Empty on entries saved before it existed.
     turns: list[dict] = field(default_factory=list)
+    # One `{"session", "at"}` per recognition, in the order they happened —
+    # the provenance the review page lists under "Seen in". `sessions` cannot
+    # answer it: it deduplicates, and carries no time, so a candidate seen
+    # three times over two weeks looked like a single moment. Empty on entries
+    # saved before this existed; the page falls back to `sessions` then.
+    seen: list[dict] = field(default_factory=list)
     variants: list[list[dict]] = field(default_factory=list)
     deps_mcp: list[str] = field(default_factory=list)
     deps_cli: list[str] = field(default_factory=list)

@@ -33,9 +33,14 @@ from .config import Config
 from .ledger import (STATUS_CANDIDATE, STATUS_DISMISSED, STATUS_PROMOTED,
                      Ledger)
 from .lifecycle import parse_frontmatter
+from .summary import cached_summary, load_summaries, summaries_path
+from .sanitize import scrub
 
 CLI = Path(__file__).resolve().parent.parent / "bin" / "skillpp"
 PROMPTS = Path(__file__).resolve().parent / "prompts"
+# A session id reaches `_find_transcript` as a glob, so it is checked before it
+# gets there rather than trusted because the page sent it.
+_SAFE_SESSION = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 # `skillpp draft` gives the agent 900 seconds by default. A job still marked
 # running well past that died with the server that started it.
 DRAFT_STALE_SECONDS = 1200
@@ -167,70 +172,40 @@ def step_outline(steps: list[dict], limit: int = 30) -> list[str]:
     return lines[:limit] + ([f"… {len(lines) - limit} more"] if len(lines) > limit else [])
 
 
-def _summaries_path(config: Config) -> Path:
-    return config.root / "review_summaries.json"
-
-
-def load_summaries(config: Config) -> dict:
-    try:
-        data = json.loads(_summaries_path(config).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _cached_summary(cache: dict, entry) -> str:
-    """The cached sentence, if it still describes the entry as it stands."""
-    hit = cache.get(entry.id) or {}
-    return hit.get("text", "") if hit.get("steps") == len(entry.steps) else ""
+# The cache and the model call live in `skillpp.summary`, because capture asks
+# the same question when it banks a candidate (`capture._name_from_model`) and
+# stores the sentence there, so an opened row usually needs no model at all.
+_summaries_path = summaries_path
+_cached_summary = cached_summary
 
 
 def summarise(config: Config, entry_id: str) -> dict:
     """One sentence from the local model saying what a candidate's work did.
 
-    Asked only when a candidate is opened, then cached per entry and keyed on
-    step count, so the page never waits on a model to load and a candidate that
-    grows is described again. Stored beside the ledger, never in
-    `entry.description`, which decides whether a promoted skill loads.
+    Normally already cached by the fold that banked the entry. Asked here only
+    when it is not — entries banked while the model was down, and entries from
+    before capture named them — then cached per entry and keyed on step count,
+    so the page never waits on a model twice and a candidate that grows is
+    described again.
     """
-    from .boundary import render_step as step_line
-    from .local import LocalModelUnavailable, ask
+    from .local import LocalModelUnavailable
+    from .summary import name_and_sentence, store_summary
 
     entry = Ledger(config).get(entry_id)
     if not entry:
         return {"ok": False, "error": "no such entry"}
-    cache = load_summaries(config)
-    cached = _cached_summary(cache, entry)
+    cached = _cached_summary(load_summaries(config), entry)
     if cached:
         return {"ok": True, "summary": cached}
 
-    asks = "\n".join(f"- {i.strip()[:200]}" for i in entry.intents[:6] if i.strip())
-    reports = [st["closing_note"][:200] for st in entry.steps if st.get("closing_note")]
-    steps = "\n".join(f"- {step_line(st)[:140]}" for st in entry.steps[:12])
-    prompt = ((PROMPTS / "candidate_summary.md").read_text(encoding="utf-8")
-              .replace("{ASKS}", asks or "- (none recorded)")
-              .replace("{REPORTS}", "\n".join(f"- {r}" for r in reports[:4]) or "- (none)")
-              .replace("{STEPS}", steps or "- (none)"))
     try:
-        reply = ask(config.local_model, prompt, host=config.ollama_url,
-                    timeout=90.0, think=False)
+        _, text = name_and_sentence(config, entry)
     except LocalModelUnavailable as exc:
         return {"ok": False, "error": f"no local model: {exc}"}
-
-    # The model sometimes appends labelled blocks after the sentence, and opens
-    # with "The developer" despite being told to start with a verb.
-    line = next((l for l in reply.strip().splitlines() if l.strip()), "")
-    text = re.sub(r"^(the )?developer\s+", "", line.strip().strip("*"),
-                  flags=re.IGNORECASE).strip()
     if not text:
         return {"ok": False, "error": "the model returned nothing"}
-    text = text[0].upper() + text[1:]
 
-    cache[entry.id] = {"steps": len(entry.steps), "text": text}
-    path = _summaries_path(config)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
-    tmp.replace(path)
+    store_summary(config, entry, text)
     return {"ok": True, "summary": text}
 
 
@@ -251,6 +226,7 @@ def collect_state(config: Config) -> dict:
                      "ready": entry.occurrences >= threshold or entry.ready(threshold),
                      "days_left": days_left(config, entry),
                      **row_state(config, entry),
+                     "seen": seen_runs(entry),
                      "outline": step_outline(entry.steps),
                      "summary": _cached_summary(summaries, entry)})
     # Expired last of all. Otherwise most-recognized first; at the same count,
@@ -262,6 +238,67 @@ def collect_state(config: Config) -> dict:
                              (r["title"] or "").lower()))
     return {"threshold": threshold, "ttl": config.candidate_ttl_days,
             "rows": rows, "drafts": list_drafts(config)}
+
+
+def seen_runs(entry) -> list[dict]:
+    """Where this candidate was recognized, newest recognition last.
+
+    `entry.seen` is the record; entries banked before it existed fall back to
+    the session ids alone, with no time rather than a guessed one — `created`
+    and `last_seen` only bound the range, and printing either against every run
+    would be inventing provenance.
+    """
+    if entry.seen:
+        return [{"session": s.get("session", ""), "at": s.get("at", "")}
+                for s in entry.seen if s.get("session")]
+    return [{"session": sid, "at": ""} for sid in entry.sessions if sid]
+
+
+# A transcript is 2.9MB at the median and 25MB at the worst, nearly all of it
+# tool payloads. What a person wants when they ask where a pattern came from is
+# the conversation, so the page renders that and never serves the file.
+_TRANSCRIPT_TURNS = 60
+_TRANSCRIPT_PROMPT = 2000
+_TRANSCRIPT_REPLY = 4000
+
+
+def _by_prefix(session_id: str) -> str | None:
+    """A transcript whose name *starts* with this id, when exactly one does.
+
+    Entries banked from the live-session fixtures carry the short tag the
+    fixture is filed under (`f32d548f`) rather than the full uuid, and the
+    fixtures are real sessions whose transcripts are still on disk. Accepted
+    only when the prefix picks out a single file: a match that is ambiguous is
+    not provenance.
+    """
+    hits = list((Path.home() / ".claude" / "projects").glob(f"*/{session_id}*.jsonl"))
+    return str(hits[0]) if len(hits) == 1 else None
+
+
+def transcript(config: Config, session_id: str) -> dict:
+    """The conversation of one recorded session, for the "Seen in" list.
+
+    Read straight from Claude Code's own transcript rather than from the entry,
+    because a candidate keeps the turns of the run that created it and nothing
+    of the runs that merged into it — which are exactly the ones a person opens
+    this to see.
+    """
+    from .capture import _find_transcript, _transcript_turns
+
+    if not _SAFE_SESSION.match(session_id or ""):
+        return {"ok": False, "error": "not a session id"}
+    path = _find_transcript(session_id) or _by_prefix(session_id)
+    if not path:
+        return {"ok": False, "error": "no transcript on disk for this session"}
+    turns = _transcript_turns(path)
+    if not turns:
+        return {"ok": False, "error": "the transcript holds no conversation"}
+    # Scrubbed on the way out: `sanitize.scrub` runs over captured steps, and
+    # this text has never been through it.
+    out = [{"prompt": scrub(prompt)[:_TRANSCRIPT_PROMPT],
+            "reply": scrub("\n\n".join(reply))[:_TRANSCRIPT_REPLY]}
+           for prompt, reply in turns[:_TRANSCRIPT_TURNS]]
+    return {"ok": True, "turns": out, "total": len(turns)}
 
 
 def _skill_name(entry, skill_md: Path) -> str:
@@ -540,6 +577,7 @@ def make_handler(config: Config):
     actions = {
         "/api/accept": lambda p: accept(config, str(p.get("id", ""))),
         "/api/summary": lambda p: summarise(config, str(p.get("id", ""))),
+        "/api/transcript": lambda p: transcript(config, str(p.get("session", ""))),
         "/api/decline": lambda p: decline(config, str(p.get("id", ""))),
         "/api/reinstate": lambda p: reinstate(config, str(p.get("id", ""))),
         "/api/create": lambda p: create_skill(config, str(p.get("id", ""))),
@@ -700,6 +738,17 @@ PAGE = r"""<!doctype html>
  .sum.pending{color:var(--muted);font-style:italic}
  .outline{margin:0 0 10px;padding-left:20px;font-size:13px;color:#cbd2e1}
  .outline li{margin:2px 0}
+ .runs{list-style:none;margin:0;padding:0;font-size:13px}
+ .runs li{margin:2px 0}
+ .run{background:none;border:0;padding:0;font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+   color:var(--accent);cursor:pointer;text-decoration:underline dotted}
+ .run:hover{text-decoration:underline}
+ .when{color:var(--muted);margin-left:10px}
+ .convo{margin:6px 0 12px;padding:8px 12px;border-left:2px solid var(--line);max-height:340px;overflow:auto}
+ .convo .turn{margin:0 0 10px}
+ .convo .who{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+ .convo p{margin:2px 0;font-size:13px;white-space:pre-wrap;color:#cbd2e1}
+ .convo .more{color:var(--muted);font-style:italic}
  nav{display:flex;gap:4px}
  nav button{background:none;border:0;border-bottom:2px solid transparent;border-radius:0;
    padding:4px 10px;color:var(--dim)}
@@ -764,6 +813,7 @@ let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
 const inDrafts = r => ["drafted", "revising"].includes(r.state);
 let view = "candidates", open = new Set(), writing = new Set(), drafts = {}, answers = {};
 let openRows = new Set(), summarising = new Set(), summaryError = {};
+let openRuns = new Set(), convos = {}, convoError = {};
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -966,7 +1016,50 @@ function candidateBody(r){
     : summaryError[r.id] ? `<p class="sum pending">No summary: ${esc(summaryError[r.id])}</p>`
     : `<p class="sum pending">Summarising…</p>`;
   return `<h3>Summary</h3>${sum}
-    <h3>Steps</h3><ol class="outline">${r.outline.map(l => `<li>${esc(l)}</li>`).join("")}</ol>`;
+    <h3>Steps</h3><ol class="outline">${r.outline.map(l => `<li>${esc(l)}</li>`).join("")}</ol>
+    ${seenIn(r)}`;
+}
+
+// Where the work actually happened. The session id is the link: clicking it
+// reads Claude Code's own transcript and shows the conversation, because the
+// candidate only keeps the turns of the run that created it.
+function when(iso){
+  if(!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleString([], {day:"numeric", month:"short",
+                                               hour:"2-digit", minute:"2-digit"});
+}
+
+function seenIn(r){
+  if(!r.seen || !r.seen.length) return "";
+  const line = s => {
+    const open = openRuns.has(s.session);
+    const body = !open ? ""
+      : convoError[s.session] ? `<div class="convo"><p class="more">${esc(convoError[s.session])}</p></div>`
+      : convos[s.session] ? renderConvo(convos[s.session])
+      : `<div class="convo"><p class="more">Reading the transcript…</p></div>`;
+    return `<li><button class="run" data-run="${esc(s.session)}">${esc(s.session)}</button>
+      <span class="when">${esc(when(s.at))}</span>${body}</li>`;
+  };
+  return `<h3>Seen in</h3><ul class="runs">${r.seen.map(line).join("")}</ul>`;
+}
+
+function renderConvo(c){
+  const turns = c.turns.map(t => `<div class="turn"><span class="who">You</span><p>${esc(t.prompt)}</p>
+      ${t.reply ? `<span class="who">Agent</span><p>${esc(t.reply)}</p>` : ""}</div>`).join("");
+  const more = c.total > c.turns.length
+    ? `<p class="more">… ${c.total - c.turns.length} more turns in the transcript</p>` : "";
+  return `<div class="convo">${turns}${more}</div>`;
+}
+
+async function fetchConvo(session){
+  if(convos[session] || convoError[session]) return;
+  try {
+    const res = await (await fetch("/api/transcript", {method:"POST",
+                                                       body: JSON.stringify({session})})).json();
+    if(res.ok){ convos[session] = res; } else { convoError[session] = res.error || "failed"; }
+  } catch(e){ convoError[session] = String(e); }
+  if(view === "candidates") render();
 }
 
 async function fetchSummary(id){
@@ -1021,6 +1114,11 @@ function render(){
     const id = h.dataset.row;
     if(openRows.has(id)){ openRows.delete(id); } else { openRows.add(id); fetchSummary(id); }
     h.parentElement.classList.toggle("open");
+  });
+  list.querySelectorAll("[data-run]").forEach(b => b.onclick = () => {
+    const s = b.dataset.run;
+    if(openRuns.has(s)){ openRuns.delete(s); } else { openRuns.add(s); fetchConvo(s); }
+    render();
   });
   list.querySelectorAll("[data-goto]").forEach(a => a.onclick = () => {
     view = "drafts"; open.add(a.dataset.goto); render();

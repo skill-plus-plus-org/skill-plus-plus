@@ -792,8 +792,8 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
     deps_cli = sorted(_cli_dependencies(substantive))
 
     if existing:
-        existing.last_seen = datetime.now(timezone.utc).replace(
-            microsecond=0).isoformat()
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        existing.last_seen = now
         if cwd and cwd not in existing.projects:
             existing.projects.append(cwd)
         sid = session.get("session_id", "")
@@ -807,6 +807,9 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
         # sitting can reach the recurrence threshold on its own. Chosen anyway,
         # on 2026-09-17: a procedure repeated within a session is a repeat.
         existing.occurrences += 1
+        # Every recognition, not every distinct session: the count above works
+        # the same way, and two sightings inside one session are two lines.
+        existing.seen.append({"session": session.get("session_id", ""), "at": now})
         for intent in intents:
             if intent not in existing.intents:
                 existing.intents.append(intent)
@@ -822,13 +825,17 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
                 "occurrences": existing.occurrences,
                 "ready": existing.ready(config.recurrence_threshold)}
 
+    title, title_source = _title_for(intents, substantive)
     entry = Entry(
         id=new_id(config.ledger_dir),
-        title=_title_for(intents, substantive),
+        title=title,
+        title_source=title_source,
         status=STATUS_CANDIDATE,
         occurrences=1,
         projects=[cwd] if cwd else [],
         sessions=[session.get("session_id", "")] if session.get("session_id") else [],
+        seen=[{"session": session.get("session_id", ""),
+               "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}],
         intents=intents,
         steps=substantive,
         turns=turns,
@@ -838,6 +845,8 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
         source=source,
         unmatched=not match,
     )
+    if config.name_candidates:
+        _name_from_model(config, entry)
     ledger.save(entry)
     if match:
         # Cache its vector now, while the model is known to be up, so the next
@@ -1105,19 +1114,51 @@ def _subject_of(steps: list[dict]) -> str:
     return ""
 
 
-def _title_for(intents: list[str], steps: list[dict]) -> str:
+def _clip_title(text: str) -> str:
+    return (text[:70] + "…") if len(text) > 70 else text
+
+
+def _title_for(intents: list[str], steps: list[dict]) -> tuple[str, str]:
+    """A title and where it came from, without asking a model.
+
+    Only the commit subject is a name of the work; the rest are strings capture
+    observed and has to reuse, which is what `_name_from_model` replaces when a
+    local model answers.
+    """
     subject = _subject_of(steps)
     if subject:
-        return (subject[:70] + "…") if len(subject) > 70 else subject
+        return _clip_title(subject), "commit"
     if intents:
-        first = intents[0].strip().splitlines()[0]
-        return (first[:70] + "…") if len(first) > 70 else first
+        return _clip_title(intents[0].strip().splitlines()[0]), "prompt"
     for step in steps:
         if step.get("tool") == "Bash":
             cmd = str((step.get("input") or {}).get("command", "")).strip()
             if cmd:
-                return (cmd[:70] + "…") if len(cmd) > 70 else cmd
-    return "captured workflow"
+                return _clip_title(cmd), "command"
+    return "captured workflow", "command"
+
+
+def _name_from_model(config: Config, entry: Entry) -> None:
+    """Let the local model name the procedure, and cache its sentence.
+
+    Runs once, when the entry is banked, because the title is what the review
+    page lists *before* anything is opened — there is no lazy moment for it.
+    The commit subject is left alone: it was written after the work, by the
+    person doing it, and measured better than anything derived from a prompt.
+
+    Never fatal. A fold that cannot reach the model keeps the title it derived
+    and stays `prompt`/`command`, which is what `skillpp retitle` looks for.
+    """
+    from .summary import name_and_sentence, store_summary
+    try:
+        name, sentence = name_and_sentence(config, entry)
+    except LocalModelUnavailable as exc:
+        log_error(config, f"naming failed: {exc}")
+        return
+    if name and entry.title_source != "commit":
+        entry.title, entry.title_source = name, "model"
+    if sentence:
+        store_summary(config, entry, sentence)
 
 
 def keep_current(config: Config, session_id: str | None = None) -> dict:

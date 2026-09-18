@@ -8,12 +8,122 @@ while the steps underneath are wrong.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
 from .config import Config
 from .ledger import Entry, describe_step
 from .signals import Question, detect, effects, recurring_steps
+
+PROMPTS = Path(__file__).resolve().parent / "prompts"
+
+
+# -- the local model's name and sentence -----------------------------------
+#
+# One call, two surfaces: the name titles the candidate, the sentence is what
+# the review page shows when a row is opened. Capture can otherwise only reuse
+# a string it observed, which is how the real ledger ended up with 31 of 42
+# entries titled after stray prompts — `.pptx` three times, `go`, `Commit`,
+# `Looks good. What's next?`. The evidence handed to the model is the same
+# either way, so asking for both at once costs nothing over asking for one.
+
+
+def summaries_path(config: Config) -> Path:
+    return config.root / "review_summaries.json"
+
+
+def load_summaries(config: Config) -> dict:
+    try:
+        data = json.loads(summaries_path(config).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def cached_summary(cache: dict, entry: Entry) -> str:
+    """The cached sentence, if it still describes the entry as it stands."""
+    hit = cache.get(entry.id) or {}
+    return hit.get("text", "") if hit.get("steps") == len(entry.steps) else ""
+
+
+def store_summary(config: Config, entry: Entry, text: str) -> None:
+    """Cache the sentence beside the ledger, keyed on step count.
+
+    Never in `entry.description`, which decides whether a promoted skill loads.
+    """
+    cache = load_summaries(config)
+    cache[entry.id] = {"steps": len(entry.steps), "text": text}
+    path = summaries_path(config)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+
+
+# The model opens with "The developer" despite being told to start with a verb,
+# and sometimes appends a labelled block of its own after the two lines. The
+# bullet is defence rather than observation: asking for a name that starts with
+# an "-ing verb" got a literal `-` or `-ing` in front of 17 of 42 names on the
+# real ledger, and the instruction no longer spells it that way — but a model
+# that writes a list anyway must not put the hyphen on the page.
+_LEAD_IN_RE = re.compile(r"\A(the\s+)?developer\s+", re.IGNORECASE)
+_LABELLED_RE = re.compile(r"\A\*\*[^*\n]+:\*\*")
+_BULLET_RE = re.compile(r"\A(?:[-*+\u2022]+|\d+[.)])\s*")
+
+
+def _clean(line: str) -> str:
+    text = _BULLET_RE.sub("", line.strip().strip("*").strip())
+    text = _LEAD_IN_RE.sub("", text.strip()).strip()
+    return (text[0].upper() + text[1:]) if text else ""
+
+
+# A name is listed on every row, so it is cut at a word rather than mid-word:
+# `Crafting and refining LinkedIn announcements for a new article and l` is
+# what a hard 70-character clip produced.
+def _clip(text: str, limit: int = 70) -> str:
+    if len(text) <= limit:
+        return text.rstrip(" .,-")
+    head = text[:limit]
+    if " " in head:
+        head = head[:head.rindex(" ")]
+    return head.rstrip(" .,-") + "…"
+
+
+def name_and_sentence(config: Config, entry: Entry) -> tuple[str, str]:
+    """Ask the local model to name this procedure and say what the run did.
+
+    Returns `(name, sentence)`; the name is empty when the model answered with
+    one line only. Raises `LocalModelUnavailable` — the caller decides whether
+    that is fatal (a fold keeps the title it derived itself, the review page
+    reports it).
+    """
+    from .boundary import render_step as step_line
+    from .local import ask
+
+    asks = "\n".join(f"- {i.strip()[:200]}" for i in entry.intents[:6] if i.strip())
+    reports = [st["closing_note"][:200] for st in entry.steps if st.get("closing_note")]
+    steps = "\n".join(f"- {step_line(st)[:140]}" for st in entry.steps[:12])
+    prompt = ((PROMPTS / "candidate_summary.md").read_text(encoding="utf-8")
+              .replace("{ASKS}", asks or "- (none recorded)")
+              .replace("{REPORTS}", "\n".join(f"- {r}" for r in reports[:4]) or "- (none)")
+              .replace("{STEPS}", steps or "- (none)"))
+    reply = ask(config.local_model, prompt, host=config.ollama_url,
+                timeout=90.0, think=False)
+
+    lines = [l.strip() for l in reply.strip().splitlines()
+             if l.strip() and not _LABELLED_RE.match(l.strip())]
+    name = _clean(lines[0]) if lines else ""
+    sentence = _clean(lines[1]) if len(lines) > 1 else ""
+    # A model that ignores the two-line shape answers with the sentence alone.
+    # Take it as the sentence rather than the name: a wrong title is on every
+    # row of the page, a missing one only costs the fallback.
+    if not sentence:
+        name, sentence = "", name
+    # A model that writes `Name: the sentence` on one line has answered both
+    # questions in the wrong shape; the name is the half before the colon.
+    if not sentence and ": " in name:
+        name, sentence = name.split(": ", 1)
+    return _clip(name), sentence
 
 
 def render_proposal(entry: Entry, config: Config) -> str:

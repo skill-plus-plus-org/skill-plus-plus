@@ -524,7 +524,7 @@ class TestCapture(TempRoot):
         self.assertEqual(_subject_of(steps),
                          "add walkthrough-card case for Desk Booking")
         self.assertEqual(_title_for(["Looks good — commit"], steps),
-                         "add walkthrough-card case for Desk Booking")
+                         ("add walkthrough-card case for Desk Booking", "commit"))
 
     def test_commit_subject_parsing_falls_through_rather_than_guessing(self):
         """Unrecognised forms keep the old behaviour instead of inventing one."""
@@ -538,7 +538,7 @@ class TestCapture(TempRoot):
         # A rejected commit is not a completed task and must not name the entry.
         self.assertEqual(_subject_of([bash("git commit -m 'nope'", failed=True)]), "")
         self.assertEqual(_title_for(["ship the thing"], [bash("npm test")]),
-                         "ship the thing")
+                         ("ship the thing", "prompt"))
 
     def test_the_sift_is_shown_every_stated_intent(self):
         """The verification step lives at the end of a task, where the cap was.
@@ -3784,7 +3784,10 @@ class TestWeb(TempRoot):
         real = local.ask
         def fake(model, prompt, **kw):
             calls.append(model)
-            return "The developer ran the tests.\n\n**Concrete thing:** tests"
+            # Two lines, the shape `candidate_summary.md` asks for, plus a
+            # labelled block the model sometimes appends anyway.
+            return ("Running a project's test suite\n"
+                    "The developer ran the tests.\n\n**Concrete thing:** tests")
         local.ask = fake
         self.addCleanup(lambda: setattr(local, "ask", real))
 
@@ -3803,6 +3806,36 @@ class TestWeb(TempRoot):
         self.assertEqual(self._rows()["a"]["summary"], "")
         summarise(self.config, "a")
         self.assertEqual(len(calls), 2)
+
+    def test_a_row_says_where_the_pattern_was_recognized(self):
+        """"Seen in" is one line per recognition, not per distinct session."""
+        from skillpp.web import seen_runs
+        entry = self._save("a", occurrences=2, seen=[
+            {"session": "s1", "at": "2026-09-18T09:00:00+00:00"},
+            {"session": "s1", "at": "2026-09-18T11:00:00+00:00"}])
+        self.assertEqual(seen_runs(entry),
+                         [{"session": "s1", "at": "2026-09-18T09:00:00+00:00"},
+                          {"session": "s1", "at": "2026-09-18T11:00:00+00:00"}])
+        self.assertEqual(self._rows()["a"]["seen"], seen_runs(entry))
+
+    def test_an_entry_from_before_the_record_shows_ids_without_a_time(self):
+        """`created` and `last_seen` only bound the range; printing either
+        against every run would be inventing when the work happened."""
+        from skillpp.web import seen_runs
+        entry = self._save("old", occurrences=2)
+        entry.seen = []
+        self.assertEqual(seen_runs(entry),
+                         [{"session": "s0", "at": ""}, {"session": "s1", "at": ""}])
+
+    def test_a_transcript_is_only_read_for_something_shaped_like_a_session(self):
+        """The id reaches `_find_transcript` as a glob, so the page cannot
+        steer it at another directory."""
+        from skillpp.web import transcript
+        for bad in ("../../etc", "a/b", "*", ""):
+            self.assertEqual(transcript(self.config, bad)["error"], "not a session id")
+        missing = transcript(self.config, "nosuchsession0000")
+        self.assertFalse(missing["ok"])
+        self.assertIn("no transcript", missing["error"])
 
     def test_every_state_has_its_own_label_on_the_page(self):
         """A dismissed row once rendered as "Agent declined" with a retry
