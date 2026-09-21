@@ -6,6 +6,11 @@
 # Simulates three sessions of the same deploy workflow — including a leaked
 # token, a failed-then-retried command, and a target that changes between runs
 # — then drives the review surface over the resulting candidate.
+#
+# Needs Ollama with `nomic-embed-text`, which is what decides the three runs are
+# one procedure. Each session has a single prompt, so there is no gap for the
+# boundary judge to ask about, and naming is off, so the larger model is never
+# loaded.
 
 set -euo pipefail
 
@@ -13,7 +18,23 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT
 
+export SKILLPP_NAME=0
 SKILLPP="python3 $ROOT/bin/skillpp --root $SCRATCH/ledger"
+
+# Said up front: without the embedding model every session is held rather than
+# banked, and the walkthrough below would have nothing to show.
+python3 - "${SKILLPP_OLLAMA:-http://127.0.0.1:11434}" "${SKILLPP_EMBED_MODEL:-nomic-embed-text}" <<'EOF'
+import json, sys, urllib.request
+url, model = sys.argv[1], sys.argv[2]
+try:
+    with urllib.request.urlopen(f"{url}/api/tags", timeout=5) as resp:
+        names = [m.get("name", "") for m in json.load(resp).get("models", [])]
+except Exception as exc:
+    sys.exit(f"Ollama is not reachable at {url} ({exc}).\n"
+             f"Start it, then pull the model:  ollama pull {model}")
+if not any(n == model or n.startswith(model + ":") for n in names):
+    sys.exit(f"Ollama is running, but {model} is not pulled:  ollama pull {model}")
+EOF
 
 hook() { echo "$2" | $SKILLPP hook --event "$1" >/dev/null; }
 
@@ -33,7 +54,9 @@ session() {
     \"tool_input\":{\"command\":\"terraform apply -lock=false\"},\"tool_response\":{\"exit_code\":0}}"
   hook PostToolUse "{\"session_id\":\"$sid\",\"cwd\":\"/proj/api\",\"tool_name\":\"Bash\",
     \"tool_input\":{\"command\":\"./scripts/deploy.sh $target\"},\"tool_response\":{\"exit_code\":0}}"
-  hook SessionEnd "{\"session_id\":\"$sid\"}"
+  # What the SessionEnd hook starts in the background, run in the foreground
+  # here so the next step sees what it banked.
+  $SKILLPP fold-session "$sid"
 }
 
 banner() { printf '\n\033[1m── %s\033[0m\n' "$1"; }
@@ -49,12 +72,16 @@ if grep -rq "ghp_A1b2C3d4" "$SCRATCH/ledger/ledger/" 2>/dev/null; then
   echo "FAIL: token found in ledger"; exit 1
 fi
 echo "OK — no raw token on disk; redaction placeholders instead:"
-grep -rho "\[REDACTED:[a-z-]*\]" "$SCRATCH/ledger/ledger/" | sort -u | sed 's/^/  /'
+grep -rho "\[REDACTED:[a-z-]*\]" "$SCRATCH/ledger/ledger/" | sort -u | sed 's/^/  /' || echo "  (none)"
 
 banner "3. Candidates ready for review (threshold: 3 occurrences)"
 $SKILLPP review
 
-ID="$($SKILLPP review --json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
+ID="$($SKILLPP review --json | python3 -c 'import json,sys
+ready = json.load(sys.stdin)
+if not ready:
+    sys.exit("No candidate reached 3 occurrences: the three runs were not matched as one procedure.")
+print(ready[0]["id"])')"
 
 banner "4. The proposal — effects first, then evidence, then questions"
 $SKILLPP show "$ID"
