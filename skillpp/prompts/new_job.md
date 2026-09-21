@@ -11,9 +11,6 @@ Then they say:
 
     {PROMPT}{REPLY_AFTER}
 
-What they do next:
-{NEXT}
-
-Is that a new job, unrelated to the request above?
+{NEXT_BLOCK}Is that a new job, unrelated to the request above?
 
 Reply with exactly one word: yes or no.

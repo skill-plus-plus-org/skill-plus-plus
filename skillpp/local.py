@@ -50,7 +50,8 @@ def _num_ctx(prompt: str, reserve: int = 512) -> int:
 
 def ask(model: str, prompt: str, *, host: str = DEFAULT_HOST,
         timeout: float = 120.0, think: bool | None = None,
-        reserve: int = 512, meta: dict | None = None) -> str:
+        reserve: int = 512, meta: dict | None = None,
+        num_ctx: int | None = None) -> str:
     """Put *prompt* to *model* and return its reply.
 
     Temperature is zero: this is a classifier, and a classifier that answers
@@ -68,7 +69,8 @@ def ask(model: str, prompt: str, *, host: str = DEFAULT_HOST,
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": 0, "num_ctx": _num_ctx(prompt, reserve)},
+        "options": {"temperature": 0,
+                    "num_ctx": num_ctx or _num_ctx(prompt, reserve)},
     }
     if think is not None:
         payload["think"] = think
@@ -91,7 +93,7 @@ def ask(model: str, prompt: str, *, host: str = DEFAULT_HOST,
     # sends exactly what it always did.
     if meta is not None:
         meta.update({
-            "num_ctx": _num_ctx(prompt, reserve),
+            "num_ctx": num_ctx or _num_ctx(prompt, reserve),
             "prompt_tokens": payload.get("prompt_eval_count"),
             "answer_tokens": payload.get("eval_count"),
             "seconds": round((payload.get("total_duration") or 0) / 1e9, 2),

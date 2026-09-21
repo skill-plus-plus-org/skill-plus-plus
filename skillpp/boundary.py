@@ -152,6 +152,21 @@ STEP_OUTPUT_CHARS = 0
 JUDGE_THINKS = False
 _THINK_TIMEOUT = 180.0
 _THINK_RESERVE = 4096
+# One context size for every thinking call. Sized per prompt, it differed on
+# every call, and Ollama reloads the model whenever it changes: 44 of 45 calls
+# reloaded, 311s of a 1,013s run. The largest judge prompt is ~10k characters
+# (~2.6k tokens) and the longest reasoning seen ~870 tokens, so 8,192 holds
+# both with room to spare.
+_THINK_CTX = 8192
+
+# The section showing what the assistant did after the developer spoke. With
+# thinking on, the model read the question's "that" as these steps and judged
+# them: at the review prompt it agreed the instruction continued the task, then
+# called `pytest` and `npm test` "a shift from content review to code testing"
+# and answered "new job". Both settings exist to measure whether the section
+# helps, hurts, or only needs saying differently.
+SHOW_NEXT = True
+NEXT_LABEL = "What they do next:"
 
 
 def render_step(step: dict) -> str:
@@ -226,7 +241,7 @@ def render_step(step: dict) -> str:
 
 
 _SLOT_RE = re.compile(r"\{(GOAL|PRIOR|STEP_OUTPUT|STEP|REPLY_BEFORE|PROMPT|"
-                      r"REPLY_AFTER|NEXT)\}")
+                      r"REPLY_AFTER|NEXT_BLOCK)\}")
 
 
 def _block(label: str, text: str) -> str:
@@ -294,7 +309,7 @@ def build_prompt(goal: str, prior: list[str], step: dict,
         "PROMPT": said.strip()[:_PROMPT_CHARS] or "(nothing)",
         "REPLY_AFTER": _block("The assistant answered:",
                               extras.get("reply_after", "")),
-        "NEXT": nxt,
+        "NEXT_BLOCK": f"{NEXT_LABEL}\n{nxt}\n\n" if SHOW_NEXT else "",
     }
     # One pass, not a chain of `replace`: a reply can contain braces and JSON,
     # and text already filled in must never be read as a placeholder again.
@@ -320,7 +335,7 @@ def judge(step: dict, *, goal: str = "", prior: list[str] | None = None,
         if JUDGE_THINKS:
             reply = ask(model, prompt, host=host, think=True, meta=meta,
                         timeout=max(timeout, _THINK_TIMEOUT),
-                        reserve=_THINK_RESERVE)
+                        num_ctx=_THINK_CTX)
         else:
             reply = ask(model, prompt, host=host, timeout=timeout,
                         think=False, meta=meta)

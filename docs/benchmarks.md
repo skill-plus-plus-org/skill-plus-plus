@@ -1408,7 +1408,62 @@ that the tail would keep the review prompt at "no" is refuted. Thinking is the
 only thing that ever finds `263d65ce` step 9, and on this corpus it always
 pays for it with the review-prompt session.
 
-**The best configuration measured stays `--reply-before 400`, thinking off.** Nothing here changes a default: the
+**The best configuration measured stays `--reply-before 400`, thinking off.**
+
+### Thinking on: what "What they do next" does
+
+Why ask: at the review prompt, gemma4's reasoning agreed the instruction
+continued the task ("This is still focused on refining the content for the
+presentation"), then read the three steps after it — `ls`, `pytest`,
+`npm test` — as "a shift from content proposal/review to code testing/
+debugging" and answered "new job". The question's "that" comes straight after
+the steps, and thinking resolves it to them.
+
+Screened with thinking on, the context pinned at 8,192 tokens (per-prompt
+sizing reloaded the model on 44 of 45 calls), on the seven gaps that decide it,
+each judged under correct history — cuts only at the real boundaries:
+
+| gap | V0 3 steps | V1 none | V2 1 step | V3 2 steps | V4 relabelled | V5 + reply | V6 reply instead |
+|---|---|---|---|---|---|---|---|
+| `241955c7` step 6 ✓ | ok | ok | ✗ | ✗ | ok | ✗ | ok |
+| `263d65ce` step 9 ✓ | ok | ok | ok | ok | ok | ✗ | ok |
+| `698c7529` step 4, review | ✗ | ok | ok | ok | ✗ | ✗ | ok |
+| `698c7529` step 5, "go" | ok | ✗ | ✗ | ✗ | ✗ | ✗ | ok |
+| `2095a8af` step 35, docstring | ✗ | ✗ | ok | ✗ | ✗ | ✗ | ✗ |
+| `71448e61` step 5, the twin | ok | ✗ | ok | ok | ✗ | ok | ✗ |
+| `263d65ce` step 31 | ok | ok | ok | ok | ok | ok | ✗ |
+| **right** | **5/7** | 4/7 | **5/7** | 4/7 | 3/7 | 2/7 | 4/7 |
+
+V4 relabels the section "In answer to that, the assistant then:"; V5 adds the
+head of the assistant's reply to the new instruction (400 characters); V6 shows
+that reply instead of the steps.
+
+- **Thinking needs the section.** Without it the review prompt is fixed, but
+  the "Separate job" twin and the "go" after the review become false cuts: the
+  steps are what show a look-up turning straight into the add it prepared, and
+  "go" turning into building the deck.
+- **Rewording did not help.** Tying the steps to the instruction (V4) made
+  gemma4 cut more, as if invited to judge whether the steps fit the request.
+  The assistant's own reply, added (V5), made every new request sound like a
+  continuation — "Using that as template. Added…" — and lost both real
+  boundaries; at the review prompt, "I checked all 30 commands…" was read and
+  the cut made anyway.
+- **The steps mislead at one gap and are load-bearing at the others.** Every
+  gap is right under some variant and no variant gets them all: these gaps sit
+  near gemma4's edge with thinking on, and small input changes flip them in
+  inconsistent directions.
+
+One pattern is visible and deliberately not claimed: cutting only where V0 and
+V6 both say "yes" gets 6/7, each vetoing the other's false cuts. It was found
+by looking at these same seven gaps, and would double the thinking cost.
+
+The step-count results also show why 698c7529 step 5 was a false cut in the
+full run: step 4 had just been cut, so step 5 was judged as the start of a
+fresh task. Given correct history, the default reads it as a continuation.
+
+**Conclusion unchanged: thinking on, the defaults are as good as any framing
+of the next steps; the best configuration remains `--reply-before 400`,
+thinking off.** Nothing here changes a default: the
 production judge is still gemma3n with no reply shown, and gemma3n has not been
 measured with the reply tail.
 

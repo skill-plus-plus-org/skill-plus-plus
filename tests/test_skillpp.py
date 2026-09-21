@@ -4831,7 +4831,8 @@ class TestJudgeInput(unittest.TestCase):
         self.boundary = boundary
         saved = {k: getattr(boundary, k) for k in (
             "REPLY_BEFORE_CHARS", "REPLY_AFTER_CHARS", "STEP_OUTPUT_CHARS",
-            "JUDGE_THINKS", "PRIOR_STEPS", "NEXT_STEPS", "ask")}
+            "JUDGE_THINKS", "PRIOR_STEPS", "NEXT_STEPS", "SHOW_NEXT",
+            "NEXT_LABEL", "ask")}
         self.addCleanup(lambda: [setattr(boundary, k, v) for k, v in saved.items()])
 
     def _prompts(self):
@@ -4901,6 +4902,29 @@ class TestJudgeInput(unittest.TestCase):
         # The start of the answer, cut the same way.
         self.assertEqual(after, "Added atlas_card_staged to …")
 
+    def test_the_next_steps_section_can_be_removed_or_relabelled(self):
+        """With thinking on, the model judged the steps under "What they do
+        next" instead of the instruction; both settings exist to measure that."""
+        shown = self._gap()
+        self.assertIn("What they do next:\n    ran `npm test`\n\nIs that", shown)
+        removed = self._gap(SHOW_NEXT=False)
+        self.assertNotIn("What they do next", removed)
+        self.assertNotIn("npm test", removed)
+        self.assertIn("Separate job: add a case\n\nIs that a new job", removed)
+        relabelled = self._gap(SHOW_NEXT=True,
+                               NEXT_LABEL="In answer to that, the assistant then:")
+        self.assertIn("In answer to that, the assistant then:\n    ran `npm test`",
+                      relabelled)
+
+    def test_thinking_runs_at_one_context_size(self):
+        """Sized per prompt, every thinking call reloaded the model."""
+        b = self.boundary
+        b.JUDGE_THINKS = True
+        sent = {}
+        b.ask = lambda model, prompt, **kw: (sent.update(kw), "no")[1]
+        b.judge({"tool": "Bash", "input": {"command": "x"}}, model="m", host="h")
+        self.assertEqual(sent["num_ctx"], b._THINK_CTX)
+
     def test_full_shows_everything(self):
         b = self.boundary
         self.assertEqual(b._head("a b c d", b.FULL), "a b c d")
@@ -4938,7 +4962,7 @@ class TestJudgeInput(unittest.TestCase):
         self.assertTrue(b.judge(step, model="m", host="h"))
         self.assertIs(sent["think"], True)
         self.assertGreaterEqual(sent["timeout"], 180)
-        self.assertGreater(sent["reserve"], 512)
+        self.assertGreater(sent["num_ctx"], 4096)
         # Reasoning leaked into the answer is no verdict, not a guessed one.
         b.ask = lambda model, prompt, **kw: "Well, no — on reflection yes it is"
         meta: dict = {}

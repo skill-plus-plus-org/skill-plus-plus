@@ -241,6 +241,11 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--step-output", type=_chars, default=None,
                     help="what the step before the gap returned, in characters "
                          "or `full` (default: not shown)")
+    ap.add_argument("--no-next", action="store_true",
+                    help="leave out the steps after the gap entirely")
+    ap.add_argument("--next-label", default=None,
+                    help="the line that introduces the steps after the gap "
+                         "(default boundary.NEXT_LABEL)")
     ap.add_argument("--think", action="store_true",
                     help="let the judge reason before answering (default: off)")
     ap.add_argument("--describe", action="store_true",
@@ -277,6 +282,9 @@ def main(argv: list[str]) -> int:
     if args.step_output is not None:
         boundary.STEP_OUTPUT_CHARS = args.step_output
     boundary.JUDGE_THINKS = args.think
+    boundary.SHOW_NEXT = not args.no_next
+    if args.next_label is not None:
+        boundary.NEXT_LABEL = args.next_label
     boundary.SEND_DESCRIPTION = args.describe
     if args.summarise:
         # Keep the summary whole and let the judge read it — the configuration
@@ -291,6 +299,7 @@ def main(argv: list[str]) -> int:
              "reply_after": boundary.REPLY_AFTER_CHARS,
              "step_output": boundary.STEP_OUTPUT_CHARS,
              "think": boundary.JUDGE_THINKS,
+             "show_next": boundary.SHOW_NEXT, "next_label": boundary.NEXT_LABEL,
              "describe": boundary.SEND_DESCRIPTION, "summarise": args.summarise}
 
     config = Config()
