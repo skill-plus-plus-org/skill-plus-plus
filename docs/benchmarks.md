@@ -862,7 +862,7 @@ at `_VALUE_CHARS=80`, ten sessions, `263d65ce` skipped:
 | session | work steps | rule ON | rule OFF |
 | --- | --- | --- | --- |
 | `1c3c9422` desk-booking | 54 | **BROKE** 0/1 | ok 1/1 |
-| `2095a8af` timesheet-timesheet | 50 | **BROKE** 0/1 | ok 1/1 |
+| `2095a8af` timesheet | 50 | **BROKE** 0/1 | ok 1/1 |
 | `a8b61dae` failed-commit-then-retry | 28 | **BROKE** 0/1 | ok 1/1 |
 | `5c7b0f81` coverage-writeup-run2 | | FIXED | FIXED |
 | `95b6bde7` mcp-retrieval-then-compare | | FIXED | FIXED |
