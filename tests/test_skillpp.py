@@ -4649,6 +4649,22 @@ class TestFoldPending(TempRoot):
         popen.return_value.wait.assert_not_called()
 
 
+class TestShippedCommands(unittest.TestCase):
+    """`commands/` is the source `install` copies from; `.claude/commands/` is
+    the copy `skillpp draft` relies on, because the agent runs from this
+    checkout and resolves `/skillpp-draft` there. An edit made to one and not
+    the other drafts with instructions nobody reviewed."""
+
+    def test_the_two_copies_are_identical(self):
+        repo = Path(__file__).resolve().parent.parent
+        source = {p.name: p.read_bytes() for p in (repo / "commands").glob("*.md")}
+        copy = {p.name: p.read_bytes() for p in (repo / ".claude" / "commands").glob("*.md")}
+        self.assertTrue(source)
+        self.assertEqual(sorted(source), sorted(copy))
+        for name in source:
+            self.assertEqual(source[name], copy[name], f"{name} differs")
+
+
 class TestInstallScopes(TempRoot):
     """Where the hooks go is said out loud, and they come back out cleanly.
 
