@@ -137,14 +137,25 @@ def setUpModule() -> None:
     # slower still — it writes a sentence where the judge writes one word.
     boundary.describe_in_session = (
         lambda config, session, step, reply="": "")
+    # And for naming, which every fold that banks a new entry asks for. It was
+    # the one call left real: with Ollama up the suite took eight minutes and
+    # kept a 7.7 GB model resident afterwards; with it down, every fold waited
+    # on a refused connection. A candidate the model never named keeps the
+    # title capture gave it, which is what these tests assert against.
+    global _REAL_NAME
+    import skillpp.capture as capture
+    _REAL_NAME = capture._name_from_model
+    capture._name_from_model = lambda config, entry: None
 
 
 def tearDownModule() -> None:
     import skillpp.boundary as boundary
+    import skillpp.capture as capture
     import skillpp.matching as matching
     boundary.judge_session = _REAL_JUDGE
     boundary.describe_in_session = _REAL_DESCRIBE
     matching.embed = _REAL_EMBED
+    capture._name_from_model = _REAL_NAME
 
 
 def _marker_judge(config, session, verdict=is_marker):
@@ -4717,6 +4728,15 @@ class TestInstallScopes(TempRoot):
 
 class TestDoctor(TempRoot):
     """One command that answers "is skillpp actually running?"."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # Doctor asks Ollama which models it holds. Answered here, so the result
+        # does not depend on whether this machine runs Ollama.
+        import skillpp.cli as cli
+        real = cli._available_models
+        cli._available_models = lambda config: ([], "not reachable (stubbed)")
+        self.addCleanup(lambda: setattr(cli, "_available_models", real))
 
     def _run(self, *argv):
         import io
