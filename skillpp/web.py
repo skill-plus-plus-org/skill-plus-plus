@@ -856,6 +856,12 @@ function renderNav(){
 function mdInline(raw){
   const codes = [];
   let t = raw.replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return "@@code" + (codes.length - 1) + "@@"; });
+  // A backtick left unmatched means a code span was cut in two — a command
+  // that ran over a line break. Emphasis would then eat its asterisks: a real
+  // draft rendered `rm -f slide-*.jpg` as `rm -f slide-.jpg`. Show it as
+  // written rather than guess; text on the page must never go missing.
+  if(t.includes("`")) return t.replace(/@@code(\d+)@@/g, (m, i) => "`" + codes[i] + "`")
+    .split("`").map(esc).join("`");
   t = esc(t)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(?<![*\w])\*([^*\s][^*]*?)\*(?![*\w])/g, "<em>$1</em>")

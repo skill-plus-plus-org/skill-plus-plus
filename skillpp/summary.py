@@ -314,10 +314,10 @@ def scaffold_skill(
 
     `auto` chooses on `bool(entry.turns)`. Resolved here rather than in
     `cmd_scaffold` so every caller gets it and a new one cannot get it wrong.
-    Requirements and destructive operations stay in both modes: they are
-    derived from tool calls, which `show --json --draft` withholds, so dropping
-    them would lose the "if a requirement is missing, stop" contract with no
-    way for the agent to recover it.
+    Requirements stay in both modes: the "if a requirement is missing, stop"
+    contract is a fact, not a judgement. Destructive operations go to the
+    agent instead — `show --json --draft` lists them — because whether a
+    deletion matters is a judgement, and code made the wrong one.
     """
     full = body == "full" or (body == "auto" and not getattr(entry, "turns", None))
     answers = answers or {}
@@ -385,10 +385,16 @@ def scaffold_skill(
                   "came back, which skills did the work. Leave the frontmatter "
                   "and the sections above as they are.", ""]
 
-    if eff["destructive"]:
+    # Only in full mode. With turns, the agent is handed these commands in
+    # `show --json --draft` and writes the warning itself — code can flag `rm`,
+    # it cannot tell a dropped database from a procedure deleting its own
+    # scratch images, and the verbatim version shipped the second as a warning.
+    if full and eff["destructive"]:
         lines += ["## Destructive operations", "",
                   "These steps change or remove state. Confirm before running:", ""]
-        lines += [f"- `{c}`" for c in eff["destructive"]]
+        # One line each: a raw newline inside a bullet's backticks splits the
+        # code span on render, and the page read `slide-*.jpg` as italics.
+        lines += [f"- `{c.replace(chr(10), ' ⏎ ')}`" for c in eff["destructive"]]
         lines.append("")
 
     answered = {k: v for k, v in answers.items() if k not in ("when_to_use",) and v}

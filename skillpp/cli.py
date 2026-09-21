@@ -1039,10 +1039,23 @@ def cmd_show(args: argparse.Namespace) -> int:
         # What a draft is written from: the conversation, not the raw steps or
         # the questions generated from them, which buried the procedure under
         # mechanics and session paths when a real run was drafted both ways.
+        from .signals import effects, recurring_steps
+        from .summary import _cli_of
+        steps = recurring_steps(entry)
         print(json.dumps({
             "id": entry.id, "title": entry.title, "occurrences": entry.occurrences,
             "turns": entry.turns,
-            "deps_cli": entry.deps_cli, "deps_mcp": entry.deps_mcp,
+            # Filtered like the frontmatter is, not the raw stored union —
+            # the agent was being handed `')` as a dependency too.
+            "deps_cli": _cli_of(entry, steps), "deps_mcp": entry.deps_mcp,
+            # The one fact from the tool calls the agent needs and cannot see:
+            # what the run deleted or overwrote. It decides whether each one
+            # matters and says so in plain words. Pasting these verbatim into
+            # the skill put `rm -f slide-*.jpg` — a procedure clearing its own
+            # render output in a scratch folder — under a safety heading, with
+            # the session's temp paths attached.
+            "destructive": [c.replace("\n", " ⏎ ")[:400]
+                            for c in effects(steps)["destructive"]],
         }, indent=2))
         return 0
     if args.json:

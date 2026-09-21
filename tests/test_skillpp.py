@@ -994,9 +994,24 @@ class TestScaffold(unittest.TestCase):
         self.assertNotIn("## Steps", text)
         self.assertNotIn("<!-- TODO", text)
         self.assertNotIn("## When to use", text)
-        # Facts derived from tool calls the agent is never shown.
+        # A fact: stays.
         self.assertIn("## Requirements", text)
-        self.assertIn("## Destructive operations", text)
+        # A judgement: handed to the agent in `show --json --draft` instead.
+        # Pasted verbatim, it flagged a procedure deleting its own scratch
+        # images and shipped the session's temp paths as a safety warning.
+        self.assertNotIn("## Destructive operations", text)
+
+    def test_a_destructive_command_is_one_line_in_full_mode(self):
+        """A raw newline inside a bullet's backticks split the code span when
+        the page rendered it, and `slide-*.jpg` came out as `slide-.jpg`."""
+        entry = Entry(id="abc", signature="s", title="render",
+                      steps=[bash('S=/tmp/x\ncd "$S" && rm -f slide-*.jpg')])
+        section = scaffold_skill(entry, "r", "d").split(
+            "## Destructive operations")[1].split("##")[0]
+        bullets = [l for l in section.splitlines() if l.startswith("- ")]
+        self.assertEqual(len(bullets), 1)
+        self.assertIn("slide-*.jpg", bullets[0])
+        self.assertIn("⏎", bullets[0])
 
     def test_the_frontmatter_is_the_same_in_both_modes(self):
         """`provenance`, `tier` and `occurrences` are read back by the ledger
@@ -4713,6 +4728,69 @@ class TestScaffoldCommand(TempRoot):
         code, _, err = self._run("nope", "--name", "n")
         self.assertEqual(code, 1)
         self.assertIn("No ledger entry", err)
+
+
+class TestDraftInput(TempRoot):
+    """What the drafting agent is handed by `show --json --draft`."""
+
+    def _show(self, eid):
+        import io
+        from skillpp.cli import main
+        out, real = io.StringIO(), sys.stdout
+        sys.stdout = out
+        try:
+            main(["--root", str(self.config.root), "show", eid, "--json", "--draft"])
+        finally:
+            sys.stdout = real
+        return json.loads(out.getvalue())
+
+    def test_the_agent_is_told_what_the_run_deleted(self):
+        """It cannot see tool calls, and whether a deletion matters is its
+        call to make — so the commands reach it as input, never as output."""
+        Ledger(self.config).save(Entry(
+            id="d1", signature="s", title="render a deck",
+            steps=[bash("node build.js"), bash("rm -f slide-*.jpg")],
+            turns=[{"prompt": "build it", "reply": "built", "used": []}]))
+        shown = self._show("d1")
+        self.assertEqual(shown["destructive"], ["rm -f slide-*.jpg"])
+        self.assertNotIn("steps", shown)
+
+    def test_the_agent_is_not_handed_garbage_dependencies(self):
+        Ledger(self.config).save(Entry(
+            id="d2", signature="s", title="t", deps_cli=["')", "cp", "npm"],
+            steps=[bash("npm test")],
+            turns=[{"prompt": "go", "reply": "ok", "used": []}]))
+        self.assertEqual(self._show("d2")["deps_cli"], ["npm"])
+
+
+class TestReviewPageRendering(unittest.TestCase):
+    """The page's markdown renderer, executed — it is JavaScript, so asserting
+    on its source would prove nothing about what a reviewer sees."""
+
+    def _inline(self, source):
+        import re
+        import shutil
+        import subprocess
+        from skillpp.web import PAGE
+        if not shutil.which("node"):
+            self.skipTest("node is not installed")
+        esc = re.search(r"const esc = .*?;\n", PAGE, re.S)
+        inline = re.search(r"function mdInline\(raw\)\{.*?\n\}", PAGE, re.S)
+        script = (esc.group(0) + "\n" + inline.group(0) +
+                  f"\nprocess.stdout.write(mdInline({json.dumps(source)}));")
+        return subprocess.run(["node", "-e", script], capture_output=True,
+                              text=True, check=True).stdout
+
+    def test_a_cut_code_span_loses_no_characters(self):
+        """A real draft showed `rm -f slide-*.jpg` as `rm -f slide-.jpg`."""
+        out = self._inline("- `cd x && rm -f slide-*.jpg && ls slide-*.jpg")
+        self.assertEqual(out.count("slide-*.jpg"), 2)
+        self.assertNotIn("<em>", out)
+
+    def test_code_and_emphasis_still_render(self):
+        out = self._inline("run `rm -f a*.jpg` then *look*")
+        self.assertIn("<code>rm -f a*.jpg</code>", out)
+        self.assertIn("<em>look</em>", out)
 
 
 class TestSessionEndIsAsync(TempRoot):

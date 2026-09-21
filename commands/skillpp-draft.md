@@ -88,10 +88,17 @@ python3 bin/skillpp scaffold <id> --name <skill-name> \
 afterwards, so a draft written anywhere else is reported as no draft at all,
 however good it is.
 
-The scaffold gives you the frontmatter, `## Requirements` and, where the run
-touched something destructive, `## Destructive operations`. Those are facts
+The scaffold gives you the frontmatter and `## Requirements`. Those are facts
 derived from tool calls you were not shown — leave them, and leave the
 frontmatter exactly as it is; the ledger and the review page read it.
+
+`show --json --draft` also lists `destructive`: commands in the run that
+deleted or overwrote something. Judge each one. Where it destroys something a
+reader would care about — data, a deployment, someone else's work — say so in
+plain words at the step that does it, and tell the reader to confirm first.
+Where it only clears the procedure's own temporary output, such as removing old
+preview images before rendering new ones, leave it out: a warning that fires on
+everything is a warning nobody reads. Never paste the command or its paths.
 
 Where the candidate has `turns`, that is all the scaffold writes: it leaves a
 `<!-- skillpp:write-the-procedure -->` marker where the procedure belongs.
