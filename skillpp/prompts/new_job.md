@@ -5,11 +5,11 @@ A developer has been working on one task. What they asked for, in order:
 What they have done on it so far:
 {PRIOR}
 
-Now they {STEP}
+Now they {STEP}{STEP_OUTPUT}{REPLY_BEFORE}
 
 Then they say:
 
-    {PROMPT}
+    {PROMPT}{REPLY_AFTER}
 
 What they do next:
 {NEXT}

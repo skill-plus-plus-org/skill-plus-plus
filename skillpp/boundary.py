@@ -62,6 +62,8 @@ Framings tried and rejected, on a 13-case probe:
 
 from __future__ import annotations
 
+import re
+
 from .local import PROMPTS, LocalModelUnavailable, ask, yes_no
 
 # How much of the span behind the step to show. Measured on the live sessions,
@@ -125,6 +127,31 @@ _VALUE_CHARS = 80
 # Capture still stores it, and the ledger still shows it. This governs one thing
 # — what the judge is shown. The benchmarks flip it to re-measure.
 SEND_DESCRIPTION = False
+
+# Three things the judge has never been shown, each off by default so the
+# question renders exactly as it was measured. `FULL` shows all of it. They
+# exist to be measured one at a time — see `tests/benchmarks/judge_replay.py`.
+#
+# * the tail of what the assistant said last before the developer spoke —
+#   the hand-off the next instruction either answers or ignores;
+# * the head of what it said in reply to that instruction — how it read it;
+# * what the step before the gap returned.
+FULL = -1
+REPLY_BEFORE_CHARS = 0
+REPLY_AFTER_CHARS = 0
+STEP_OUTPUT_CHARS = 0
+
+# Whether the judge may reason before answering. Off: it was always asked for
+# one word, and `gemma3n` cannot think at all. Affordable to measure now that
+# the judge runs detached at session end rather than inside a hook.
+#
+# Thinking needs room of its own. `local._num_ctx` reserves 512 tokens past the
+# prompt, and a model that writes more than that before answering has its
+# context shifted silently — it loses the start of its own question. The 30s
+# timeout would also cut it off, and an unanswered gap is no verdict at all.
+JUDGE_THINKS = False
+_THINK_TIMEOUT = 180.0
+_THINK_RESERVE = 4096
 
 
 def render_step(step: dict) -> str:
@@ -198,8 +225,53 @@ def render_step(step: dict) -> str:
     return core
 
 
+_SLOT_RE = re.compile(r"\{(GOAL|PRIOR|STEP_OUTPUT|STEP|REPLY_BEFORE|PROMPT|"
+                      r"REPLY_AFTER|NEXT)\}")
+
+
+def _block(label: str, text: str) -> str:
+    """A labelled, indented slot — or nothing, so an off slot adds no bytes."""
+    return f"\n\n{label}\n\n    {text}" if text else ""
+
+
+def _head(text: str, limit: int) -> str:
+    text = " ".join(str(text or "").split())
+    if limit == FULL or len(text) <= limit:
+        return text
+    cut = text[:limit]
+    return (cut[:cut.rfind(" ")] if " " in cut else cut) + " …"
+
+
+def _tail(text: str, limit: int) -> str:
+    text = " ".join(str(text or "").split())
+    if limit == FULL or len(text) <= limit:
+        return text
+    cut = text[-limit:]
+    return "… " + (cut[cut.find(" ") + 1:] if " " in cut else cut)
+
+
+def gap_extras(steps: list[dict], index: int, said: list[dict]) -> dict:
+    """The optional slots for one gap, cut to the current settings."""
+    from .segment import is_prompt
+
+    out = {}
+    if STEP_OUTPUT_CHARS:
+        out["step_output"] = _head(steps[index].get("tool_returned", ""),
+                                   STEP_OUTPUT_CHARS)
+    if REPLY_BEFORE_CHARS:
+        # The reply to the last prompt before the gap: what the assistant said
+        # last, including whatever it reported after its final tool call.
+        before = next((s for s in reversed(steps[:index])
+                       if is_prompt(s) and s.get("reply")), None)
+        if before:
+            out["reply_before"] = _tail(before["reply"], REPLY_BEFORE_CHARS)
+    if REPLY_AFTER_CHARS and said and said[-1].get("reply"):
+        out["reply_after"] = _head(said[-1]["reply"], REPLY_AFTER_CHARS)
+    return out
+
+
 def build_prompt(goal: str, prior: list[str], step: dict,
-                 said: str, follow: list[str]) -> str:
+                 said: str, follow: list[str], extras: dict | None = None) -> str:
     """The question, filled in. Every slot in it was measured.
 
     `{PRIOR}` falls back to "(nothing yet)" rather than rendering an empty
@@ -211,28 +283,79 @@ def build_prompt(goal: str, prior: list[str], step: dict,
     template = (PROMPTS / "new_job.md").read_text(encoding="utf-8")
     lines = "\n".join(f"    {p}" for p in prior) or "    (nothing yet)"
     nxt = "\n".join(f"    {p}" for p in follow) or "    (nothing yet)"
-    return (template
-            .replace("{GOAL}", goal.strip() or "(not stated)")
-            .replace("{PRIOR}", lines)
-            .replace("{STEP}", render_step(step))
-            .replace("{PROMPT}", said.strip()[:_PROMPT_CHARS] or "(nothing)")
-            .replace("{NEXT}", nxt))
+    extras = extras or {}
+    values = {
+        "GOAL": goal.strip() or "(not stated)",
+        "PRIOR": lines,
+        "STEP": render_step(step),
+        "STEP_OUTPUT": _block("It returned:", extras.get("step_output", "")),
+        "REPLY_BEFORE": _block("After that, the assistant told them:",
+                               extras.get("reply_before", "")),
+        "PROMPT": said.strip()[:_PROMPT_CHARS] or "(nothing)",
+        "REPLY_AFTER": _block("The assistant answered:",
+                              extras.get("reply_after", "")),
+        "NEXT": nxt,
+    }
+    # One pass, not a chain of `replace`: a reply can contain braces and JSON,
+    # and text already filled in must never be read as a placeholder again.
+    return _SLOT_RE.sub(lambda m: values[m.group(1)], template)
 
 
 def judge(step: dict, *, goal: str = "", prior: list[str] | None = None,
           said: str = "", follow: list[str] | None = None,
-          model: str, host: str, timeout: float = DEFAULT_TIMEOUT) -> bool | None:
+          model: str, host: str, timeout: float = DEFAULT_TIMEOUT,
+          extras: dict | None = None, meta: dict | None = None) -> bool | None:
     """Did the developer start a new job after *step*?
 
     ``None`` means no opinion — no model, a timeout, an answer that is neither
-    yes nor no — and `segment` treats it as "not a boundary".
+    yes nor no — and `segment` treats it as "not a boundary". *meta*, when
+    given, is filled with the prompt, the raw answer and the model's counts,
+    for the benchmarks.
     """
-    prompt = build_prompt(goal, list(prior or []), step, said, list(follow or []))
+    prompt = build_prompt(goal, list(prior or []), step, said,
+                          list(follow or []), extras)
+    if meta is not None:
+        meta["prompt_chars"] = len(prompt)
     try:
-        reply = ask(model, prompt, host=host, timeout=timeout, think=False)
-    except LocalModelUnavailable:
+        if JUDGE_THINKS:
+            reply = ask(model, prompt, host=host, think=True, meta=meta,
+                        timeout=max(timeout, _THINK_TIMEOUT),
+                        reserve=_THINK_RESERVE)
+        else:
+            reply = ask(model, prompt, host=host, timeout=timeout,
+                        think=False, meta=meta)
+    except LocalModelUnavailable as exc:
+        if meta is not None:
+            meta["error"] = str(exc)
+        return None
+    if meta is not None:
+        meta["answer"] = reply
+    # With thinking on, the reasoning comes back in its own field. If it leaks
+    # into the answer, `yes_no` — which reads every word — could pick up a
+    # "no" from the middle of an argument. An answer longer than a few words
+    # is no verdict rather than a guessed one.
+    if JUDGE_THINKS and (not reply.strip() or len(reply.split()) > 5):
+        if meta is not None:
+            meta["unclean"] = True
         return None
     return yes_no(reply)
+
+
+def judge_gap(steps: list[dict], index: int, said: list[dict],
+              follow: list[dict], *, model: str, host: str,
+              meta: dict | None = None) -> bool | None:
+    """Ask about one gap, built exactly as `judge_session` builds it.
+
+    The one place a gap's question is assembled, so the benchmark and the live
+    path cannot drift apart — `judge_replay.py` used to keep its own copy.
+    """
+    goal, prior = window(steps[:index])
+    history = prior[-PRIOR_STEPS:] if PRIOR_STEPS > 0 else []
+    return judge(steps[index], goal=goal, prior=history,
+                 said=said_text(said),
+                 follow=[render_step(s) for s in follow],
+                 model=model, host=host,
+                 extras=gap_extras(steps, index, said), meta=meta)
 
 
 def gaps(steps: list[dict]) -> list[tuple[int, list[dict], list[dict]]]:
@@ -293,11 +416,8 @@ def judge_session(config, session: dict) -> int:
 
     found = 0
     for index, said, follow in gaps(steps):
-        goal, prior = window(steps[:index])
-        verdict = judge(steps[index], goal=goal, prior=prior[-PRIOR_STEPS:],
-                        said=said_text(said),
-                        follow=[render_step(s) for s in follow],
-                        model=config.local_model, host=config.ollama_url)
+        verdict = judge_gap(steps, index, said, follow,
+                            model=config.local_model, host=config.ollama_url)
         if verdict is None:
             steps[index].pop("end", None)
             continue

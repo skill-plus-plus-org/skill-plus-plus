@@ -43,13 +43,14 @@ class LocalModelUnavailable(RuntimeError):
     """Ollama is not reachable, or the model is not installed."""
 
 
-def _num_ctx(prompt: str) -> int:
-    want = (len(prompt) // _CHARS_PER_TOKEN) + 512
+def _num_ctx(prompt: str, reserve: int = 512) -> int:
+    want = (len(prompt) // _CHARS_PER_TOKEN) + reserve
     return max(_CTX_FLOOR, min(_CTX_CEILING, want))
 
 
 def ask(model: str, prompt: str, *, host: str = DEFAULT_HOST,
-        timeout: float = 120.0, think: bool | None = None) -> str:
+        timeout: float = 120.0, think: bool | None = None,
+        reserve: int = 512, meta: dict | None = None) -> str:
     """Put *prompt* to *model* and return its reply.
 
     Temperature is zero: this is a classifier, and a classifier that answers
@@ -67,7 +68,7 @@ def ask(model: str, prompt: str, *, host: str = DEFAULT_HOST,
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": 0, "num_ctx": _num_ctx(prompt)},
+        "options": {"temperature": 0, "num_ctx": _num_ctx(prompt, reserve)},
     }
     if think is not None:
         payload["think"] = think
@@ -85,6 +86,18 @@ def ask(model: str, prompt: str, *, host: str = DEFAULT_HOST,
         raise LocalModelUnavailable(f"unreadable reply from {host}") from exc
     if "error" in payload:
         raise LocalModelUnavailable(str(payload["error"]))
+    # For the benchmarks: what a verdict cost and what was reasoned first.
+    # Nothing here changes the request, so a caller that passes no `meta`
+    # sends exactly what it always did.
+    if meta is not None:
+        meta.update({
+            "num_ctx": _num_ctx(prompt, reserve),
+            "prompt_tokens": payload.get("prompt_eval_count"),
+            "answer_tokens": payload.get("eval_count"),
+            "seconds": round((payload.get("total_duration") or 0) / 1e9, 2),
+            "load_seconds": round((payload.get("load_duration") or 0) / 1e9, 2),
+            "thinking_chars": len(payload.get("thinking") or ""),
+        })
     return str(payload.get("response", "")).strip()
 
 

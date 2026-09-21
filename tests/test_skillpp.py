@@ -4295,6 +4295,29 @@ class TestTurns(TempRoot):
         self._tool("mcp__notion__search", {"query": "house style"})
         self._tool("Skill", {"skill": "anthropic-skills:pptx"})
 
+    def test_the_last_reply_is_attached_before_the_judge_runs(self):
+        """The judge can be shown what the assistant said. Live it has to see
+        what the benchmark sees, and the benchmark has every reply — so the
+        session's last reply is attached first, as the keep path already did."""
+        import skillpp.boundary as boundary
+        from skillpp.capture import handle_session_end
+        self._run()
+        self._agent({"type": "text", "text": "Built the deck."})
+        seen = {}
+
+        def fake(config, session):
+            markers = [s for s in session["steps"] if is_prompt(s)]
+            seen["last_reply"] = markers[-1].get("reply")
+            return 0
+        real = boundary.judge_session
+        boundary.judge_session = fake
+        self.addCleanup(lambda: setattr(boundary, "judge_session", real))
+        handle_session_end(self.config, {"session_id": "s",
+                                         "transcript_path": str(self.transcript)})
+        # Judged first, it had no reply at all.
+        self.assertIsNotNone(seen["last_reply"])
+        self.assertTrue(seen["last_reply"].endswith("Built the deck."))
+
     def test_each_prompt_gets_the_reply_that_followed_it(self):
         from skillpp.capture import _load_session, _save_session, _attach_reply
         self._run()
@@ -4761,6 +4784,144 @@ class TestDraftInput(TempRoot):
             steps=[bash("npm test")],
             turns=[{"prompt": "go", "reply": "ok", "used": []}]))
         self.assertEqual(self._show("d2")["deps_cli"], ["npm"])
+
+
+class TestJudgeInput(unittest.TestCase):
+    """What the boundary judge is shown, and that the defaults show exactly
+    what was measured. Each optional slot exists to be measured one at a time
+    (`tests/benchmarks/judge_replay.py`); none may move production."""
+
+    # All 45 judge prompts over the live fixtures, rendered before the slots
+    # existed: every session's steps set to "not a boundary", every gap asked
+    # in order, the stub answering "no" so no span ever resets.
+    PINNED = "a919869b3998cc6e242114f38d73476995e5623b61480a79e0ba4b863725259f"
+
+    def setUp(self):
+        import skillpp.boundary as boundary
+        self.boundary = boundary
+        saved = {k: getattr(boundary, k) for k in (
+            "REPLY_BEFORE_CHARS", "REPLY_AFTER_CHARS", "STEP_OUTPUT_CHARS",
+            "JUDGE_THINKS", "PRIOR_STEPS", "NEXT_STEPS", "ask")}
+        self.addCleanup(lambda: [setattr(boundary, k, v) for k, v in saved.items()])
+
+    def _prompts(self):
+        import glob
+        import hashlib
+        seen = []
+        self.boundary.ask = lambda model, prompt, **kw: (seen.append(prompt), "no")[1]
+        for path in sorted(glob.glob(str(Path(__file__).parent / "fixtures" /
+                                         "sessions" / "*.json"))):
+            steps = json.loads(Path(path).read_text(encoding="utf-8"))["steps"]
+            for step in steps:
+                if not is_prompt(step):
+                    step["end"] = False
+            for index, said, follow in self.boundary.gaps(steps):
+                self.boundary.judge_gap(steps, index, said, follow,
+                                        model="m", host="h")
+        return seen, hashlib.sha256("\x00".join(seen).encode()).hexdigest()
+
+    def test_the_defaults_render_every_measured_prompt_unchanged(self):
+        seen, digest = self._prompts()
+        self.assertEqual(len(seen), 45)
+        self.assertEqual(digest, self.PINNED)
+
+    def _gap(self, **slots):
+        b = self.boundary
+        for name, value in slots.items():
+            setattr(b, name, value)
+        steps = [
+            {"tool": "UserPrompt", "input": {"text": "find the blank cards"},
+             "reply": "Looked through both files. Where do you suspect the blanks are?"},
+            {"tool": "Bash", "input": {"command": "grep -n card book.py"},
+             "tool_returned": "12: card walkthrough"},
+            {"tool": "UserPrompt", "input": {"text": "Separate job: add a case"},
+             "reply": "Added atlas_card_staged to cases.json."},
+            {"tool": "Bash", "input": {"command": "npm test"}},
+        ]
+        (index, said, follow), = b.gaps(steps)
+        goal, prior = b.window(steps[:index])
+        return b.build_prompt(goal, prior, steps[index], b.said_text(said),
+                              [b.render_step(s) for s in follow],
+                              b.gap_extras(steps, index, said))
+
+    def test_each_slot_renders_in_its_place(self):
+        text = self._gap(REPLY_BEFORE_CHARS=400, REPLY_AFTER_CHARS=400,
+                         STEP_OUTPUT_CHARS=400)
+        order = [text.index(s) for s in (
+            "Now they ran", "It returned:", "12: card walkthrough",
+            "After that, the assistant told them:", "Where do you suspect",
+            "Then they say:", "Separate job", "The assistant answered:",
+            "Added atlas_card_staged", "What they do next:")]
+        self.assertEqual(order, sorted(order))
+
+    def test_an_off_slot_adds_nothing(self):
+        text = self._gap()
+        for label in ("It returned:", "assistant told them", "assistant answered"):
+            self.assertNotIn(label, text)
+
+    def test_the_reply_before_is_its_tail_and_after_is_its_head(self):
+        """The hand-off is at the end of what was said; how the new instruction
+        was read is at the start of the answer to it."""
+        text = self._gap(REPLY_BEFORE_CHARS=30, REPLY_AFTER_CHARS=30)
+        before = text.split("assistant told them:\n\n    ")[1].split("\n")[0]
+        after = text.split("assistant answered:\n\n    ")[1].split("\n")[0]
+        # The end of what was said, cut at a word, never mid-word.
+        self.assertEqual(before, "… you suspect the blanks are?")
+        self.assertNotIn("Looked through", text)
+        # The start of the answer, cut the same way.
+        self.assertEqual(after, "Added atlas_card_staged to …")
+
+    def test_full_shows_everything(self):
+        b = self.boundary
+        self.assertEqual(b._head("a b c d", b.FULL), "a b c d")
+        self.assertEqual(b._tail("a b c d", b.FULL), "a b c d")
+
+    def test_a_reply_is_never_read_as_a_placeholder(self):
+        """Replies carry braces and JSON; filling slots one after another would
+        substitute `{NEXT}` inside a reply as if it were the template's."""
+        b = self.boundary
+        b.REPLY_BEFORE_CHARS = 400
+        steps = [
+            {"tool": "UserPrompt", "input": {"text": "go"},
+             "reply": 'Wrote {"key": 1} and the literal {NEXT} marker.'},
+            {"tool": "Bash", "input": {"command": "a"}},
+            {"tool": "UserPrompt", "input": {"text": "more"}},
+            {"tool": "Bash", "input": {"command": "b"}},
+        ]
+        (index, said, follow), = b.gaps(steps)
+        goal, prior = b.window(steps[:index])
+        text = b.build_prompt(goal, prior, steps[index], b.said_text(said),
+                              [b.render_step(s) for s in follow],
+                              b.gap_extras(steps, index, said))
+        self.assertIn("the literal {NEXT} marker", text)
+
+    def test_thinking_gets_room_and_time_and_a_clean_answer(self):
+        b = self.boundary
+        b.JUDGE_THINKS = True
+        sent = {}
+
+        def fake(model, prompt, **kw):
+            sent.update(kw)
+            return "yes"
+        b.ask = fake
+        step = {"tool": "Bash", "input": {"command": "npm test"}}
+        self.assertTrue(b.judge(step, model="m", host="h"))
+        self.assertIs(sent["think"], True)
+        self.assertGreaterEqual(sent["timeout"], 180)
+        self.assertGreater(sent["reserve"], 512)
+        # Reasoning leaked into the answer is no verdict, not a guessed one.
+        b.ask = lambda model, prompt, **kw: "Well, no — on reflection yes it is"
+        meta: dict = {}
+        self.assertIsNone(b.judge(step, model="m", host="h", meta=meta))
+        self.assertTrue(meta["unclean"])
+
+    def test_the_default_judge_never_thinks(self):
+        b = self.boundary
+        sent = {}
+        b.ask = lambda model, prompt, **kw: (sent.update(kw), "no")[1]
+        b.judge({"tool": "Bash", "input": {"command": "x"}}, model="m", host="h")
+        self.assertIs(sent["think"], False)
+        self.assertNotIn("reserve", sent)
 
 
 class TestReviewPageRendering(unittest.TestCase):

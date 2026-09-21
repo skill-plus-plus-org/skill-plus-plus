@@ -526,14 +526,17 @@ def handle_session_end(config: Config, payload: dict) -> dict:
     # Not asked again once folding has begun (`folded`): the episodes already
     # banked are recorded by position, and a second judgement can cut
     # differently and make those positions name other steps.
+    # The last reply first: the judge can be shown what the assistant said, and
+    # live it must see the same as the benchmark, which has every reply. The
+    # keep path already attaches before judging.
+    _attach_reply(session, payload.get("transcript_path") or session.get("transcript"))
+
     if config.judge_boundaries and "folded" not in session:
         try:
             from .boundary import judge_session
             judge_session(config, session)
         except Exception as exc:  # noqa: BLE001 - a hook never raises at a dev
             log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
-
-    _attach_reply(session, payload.get("transcript_path") or session.get("transcript"))
 
     # The last task's own completion report, said after its final tool call.
     # Attached before folding so the episode carries it.
