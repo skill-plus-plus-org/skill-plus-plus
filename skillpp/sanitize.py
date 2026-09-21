@@ -37,13 +37,21 @@ _PATTERNS: list[tuple[str, re.Pattern[str], int]] = [
         r"(?i)\b((?:api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|auth[_-]?token"
         r"|token|password|passwd|pwd|credential|private[_-]?key)"
         r"\s*[=:]\s*)['\"]?([^\s'\"&;|]{6,})"), 2),
-    ("email", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), 0),
+    # Not an SSH remote. `git@github.com:acme/api.git` is a protocol constant —
+    # the same string for every user alive, naming nobody — and redacting it
+    # destroyed the clone step of every onboarding trace. A real address is
+    # followed by whitespace or punctuation; an SCP-style remote is followed by
+    # `:` and a path, which is the whole discriminator.
+    ("email", re.compile(
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b(?!:[^\s:])"), 0),
     ("internal-host", re.compile(
         r"\bhttps?://[A-Za-z0-9.-]+\.(?:internal|corp|intranet|local|lan)\b[^\s'\"]*"), 0),
 ]
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9+/=_-]{40,}")
 _HEX_RE = re.compile(r"\A[0-9a-fA-F]+\Z")
+# One word: all lower, all digits, or Capitalised. Not `OObjTXEYQHXlFd4`.
+_WORDLIKE = re.compile(r"\A(?:[a-z][a-z0-9]*|[0-9]+|[A-Z][a-z0-9]*)\Z")
 
 
 def _shannon(s: str) -> float:
@@ -60,6 +68,18 @@ def _looks_like_secret(token: str) -> bool:
     """Conservative high-entropy fallback for credentials we have no rule for."""
     if _HEX_RE.match(token):
         return False  # git SHAs, checksums — normalised elsewhere, not secrets
+    if any(sep in token for sep in "/-_."):
+        # A name is words joined by separators; a credential is one long run of
+        # entropy. Two things have to hold, and segment *length* alone is not
+        # enough — a base64 blob containing a `/` splits into short pieces too,
+        # which is how an earlier version of this guard let a real secret past.
+        # The pieces of a name also *look* like words.
+        pieces = [x for x in re.split(r"[/\-_.]", token) if x]
+        wordlike = sum(1 for x in pieces if _WORDLIKE.match(x))
+        if (len(pieces) >= 3 and wordlike >= 0.6 * len(pieces)
+                and max(len(x) for x in pieces) < 40):
+            return False
+
     classes = sum((
         any(c.islower() for c in token),
         any(c.isupper() for c in token),

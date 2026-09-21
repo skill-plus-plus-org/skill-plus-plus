@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "skillpp-web",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["bin/skillpp", "web", "--no-browser", "--port", "8765"],
+      "port": 8765
+    }
+  ]
+}

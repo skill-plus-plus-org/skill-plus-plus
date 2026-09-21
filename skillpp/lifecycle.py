@@ -27,17 +27,35 @@ from .config import Config
 
 _FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
-_PROGRAM_RE = re.compile(r"\A[a-zA-Z][\w.-]*\Z")
+PROGRAM_RE = re.compile(r"\A[a-zA-Z][\w.-]*\Z")
+# Kept: `_referenced` below reads it under the old name.
+_PROGRAM_RE = PROGRAM_RE
 
 # Sections that discuss the workflow rather than performing it. Scanning them
 # would report a command named in a question as a broken reference.
-_META_SECTIONS = {"known gaps", "judgement", "judgment", "notes", "when to use"}
+_META_SECTIONS = {"open questions", "known gaps", "judgement", "judgment",
+                  "notes", "when to use"}
 
 # Shell builtins resolve to nothing on PATH but are never missing.
-_SHELL_BUILTINS = {
+SHELL_BUILTINS = {
     "export", "cd", "echo", "source", "alias", "set", "unset", "eval", "exec",
     "read", "shift", "test", "true", "false", "trap", "wait", "local", "return",
     "if", "then", "else", "fi", "for", "while", "do", "done", "case", "esac",
+}
+_SHELL_BUILTINS = SHELL_BUILTINS
+
+# Present on any POSIX machine, so naming one as a requirement tells a reader
+# nothing and `check_dependencies`, which resolves with `shutil.which`, can
+# never fail on it. `capture._cli_dependencies` already made this call for
+# eight of them; this finishes the list rather than starting a new policy.
+# Deliberately excludes anything a machine might plausibly lack — `jq`, `rg`,
+# `gh`, `uv`, `pdftoppm` — which stay declared.
+COREUTILS = {
+    "awk", "basename", "cat", "chmod", "chown", "cmp", "cp", "cut", "date",
+    "dirname", "du", "env", "expr", "file", "find", "grep", "head", "id",
+    "kill", "ln", "ls", "mkdir", "mktemp", "mv", "od", "printf", "ps", "pwd",
+    "rm", "rmdir", "sed", "seq", "sh", "sleep", "sort", "stat", "tail", "tee",
+    "touch", "tr", "uname", "uniq", "wc", "which", "xargs",
 }
 
 
@@ -225,47 +243,6 @@ def scan(skills_dir: Path, config: Config,
     return found
 
 
-def reconcile(ledger, skills_dir: Path, config: Config) -> dict:
-    """Report drift between the ledger's promoted entries and the skills on disk.
-
-    **Reports only — never changes status.** A promoted entry whose skill file
-    has been deleted is a real dead end (it keeps matching future occurrences
-    while never surfacing for review), but reopening it automatically would
-    second-guess a deletion that was almost certainly deliberate, and would
-    re-propose the same workflow every time the user declines. Deciding is the
-    developer's job: `skillpp reopen <id>` or `skillpp ignore <id>`.
-    """
-    from .ledger import STATUS_PROMOTED
-
-    on_disk = {s.name: s for s in scan(skills_dir, config)}
-    by_provenance = {
-        s.provenance.split(":", 1)[1]: s
-        for s in on_disk.values()
-        if s.provenance.startswith("ledger:")
-    }
-
-    result: dict[str, list] = {"ok": [], "missing": [], "unlinked": [], "orphaned": []}
-
-    for entry in ledger.all():
-        if entry.status != STATUS_PROMOTED:
-            continue
-        if not entry.skill_path:
-            result["unlinked"].append(entry)
-            continue
-        if Path(entry.skill_path).exists():
-            result["ok"].append(entry)
-            continue
-
-        result["missing"].append(entry)
-
-    # A skill this tool authored whose ledger entry has since gone.
-    for entry_id, skill in by_provenance.items():
-        if ledger.get(entry_id) is None:
-            result["orphaned"].append(skill)
-
-    return result
-
-
 def move_tier(skill: SkillInfo, target_tier: str, skills_dir: Path,
               config: Config) -> Path:
     """Move a skill between hot / cold / archived. Never deletes."""
@@ -285,3 +262,30 @@ def move_tier(skill: SkillInfo, target_tier: str, skills_dir: Path,
         shutil.rmtree(dest) if dest.is_dir() else dest.unlink()
     shutil.move(str(skill.path.parent), str(dest))
     return dest
+
+
+def reconcile(ledger, config) -> dict:
+    """Report drift between promoted entries and the skills actually on disk.
+
+    **Reports only — never changes status.** A promoted entry whose file has been
+    deleted is a real dead end: it keeps matching future occurrences of the same
+    work while never surfacing for review, so the workflow silently stops being
+    proposed. But reopening it automatically would second-guess a deletion that
+    was almost certainly deliberate, and would re-propose the same thing every
+    time the developer declined. Deciding is theirs.
+    """
+    from .ledger import STATUS_PROMOTED
+    from pathlib import Path as _Path
+
+    missing, live = [], 0
+    for entry in ledger.all():
+        if entry.status != STATUS_PROMOTED:
+            continue
+        path = entry.skill_path
+        if path and _Path(path).expanduser().exists():
+            live += 1
+            continue
+        missing.append({"id": entry.id, "title": entry.title,
+                        "skill_path": path or "(never recorded)",
+                        "occurrences": entry.occurrences})
+    return {"promoted": live + len(missing), "live": live, "missing": missing}

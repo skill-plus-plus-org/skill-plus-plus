@@ -31,6 +31,14 @@ nothing real. See §12 for what is built and what is not.
 │   • Passive MCP & terminal execution traces                  │
 │   • Active natural-language text / voice dictation           │
 └───────────────────────────────┬──────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│                        SEGMENTATION                          │
+│   Session cut into task episodes — one workflow per entry    │
+│   Boundaries: completion markers · new prompt                │
+│   No marker and nothing shipped → flagged, not proposed      │
+└───────────────────────────────┬──────────────────────────────┘
                                 │ summarized + sanitized on write
                                 ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -54,7 +62,7 @@ nothing real. See §12 for what is built and what is not.
                                 ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                          SYNTHESIS                           │
-│   Parameterize · dedup (>85% → merge into v1.x) · compose    │
+│   Parameterize · dedup (embedding match) · compose           │
 │   Emit: SKILL.md + scripts/ + declared deps in metadata      │
 └───────────────────────────────┬──────────────────────────────┘
                                 ▼
@@ -75,7 +83,18 @@ nothing real. See §12 for what is built and what is not.
 * **Passive listener:** A lightweight background daemon or terminal hook observes execution traces — commands, MCP calls, file edit sequences.
 * **Active dictation:** Workflows can be dictated in plain English (*"when we update X, run Y, check Z, then notify the on-call"*), for quick-thinking developers and non-technical contributors alike.
 
-### Step 2 — Summarize on Write (not on read)
+### Step 2 — Segment into tasks
+
+A session is not a workflow. One sitting routinely holds several unrelated tasks — a deploy, an unrelated bug fix, an investigation that goes nowhere — and fingerprinting the whole thing as one unit is why a workflow performed three times can register as three unrelated one-offs that never reach the threshold. **Developers reuse tasks, not sessions**, so the unit of comparison has to be the unit of reuse.
+
+Sessions are therefore cut into episodes before anything is fingerprinted, on two signals that cost nothing to compute:
+
+* **Completion markers** — a command whose success means the developer's *goal* is done, not merely that a step worked. Version-control verbs qualify: nobody commits halfway through a thought. Infrastructure commands (`terraform apply`, `kubectl apply`, `npm publish`) deliberately do not — see §5b.
+* **A new prompt** — the developer stating a fresh goal, recognised by its position in the recorded stream rather than by any clock. No idle-gap timer: a threshold needs tuning per person and misfires the moment somebody reads documentation mid-task.
+
+A boundary that would leave an episode of fewer than two substantive steps is ignored, because one step is not a workflow. An episode that ends only because the session did, with no marker, is **flagged rather than proposed** — that is an investigation with nothing to show for itself.
+
+### Step 3 — Summarize on Write (not on read)
 
 Raw traces are **never persisted**. At capture time each observation is compressed into a compact markdown ledger entry and scrubbed in the same pass:
 
@@ -83,7 +102,7 @@ Raw traces are **never persisted**. At capture time each observation is compress
 * **Sanitization happens once, on write.** An AST/regex scan strips API keys, tokens, credentials, internal URLs, and customer PII before anything touches disk — so the ledger is never a liability sitting in a buffer waiting to be cleaned later.
 * **Searchability comes for free**, because entries are already text.
 
-### Step 3 — Candidate Surfacing (two entry points)
+### Step 4 — Candidate Surfacing (two entry points)
 
 The ledger is not just a suggestion queue; it is a searchable record of your own work.
 
@@ -92,7 +111,7 @@ The ledger is not just a suggestion queue; it is a searchable record of your own
 
 Unapproved candidates expire and self-delete after 7–14 days.
 
-### Step 4 — Review & Promotion (pull, never push)
+### Step 5 — Review & Promotion (pull, never push)
 
 **No interrupting popups.** Candidates persist in the ledger, so review is something the developer pulls when they have attention to spare: an explicit review command, a prompt at session end, a weekly digest, or a nudge at PR time.
 
@@ -104,12 +123,12 @@ Review is designed to take seconds, not minutes:
 
 Nothing is written to the skill library without passing this gate.
 
-### Step 5 — Synthesis
+### Step 6 — Synthesis
 
 Only after approval is a `SKILL.md` generated.
 
 * **Parameterization:** Local paths (`/Users/dev/project/...`) and environment-specific values become template variables (`${PROJECT_PATH}`).
-* **Deduplication:** Semantic similarity check against the existing library; matches above 85% expand an existing skill's `v1.x` rather than spawning a near-duplicate.
+* **Deduplication:** Each saved episode's steps, one numbered line each, are embedded and compared with every existing entry; a match at or above `SKILLPP_MATCH_FLOOR` (0.93) joins that entry rather than spawning a near-duplicate. The floor is set where wrong merges stop, not where merges are most numerous.
 * **Hierarchical composition:** Atomic sub-routines (e.g. `git-commit`) are extracted once and invoked as sub-skills by higher-level orchestrators, forming a DAG rather than a flat pile of prompts.
 
 ---
@@ -136,7 +155,7 @@ The failure-then-retry case is the highest-value one: recovery behavior is the e
 
 1. **Cap at three questions.** If synthesis has ten, the candidate is not ready — return it to the ledger rather than interrogating the developer. The question count is a quality signal about the candidate, not a budget to spend.
 2. **Pre-fill a guess.** *"Staging — right?"* answered with Enter is a confirmation. An empty text box is composition, and composition is what people skip.
-3. **Skipping never blocks.** Unanswered gaps still produce a skill, with an explicit `## Known gaps` section, landed as **provisional**. Better than blocking, and far better than guessing silently — and it gives provisional→trusted promotion something concrete to resolve, since the gap closes the first time someone runs the skill and hits that branch.
+3. **Skipping never blocks.** Unanswered gaps still produce a skill, with an explicit `## Open questions` section, landed as **provisional**. Better than blocking, and far better than guessing silently — and it gives provisional→trusted promotion something concrete to resolve, since the gap closes the first time someone runs the skill and hits that branch.
 
 ### When there is no trace
 
@@ -187,6 +206,16 @@ A `SKILL.md` is an instruction file, not a tool definition. It cannot declare a 
 * **Declare dependencies** — required servers and CLIs — in the `metadata` frontmatter key, which is already supported in the wild and requires no spec extension.
 * **Check at pull, not at run.** On install, declared deps are diffed against the teammate's connected servers and missing ones are reported immediately. A skill whose dependency is absent must state what is missing and stop cleanly — never improvise a workaround.
 
+### 5b. Why the marker list is short
+
+Segmentation (§3, step 2) cuts on completion markers, and the temptation is to treat every "work landed" command as one. Infrastructure verbs are excluded on purpose, and the reason generalises.
+
+Take a deploy that runs `terraform apply` and then `./scripts/deploy.sh <target>`. Treat `terraform apply` as a marker and the episode closes one step early, leaving `deploy.sh` as a fragment below the minimum size, which is then discarded. The truncated prefix is *identical across every occurrence*, so it still merges, still reaches the recurrence threshold, and still presents as a clean candidate — one that builds and provisions but never deploys, with nothing anywhere to flag it as incomplete.
+
+**Over-cutting is worse than under-cutting.** An under-cut candidate is visibly wrong — a sprawling signature, a title naming the wrong task — and dies at review. An over-cut one looks correct and is silently missing its payload. A marker therefore has to mean *the developer's goal is done*, not *a step succeeded*.
+
+Tests going red→green are excluded for the same reason: green tests mean the goal was met only when testing *was* the goal. Usually they are mid-task verification, and `signals.py` already mines the failure-then-retry pattern for question generation, which is the right use of it.
+
 ---
 
 ## 6. Lifecycle, Decay & Storage
@@ -203,9 +232,6 @@ The real cost of an unused skill is index bloat, not disk. So skills are **demot
 
 * **Staleness ≠ disuse.** A skill rots when the script it calls is renamed or the flag it passes is removed. Decay is detected by checking whether referenced paths, commands, and tools still resolve — a cheap, accurate signal that a timer cannot approximate.
 * **Expiry applies to the ledger, not the library.** Unapproved candidates disappear after 7–14 days; anything a human blessed is kept.
-* **Deleting a skill is a decision, not an accident.** A deleted skill's workflow is parked in the ignore list, not re-proposed — re-proposing something the developer just deleted is the fastest way to get the whole tool switched off. `skillpp reconcile` reports the drift; `--apply` does the parking.
-* **An ignore means "not now", not "never".** Ignored workflows keep matching and keep counting. Once one has recurred as many times *since* being ignored as it took to propose it originally, it is flagged — the developer parked it and then kept doing the work by hand, which is evidence worth surfacing. It is still never re-proposed automatically: `skillpp ignored` shows the flag, `skillpp reopen` acts on it. The ignore set is listable and reversible throughout — a parking space, not a shredder.
-  > Matching ignored entries is load-bearing, not incidental. Entry ids derive from the workflow signature, so an ignored entry that failed to match would be silently overwritten by the next recurrence — resurrecting it as a fresh candidate and erasing the developer's decision. Suppression therefore lives at the surfacing layer, never at the matching layer.
 * **Storage.** Skill files average 1.5–3 KB; a full organizational library stays under 5 MB. The ledger stays in the same range because entries are summarized on write rather than stored as raw traces.
 * **Context cost.** Agents load only the lightweight `name` + `description` index, pulling full instructions into the context window on demand.
 
@@ -216,7 +242,7 @@ The real cost of an unused skill is index bloat, not disk. So skills are **demot
 Instruction-shaped skills travel cleanly across Claude Code, Cursor, OpenCode, and Microsoft Agent Framework. Tool-bound skills degrade:
 
 * **MCP tool names are host-namespaced.** `mcp__github__create_pr` is not the same identifier in every runtime.
-* **Frontmatter extensions vary.** `name` and `description` are universal; everything beyond them is host-specific. The scaffolder also emits `when_to_use`, which Claude Code parses as a first-class skill field ("Becomes part of the tool description") and other hosts are expected to ignore. It is additive rather than load-bearing: the same trigger text is repeated in the `## When to use` body section, so a host that drops the frontmatter key still gets the guidance once the skill loads.
+* **Frontmatter extensions vary.** `name` and `description` are universal; everything beyond them is host-specific.
 
 Portability is therefore a property of the *skill*, not of the format. The generation rules in §5 exist to keep as many skills as possible in the portable class.
 
@@ -224,11 +250,9 @@ Portability is therefore a property of the *skill*, not of the format. The gener
 
 ## 8. Claude Code Integration
 
-**The terminal is the capture surface. Desktop needs an explicit upload.**
+**Terminal (CLI) is the capture surface. Desktop is the distribution surface.**
 
-Claude Code in the terminal is the reference host: hooks fire automatically, the ledger builds from every session, and skills land in `~/.claude/skills/` ready to use.
-
-Neither half crosses to Desktop on its own. Hooks never fire there — Desktop runs its own Claude Code runtime that does not read the host's `~/.claude/settings.json` — and its skill list is account-level rather than a read of the local directory, so a skill reaches Desktop only by being uploaded (§9 records the controlled test, and the two wrong conclusions that preceded it).
+Claude Code in the terminal is the reference host for passive capture: hooks fire automatically, the ledger builds from every session, and skills land in `~/.claude/skills/` ready to use. Desktop has no passive capture—the desktop app runs its own Claude Code runtime that never reads the host's `~/.claude/settings.json`—but it does have an upload path for finished skills.
 
 > Installation, verification, and the complete terminal→Desktop workflow are
 > covered in [docs/claude-code.md](docs/claude-code.md). This section
@@ -236,9 +260,11 @@ Neither half crosses to Desktop on its own. Hooks never fire there — Desktop r
 
 ### Capture: hooks, not a daemon
 
-Claude Code fires hooks — shell commands receiving JSON on stdin — at `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`, `PreCompact`, and `Stop`, configured through `settings.json`. `PostToolUse` supplies the tool name, its input, and its result: a structured trace stream, considerably cleaner than parsing shell history. `SessionEnd` is the natural batching point for ledger writes and the pull-review nudge. No OS daemon, no separate install, and a far smaller infosec surface than a background listener.
+Claude Code fires hooks — shell commands receiving JSON on stdin — at `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`, `PreCompact`, and `Stop`, configured through `settings.json`. `PostToolUse` supplies the tool name, its input, and its result: a structured trace stream, considerably cleaner than parsing shell history. `SessionEnd` is the natural batching point for ledger writes and the pull-review nudge — it *triggers* the fold rather than performing it, because a hook that waits on a local model is a hook Claude Code kills. No OS daemon, no separate install, and a far smaller infosec surface than a background listener.
 
 **The decisive advantage is `UserPromptSubmit`.** It captures what the developer *asked for* next to what actually *ran*. Intent is the half of the picture a raw command log can never recover, and having it in the same session materially improves synthesis — it is what reduces §4's clarification pass from an interview to a confirmation.
+
+It earns its keep twice over, because a prompt is also a **task boundary**. Prompts are recorded into the ordered step stream, not a separate list, so position alone records which prompt preceded which work — no timestamps, no gap threshold, nothing to tune. A shell-history tool has neither half.
 
 ### Surface mapping
 
@@ -246,7 +272,9 @@ Claude Code fires hooks — shell commands receiving JSON on stdin — at `PreTo
 | --- | --- |
 | Trace capture | `PostToolUse` / `PreToolUse` hooks |
 | Intent capture | `UserPromptSubmit` hook |
-| Ledger write + review nudge | `SessionEnd` hook |
+| Task boundaries | `UserPromptSubmit` — recorded in the step stream, so a prompt's position marks where one task ends and the next begins |
+| Segmentation + ledger write + review nudge | `SessionEnd` hook — stamps the session and spawns `skillpp fold-session`, which does the work detached |
+| Banking what an earlier session left behind | `SessionStart` hook → `skillpp fold-pending` |
 | Pull-based review UI | `.claude/commands/skillpp-review.md` → `/skillpp-review` |
 | Skill output | `.claude/skills/<name>/SKILL.md` + `scripts/` |
 | Dependency check at pull | Diff declared deps against `.mcp.json` and connected `mcp__<server>__<tool>` names |
@@ -309,10 +337,9 @@ The competitive pressure worth taking seriously is the fourth column: memory and
 
 * **Does fast review stay real review?** The effect-summary and evidence design targets a 20-second review. If approval rates approach 100%, the gate has become a rubber stamp and the design has failed.
 * **Is N ≥ 3 the right trigger?** Recurrence is a weak proxy for value. The searchable ledger hedges this, but the balance between pushed suggestions and pulled searches needs measurement.
-* **Do developers actually answer the clarifying questions?** §4 assumes three pre-filled questions get answered rather than skipped. If the skip rate is high, most skills land permanently provisional with open `## Known gaps`, and the judgment layer never materializes.
+* **Do developers actually answer the clarifying questions?** §4 assumes three pre-filled questions get answered rather than skipped. If the skip rate is high, most skills land permanently provisional with open `## Open questions`, and the judgment layer never materializes.
 * **Will infosec approve a background listener?** Sanitize-on-write and local-first storage are the mitigations. Hook-based capture (§8) sidesteps this almost entirely by removing the daemon, which is an argument for shipping the Claude Code integration first. This remains the primary enterprise adoption risk for the OS-daemon path.
 * **Provisional → trusted promotion:** Landing skills as hints that earn trust through successful use makes shallow review safe. The promotion threshold is unvalidated.
-* **Is the capture layer already a platform feature?** Claude Code's auto-mode setup builds an environment profile by reading shell history and session transcripts, then proposes it for approval before writing to `settings.json` — the same input signal, the same propose-then-approve shape, the same file. It derives *permissions* rather than *procedures*, so it is not a competing product. But the plumbing this project built from scratch — session observation, trace mining, human-gated config writes — demonstrably ships in the platform already, which makes "also derive skills" a far shorter step for Anthropic than for anyone else. If capture is not the moat, the defensible parts are the ledger as searchable work memory (§3, Step 3) and the gap detection that turns a trace into three good questions (§4). Both should be measured on that basis, not on capture fidelity.
 
 ---
 
@@ -325,9 +352,11 @@ to import a third-party package is a hook that breaks somebody's session.
 skillpp/
   config.py      paths and thresholds, all env-overridable
   sanitize.py    secret/PII scrubbing, applied on write
-  normalize.py   parameterisation + workflow signatures
+  segment.py     cuts a session into task episodes
+  normalize.py   parameterisation + step shapes
   ledger.py      candidate entries: markdown body, JSON payload
-  recurrence.py  lexical similarity and merge
+  matching.py    same-procedure matching by embedding
+  similar.py     embedded text and folding one entry into another
   signals.py     gap detection, question generation, effect summaries
   capture.py     hook handlers (fail-safe: always exit 0)
   summary.py     review surface, SKILL.md scaffold, dependency check
@@ -337,7 +366,8 @@ skillpp/
 commands/skillpp-review.md   /skillpp-review — review captured candidates
 commands/skillpp-new.md      /skillpp-new    — build a skill from a description
 examples/demo.sh             end-to-end walkthrough on a scratch ledger
-tests/test_skillpp.py        63 tests
+tests/fixtures/messy_session.py  demo.sh's sessions, polluted with unrelated work
+tests/test_skillpp.py        88 tests
 ```
 
 ### Division of labour
@@ -352,16 +382,29 @@ worth reading. Neither half is useful alone.
 
 | Command | Purpose |
 | --- | --- |
+| `skillpp install --user\|--project [DIR]` | Wire the hooks, for every project or just this one. Dry run without `--apply`; `--remove` takes them back out |
+| `skillpp doctor` | Whether the hooks are wired, the models answer, and anything is waiting to be banked |
 | `skillpp hook --event <E>` | Hook entry point; reads JSON on stdin, always exits 0 |
+| `skillpp fold-session <id>` | Bank one ended session; what the `SessionEnd` hook spawns |
 | `skillpp dictate --text "…"` | Create a candidate from a description instead of a trace |
 | `skillpp review [--all]` | Candidates at or above the recurrence threshold |
+| `skillpp sift [--apply]` | Ask a local model which candidates are methods rather than one-off jobs; parks the rest. Dry run without `--apply`. See [docs/episode-filter.md](docs/episode-filter.md) |
+| `skillpp reopen <id>` | Undo a sift verdict |
+| `skillpp merge [--apply]` | Merge candidates that are the same procedure worded differently, by embedding. Dry run without `--apply` |
+| `skillpp split <id> --at N` | Split a candidate holding two procedures; the original is kept, not deleted |
+| `skillpp name <id> --title … --description …` | Give a candidate a task-shaped name; written by the agent during `draft` |
+| `skillpp accuracy` | How often the ranker agreed with your own promote/dismiss decisions |
+| `skillpp keep` | Save the work so far as a candidate, without ending the session |
+| `skillpp reconcile` | Report promoted skills whose file is gone; reports only, never decides |
+| `skillpp ignored [--threshold N]` | List parked candidates and how often that work happened anyway |
+| `skillpp web [--port N] [--no-browser]` | Promote or dismiss candidates recognized ≥ 3 times (dismissed ones can be reinstated), then Draft (runs `skillpp draft --apply`, with an optional note on what to look out for) for a promoted one; review finished drafts, revise them through your agent, and download each as a skill folder zip; loopback only, no auth |
+| `skillpp draft <id> [--note "…"] [--apply]` | Have your own agent write a draft `SKILL.md`; never installs it. `--note` tells it what to look out for. Dry run without `--apply` |
+| `skillpp revise <id> --instruction "…" [--apply]` | Have your own agent change a draft `SKILL.md` as instructed, in place; the previous version is kept in `.revisions/`. Dry run without `--apply` |
 | `skillpp show <id>` | Effect summary, evidence, open questions |
 | `skillpp search <words>` | Search the ledger of your own past work |
 | `skillpp scaffold <id> --name <n>` | Generate a starting `SKILL.md` |
 | `skillpp promote <id> --skill-path <p>` | Mark a candidate promoted |
-| `skillpp ignore <id>` · `ignored` · `reopen <id>` | Park a workflow so it is never proposed; list the ignore set; put one back in the queue |
-| `skillpp reconcile` | Report promoted skills whose file was deleted (reports only — never decides) |
-| `skillpp expire` | Delete unapproved candidates past TTL |
+| `skillpp dismiss <id>` / `expire` | Dismiss one / delete unapproved past TTL |
 | `skillpp lifecycle` / `tier <name> <tier>` | Inventory and demotion |
 | `skillpp check --name <n>` | Dependency check at pull time (exit 2 if missing) |
 | `skillpp bundle --out <dir> [--format upload\|plugin]` | Package skills: `upload` = one zip per skill for Customize → Skills; `plugin` = `.claude-plugin/` + `skills/` |
@@ -369,14 +412,25 @@ worth reading. Neither half is useful alone.
 
 ### Built
 
-Capture with intent, sanitize-on-write (typed placeholders that keep
-signatures stable), the ledger with lexical dedup and TTL expiry, all five
-trace gap signals from §4 with the three-question cap and duplicate
-suppression, the dictation path with its completeness check and threshold
-bypass, effect-first proposals, scaffolding with declared deps and
-`## Known gaps` that close when answered, pull-time dependency checking,
+Capture with intent, segmentation into task episodes, sanitize-on-write (typed
+placeholders that keep step shapes stable), the ledger with embedding dedup and
+TTL expiry, all five trace gap signals from §4 with the three-question cap and
+duplicate suppression, the dictation path with its completeness check and
+threshold bypass, effect-first proposals, scaffolding with declared deps and
+`## Open questions` that close when answered, pull-time dependency checking,
 hot/cold/archived demotion, staleness by reference resolution, and usage
 tracking driven by observed `Skill` calls.
+
+**Segmentation, measured.** `tests/fixtures/messy_session.py` takes the three
+`demo.sh` deploy sessions, keeps the deploy byte-identical across all three so
+it genuinely recurs, and surrounds each occurrence with different unrelated
+work. Folded as whole sessions, the deploy scores 0.358–0.475 against the 0.85
+threshold and is filed as three unrelated one-offs, each titled after whatever
+happened to come first. Segmented, it is recovered as a single candidate at
+three occurrences with steps identical to the unpolluted baseline, and
+titled after the deploy. Both halves are asserted, because the whole-session
+path survives as `_fold_steps` and is still taken by single-episode sessions —
+so the regression is a live test rather than a git archaeology exercise.
 
 ### Not built
 
@@ -384,10 +438,6 @@ Deliberately deferred — see §13 for phasing.
 
 * **Team PR sync.** Phase 2. Only the receiving half exists today: declared
   dependencies and `skillpp check`.
-* **Semantic deduplication.** Similarity is lexical — sequence and token
-  overlap over normalised step shapes. No embeddings, because this runs inside
-  a hook where a network round-trip is unacceptable. Semantic overlap is the
-  reviewing agent's job, and `/skillpp-review` instructs it accordingly.
 * **Script extraction.** The slash command tells the agent to lift
   deterministic pipelines into `scripts/run.sh`; the CLI does not do it
   automatically.
@@ -398,6 +448,13 @@ Deliberately deferred — see §13 for phasing.
   care how the words arrive.
 * **The OS-level shell daemon.** Capture is Claude Code hooks only, which is
   the sequencing argued for in §11.
+* **Episode labelling.** Segmentation cuts and titles episodes from their own
+  prompts, but nothing names the *varying parameter* — `staging` versus `prod`
+  — which is what a synthesised skill needs to parameterise. That is judgement,
+  and it belongs with the reviewing agent alongside semantic dedup.
+* **Non-linear segmentation.** Cutting is linear, so a task interrupted by a
+  second task and then resumed is mis-attributed. Recorded as a known
+  limitation in the fixture rather than papered over.
 
 ### Verification status
 
@@ -406,11 +463,20 @@ three hooks verified against real payloads: `PostToolUse` parses `Bash` and
 `Edit` calls cleanly, `UserPromptSubmit` captures prompts verbatim, and
 `SessionEnd` folds a buffer into a ledger entry.
 
-Coverage is narrower than §8 originally claimed, on both axes: chat-surface
-sessions are never captured, and Desktop does not read `~/.claude/skills/` —
-skills reach it only by upload. Both are now established by test rather than
-inference; see
-[docs/claude-code.md](docs/claude-code.md#5a-capture-coverage-terminal-only).
+Coverage is narrower than §8 originally claimed: chat-surface sessions are not
+captured at all. See
+[docs/claude-code.md](docs/claude-code.md#5a-which-sessions-get-captured).
+
+Two limits worth stating plainly about segmentation:
+
+* **`git commit` is the only marker with test coverage.** The other eight, and
+  the artifact-delivery path, are implemented but unexercised.
+* **It has never run against a real session.** Every result above comes from a
+  fixture written for the purpose. The known risk — a mid-task "continue" or
+  "fix that" cutting an episode in half — is precisely the thing a hand-written
+  fixture cannot demonstrate, since its prompts are one-per-task by
+  construction. Replaying real transcripts is the next thing that could show
+  the design is wrong rather than merely incomplete.
 
 ---
 

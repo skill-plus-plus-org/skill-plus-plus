@@ -10,8 +10,8 @@ Entries hold summaries, never raw traces (README 3.2).
 
 from __future__ import annotations
 
-import hashlib
 import json
+import secrets
 import re
 import time
 from dataclasses import dataclass, field, asdict
@@ -25,10 +25,22 @@ _DATA_RE = re.compile(r"<!--\s*skillpp:data\s*\n(.*?)\n-->", re.DOTALL)
 
 STATUS_CANDIDATE = "candidate"
 STATUS_PROMOTED = "promoted"
-STATUS_IGNORED = "ignored"
-# Entries written before the rename. Treated as ignored everywhere.
 STATUS_DISMISSED = "dismissed"
-IGNORED_STATUSES = (STATUS_IGNORED, STATUS_DISMISSED)
+# Judged one particular job rather than a method, by `skillpp sift`. Kept
+# rather than deleted: the verdict came from a model and has to be auditable
+# and reversible, so it parks the entry instead of removing it.
+STATUS_ONE_OFF = "one-off"
+# Superseded by two entries a frontier reader split it into. Retained rather
+# than deleted so the split is auditable and the original steps survive: markers
+# and prompt boundaries are what code can see, and where it saw neither it banks
+# one candidate covering two procedures. Splitting is the expensive stage
+# correcting the cheap one.
+STATUS_SPLIT = "split"
+# Work an already-promoted skill covers. Not a proposal — the skill exists and
+# was reinforced — but kept rather than deleted, because it is the evidence
+# that the skill is still being used and the only record of the session that
+# used it. Out of the review queue; `ready()` gates on status.
+STATUS_COVERED = "covered"
 
 
 def _now() -> str:
@@ -50,8 +62,17 @@ class Entry:
     """One candidate workflow in the ledger."""
 
     id: str
-    signature: str
+    # A lexical fingerprint of the steps, kept only on entries saved before
+    # matching moved to embeddings (`skillpp.matching`). Nothing reads it to
+    # decide anything, and new entries leave it empty.
+    signature: str = ""
     title: str = ""
+    # Where `title` came from: "commit" (the subject of the commit that closed
+    # the episode), "model" (the local model named the procedure), "prompt" or
+    # "command" (a string capture observed and had to reuse), "" (dictated, or
+    # saved before this was recorded). Only the first two are names of a
+    # procedure; `skillpp retitle` walks the rest.
+    title_source: str = ""
     status: str = STATUS_CANDIDATE
     occurrences: int = 1
     created: str = field(default_factory=_now)
@@ -60,37 +81,64 @@ class Entry:
     sessions: list[str] = field(default_factory=list)
     intents: list[str] = field(default_factory=list)
     steps: list[dict] = field(default_factory=list)
+    # The run as a conversation — `[{"prompt", "reply", "used"}]` — from the
+    # run that created the entry. What `skillpp draft` writes from; see
+    # `capture._turns`. Empty on entries saved before it existed.
+    turns: list[dict] = field(default_factory=list)
+    # One `{"session", "at"}` per recognition, in the order they happened —
+    # the provenance the review page lists under "Seen in". `sessions` cannot
+    # answer it: it deduplicates, and carries no time, so a candidate seen
+    # three times over two weeks looked like a single moment. Empty on entries
+    # saved before this existed; the page falls back to `sessions` then.
+    seen: list[dict] = field(default_factory=list)
     variants: list[list[dict]] = field(default_factory=list)
     deps_mcp: list[str] = field(default_factory=list)
     deps_cli: list[str] = field(default_factory=list)
     skill_path: str = ""
-    promoted_at: str = ""
-    ignored_at: str = ""
-    # Occurrence count at the moment it was ignored, so later recurrences can be
-    # counted against it. An ignore is "not now", not "never happened".
-    ignored_at_occurrences: int = 0
     notes: str = ""
     source: str = "capture"  # "capture" | "dictated"
+    # What `sift` thought, if it has run: "method" | "one-off" | "".
+    # An annotation used to order the review queue, never a gate — a local
+    # model dropped 4 of 6 real procedures when it was allowed to decide.
+    hint: str = ""
+    # A task-shaped name and one line saying when this applies, written by the
+    # agent in `skillpp draft`. Capture can only reuse a string it observed, so
+    # an unnamed candidate is titled with whatever the developer happened to
+    # type — measured against a frontier reader that produced
+    # `draining-app-replicas-to-clear-a-migration-lock` where this branch had
+    # `the staging migration is stuck, get it green`. A description is the only
+    # thing read when deciding whether to load a skill, so the difference is
+    # between a candidate that can fire and one that cannot.
+    description: str = ""
+    # What `occurrences` stood at when a person parked this. Recurrences past
+    # that point are the only evidence that the parking was wrong, and without
+    # the mark there is nothing to measure from.
+    parked_at_occurrences: int = 0
+    # Banked without being compared to anything, because no embedding model
+    # answered — only an explicit `skillpp keep` or dictation does that, since a
+    # captured session with no model is held instead. `skillpp merge` checks
+    # these first.
+    unmatched: bool = False
 
     # -- derived ---------------------------------------------------------
     @property
     def age_days(self) -> float:
         return (datetime.now(timezone.utc) - _parse_ts(self.created)).total_seconds() / 86400
 
-    @property
-    def recurrences_since_ignored(self) -> int:
-        """How many times this workflow has happened since being ignored.
-
-        Evidence that the ignore may have been wrong. Entries ignored before
-        this was tracked report 0 rather than a misleading number.
-        """
-        if self.status not in IGNORED_STATUSES or not self.ignored_at_occurrences:
+    def recurrences_since_parked(self) -> int:
+        """How often this work happened again after someone said no."""
+        if not self.parked_at_occurrences:
             return 0
-        return max(0, self.occurrences - self.ignored_at_occurrences)
+        return max(0, self.occurrences - self.parked_at_occurrences)
 
-    def ignore_looks_wrong(self, threshold: int) -> bool:
-        """Recurred as often *since* being ignored as it took to propose it."""
-        return self.recurrences_since_ignored >= threshold
+    def parking_looks_wrong(self, threshold: int) -> bool:
+        """Said no, then did it this many times anyway.
+
+        Never re-proposes anything — a decision is not overturned by a counter.
+        It only says the evidence has changed since, which is a different claim
+        and the developer's to act on.
+        """
+        return self.recurrences_since_parked() >= threshold
 
     def ready(self, threshold: int) -> bool:
         if self.status != STATUS_CANDIDATE:
@@ -109,6 +157,8 @@ class Entry:
             f"id: {self.id}",
             f"title: {self.title}",
             f"status: {self.status}",
+            *([f"description: {self.description}"]
+              if self.description else []),
             f"occurrences: {self.occurrences}",
             f"created: {self.created}",
             f"last_seen: {self.last_seen}",
@@ -160,8 +210,18 @@ def describe_step(step: dict) -> str:
     return f"{tool}"
 
 
-def make_id(signature: str, salt: str = "") -> str:
-    return hashlib.sha256((signature + salt).encode("utf-8")).hexdigest()[:12]
+def new_id(ledger_dir: Path) -> str:
+    """A fresh entry id, never derived from content.
+
+    Ids used to be a hash of the signature. That made a matcher miss on an
+    identical signature silently overwrite the existing file — a parked
+    decision undone, a promoted skill reverted to candidate. A random id turns
+    the same miss into a visible duplicate, which a person can still fold.
+    """
+    while True:
+        candidate = secrets.token_hex(6)
+        if not (ledger_dir / f"{candidate}.md").exists():
+            return candidate
 
 
 class Ledger:
@@ -268,5 +328,6 @@ class Ledger:
             "ready": sum(1 for e in entries if e.ready(self.config.recurrence_threshold)),
             "promoted": sum(1 for e in entries if e.status == STATUS_PROMOTED),
             "dismissed": sum(1 for e in entries if e.status == STATUS_DISMISSED),
+            "one_off": sum(1 for e in entries if e.status == STATUS_ONE_OFF),
             "bytes": size,
         }

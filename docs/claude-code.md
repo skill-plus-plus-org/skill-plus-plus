@@ -16,20 +16,25 @@ For the design rationale, see the [README](../README.md).
 ```
   you type a prompt
         │
-        ├──► UserPromptSubmit hook ──► records what you asked for
-        │
+        ├──► UserPromptSubmit hook ──► records what you asked for,
+        │                              and marks a task boundary
   Claude runs tools (Bash, Edit, MCP calls…)
         │
         ├──► PostToolUse hook ──────► records what actually ran,
         │                              scrubbed before it touches disk
   session ends
         │
-        └──► SessionEnd hook ───────► folds the session into one
-                                       ledger candidate, deletes the buffer
+        └──► SessionEnd hook ───────► cuts the session into task
+                                       episodes, folds each into its own
+                                       candidate, deletes the buffer
 ```
 
-Nothing interrupts you. No popup, no proposal mid-task. The candidate sits in
-the ledger until you go looking for it.
+Nothing interrupts you. No popup, no proposal mid-task. The candidates sit in
+the ledger until you go looking for them.
+
+One session usually yields several candidates, because one sitting usually
+holds several tasks. An episode that ends only because the session did, with
+nothing shipped, is flagged rather than proposed — see README §3, step 2.
 
 The pairing of the first two hooks is the point: `UserPromptSubmit` captures
 **intent**, `PostToolUse` captures **execution**. A shell-history tool only ever
@@ -150,8 +155,8 @@ session:
 | Hook | Status |
 | --- | --- |
 | `PostToolUse` | **Confirmed.** `Bash` and `Edit` calls recorded with commands and file paths parsed correctly, zero parse failures. |
-| `UserPromptSubmit` | **Confirmed.** Prompts captured verbatim under the `prompt` field. |
-| `SessionEnd` | Confirmed by direct invocation; folds a buffer into a ledger entry. |
+| `UserPromptSubmit` | **Confirmed.** Prompts captured verbatim under the `prompt` field. Also written into the step stream as a `UserPrompt` sentinel, so position marks a task boundary. |
+| `SessionEnd` | Confirmed by direct invocation; segments the buffer and folds each episode into a ledger entry. |
 
 ```bash
 python3 -c "import json,glob;d=json.load(open(glob.glob('$HOME/.claude/skillpp/sessions/*.json')[0]));print('prompts:',len(d['prompts']),'steps:',len(d['steps']))"
@@ -211,52 +216,30 @@ Or use `/skillpp-new` to describe a skill directly (bypasses the 3-occurrence th
 
 ### Claude Desktop
 
-**Neither skills nor capture cross over automatically.**
+**Manual skill authorship, no passive capture.**
 
-Skills must be uploaded; hooks never fire at all:
+Desktop cannot passively capture work (no hooks). But skills created in the
+terminal can be uploaded to Desktop for invocation there:
 
 ```
 1. Create a skill in the terminal (/skillpp-new or /skillpp-review)
    ↓
-2. It lands in ~/.claude/skills/<name>/SKILL.md — terminal only
+2. skillpp bundle --format upload --out ~/skill-uploads
    ↓
-3. skillpp bundle --format upload --out ~/skill-uploads
+3. Upload via Customize → Skills
    ↓
-4. Upload via Customize → Skills
-   ↓
-5. Now invocable in Desktop chat
+4. Invoke the skill in Desktop chat when needed
 ```
 
-Capture is worse than manual — it is unavailable. Hooks never fire in Desktop
-(§5a), so the ledger only ever fills from terminal sessions.
-
-Two further limits on the authoring skills themselves: `/skillpp-new` and
-`/skillpp-review` shell out to the `skillpp` CLI, and Desktop chat has no shell.
-Uploading them would make Desktop *load* them and then fail at the first command.
-Authoring stays a terminal activity until a shell-free variant exists.
+The `/skillpp-new` and `/skillpp-review` skills themselves can be uploaded to
+Desktop if you want the authoring tools available in chat, but they're only
+useful when you manually invoke them — no passive effect.
 
 ---
 
 ### Getting skills into Claude Desktop
 
-**Claude Desktop does not read `~/.claude/skills/`. Skills reach it by upload.**
-
-Established by controlled test: two skills were written to `~/.claude/skills/`
-with identical bodies, differing only in whether the frontmatter carried a
-`when_to_use` key. After a full Desktop restart, a fresh chat listed **neither**
-— while continuing to list a skill that had been uploaded through
-Customize → Skills. Desktop's skill list is account-level (uploaded plus
-Anthropic-managed), not a read of the local directory.
-
-> Two earlier readings of this were wrong and are recorded here because the
-> mistakes are instructive. First, the conclusion that upload was required was
-> reached by *inference* from the managed-skills plugin cache, without a test.
-> Then a single successful Desktop invocation of a local skill was taken as
-> proof of local reading — when the real explanation was that the same skill had
-> also been uploaded. A skill working in Desktop says nothing about *why* it
-> works. Only a skill that exists in exactly one place is evidence.
-
-**The upload route: one ZIP per skill.**
+**Skills can go to Desktop — by upload, not by file drop.**
 [Custom skills](https://support.claude.com/en/articles/12512198-how-to-create-custom-skills)
 are uploaded through **Customize → Skills**, as one ZIP per skill with the skill
 folder at the archive root:
@@ -309,11 +292,13 @@ contents differ between sessions, and the path is keyed by session id. Writing
 a skill in there reaches one stale session and is gone at the next. It is a
 cache of managed content, not an extension point.
 
-That cache holds Anthropic's *managed* skills. It is not where your own skills
-go, and writing into it would reach one stale session directory — but that is
-irrelevant, because `~/.claude/skills/` already works (see above). The cache's
-existence is what led to the earlier incorrect conclusion that Desktop had no
-local skills path.
+Use the upload route above instead.
+
+> **No sideloading into Desktop's cache.** The `/claude-plugin` directories
+> under `local-agent-mode-sessions/` are per-session, transient, provisioned
+> from a managed bundle. Writing a skill there reaches one stale cache and
+> vanishes at the next session. Uploading via Customize → Skills is the only
+> supported route.
 
 ### The two bundle formats
 

@@ -8,12 +8,122 @@ while the steps underneath are wrong.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
 from .config import Config
 from .ledger import Entry, describe_step
-from .signals import Question, detect, effects
+from .signals import Question, detect, effects, recurring_steps
+
+PROMPTS = Path(__file__).resolve().parent / "prompts"
+
+
+# -- the local model's name and sentence -----------------------------------
+#
+# One call, two surfaces: the name titles the candidate, the sentence is what
+# the review page shows when a row is opened. Capture can otherwise only reuse
+# a string it observed, which is how the real ledger ended up with 31 of 42
+# entries titled after stray prompts — `.pptx` three times, `go`, `Commit`,
+# `Looks good. What's next?`. The evidence handed to the model is the same
+# either way, so asking for both at once costs nothing over asking for one.
+
+
+def summaries_path(config: Config) -> Path:
+    return config.root / "review_summaries.json"
+
+
+def load_summaries(config: Config) -> dict:
+    try:
+        data = json.loads(summaries_path(config).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def cached_summary(cache: dict, entry: Entry) -> str:
+    """The cached sentence, if it still describes the entry as it stands."""
+    hit = cache.get(entry.id) or {}
+    return hit.get("text", "") if hit.get("steps") == len(entry.steps) else ""
+
+
+def store_summary(config: Config, entry: Entry, text: str) -> None:
+    """Cache the sentence beside the ledger, keyed on step count.
+
+    Never in `entry.description`, which decides whether a promoted skill loads.
+    """
+    cache = load_summaries(config)
+    cache[entry.id] = {"steps": len(entry.steps), "text": text}
+    path = summaries_path(config)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+
+
+# The model opens with "The developer" despite being told to start with a verb,
+# and sometimes appends a labelled block of its own after the two lines. The
+# bullet is defence rather than observation: asking for a name that starts with
+# an "-ing verb" got a literal `-` or `-ing` in front of 17 of 42 names on the
+# real ledger, and the instruction no longer spells it that way — but a model
+# that writes a list anyway must not put the hyphen on the page.
+_LEAD_IN_RE = re.compile(r"\A(the\s+)?developer\s+", re.IGNORECASE)
+_LABELLED_RE = re.compile(r"\A\*\*[^*\n]+:\*\*")
+_BULLET_RE = re.compile(r"\A(?:[-*+\u2022]+|\d+[.)])\s*")
+
+
+def _clean(line: str) -> str:
+    text = _BULLET_RE.sub("", line.strip().strip("*").strip())
+    text = _LEAD_IN_RE.sub("", text.strip()).strip()
+    return (text[0].upper() + text[1:]) if text else ""
+
+
+# A name is listed on every row, so it is cut at a word rather than mid-word:
+# `Crafting and refining LinkedIn announcements for a new article and l` is
+# what a hard 70-character clip produced.
+def _clip(text: str, limit: int = 70) -> str:
+    if len(text) <= limit:
+        return text.rstrip(" .,-")
+    head = text[:limit]
+    if " " in head:
+        head = head[:head.rindex(" ")]
+    return head.rstrip(" .,-") + "…"
+
+
+def name_and_sentence(config: Config, entry: Entry) -> tuple[str, str]:
+    """Ask the local model to name this procedure and say what the run did.
+
+    Returns `(name, sentence)`; the name is empty when the model answered with
+    one line only. Raises `LocalModelUnavailable` — the caller decides whether
+    that is fatal (a fold keeps the title it derived itself, the review page
+    reports it).
+    """
+    from .boundary import render_step as step_line
+    from .local import ask
+
+    asks = "\n".join(f"- {i.strip()[:200]}" for i in entry.intents[:6] if i.strip())
+    reports = [st["closing_note"][:200] for st in entry.steps if st.get("closing_note")]
+    steps = "\n".join(f"- {step_line(st)[:140]}" for st in entry.steps[:12])
+    prompt = ((PROMPTS / "candidate_summary.md").read_text(encoding="utf-8")
+              .replace("{ASKS}", asks or "- (none recorded)")
+              .replace("{REPORTS}", "\n".join(f"- {r}" for r in reports[:4]) or "- (none)")
+              .replace("{STEPS}", steps or "- (none)"))
+    reply = ask(config.local_model, prompt, host=config.ollama_url,
+                timeout=90.0, think=False)
+
+    lines = [l.strip() for l in reply.strip().splitlines()
+             if l.strip() and not _LABELLED_RE.match(l.strip())]
+    name = _clean(lines[0]) if lines else ""
+    sentence = _clean(lines[1]) if len(lines) > 1 else ""
+    # A model that ignores the two-line shape answers with the sentence alone.
+    # Take it as the sentence rather than the name: a wrong title is on every
+    # row of the page, a missing one only costs the fallback.
+    if not sentence:
+        name, sentence = "", name
+    # A model that writes `Name: the sentence` on one line has answered both
+    # questions in the wrong shape; the name is the half before the colon.
+    if not sentence and ": " in name:
+        name, sentence = name.split(": ", 1)
+    return _clip(name), sentence
 
 
 def render_proposal(entry: Entry, config: Config) -> str:
@@ -31,7 +141,13 @@ def render_proposal(entry: Entry, config: Config) -> str:
     lines.append("WHAT IT WILL DO")
     if eff["commands"]:
         for cmd in eff["commands"][:12]:
+            # The command stays the thing being approved; the agent's own note,
+            # where it left one, goes underneath so a screenful of shell can be
+            # read at a glance.
             lines.append(f"  run      {cmd}")
+            note = eff.get("describes", {}).get(cmd)
+            if note:
+                lines.append(f"           ↳ {note}")
         if len(eff["commands"]) > 12:
             lines.append(f"           … and {len(eff['commands']) - 12} more")
     for target in eff["writes"][:8]:
@@ -94,7 +210,7 @@ def _render_dictated(entry: Entry, config: Config) -> str:
             if q.evidence:
                 lines.append(f"     ↳ {q.evidence}")
         if remaining > 0:
-            lines.append(f"  (+{remaining} more — these become ## Known gaps)")
+            lines.append(f"  (+{remaining} more — these become ## Open questions)")
         lines.append("")
     else:
         lines.append("NOT YET SPECIFIED\n  nothing — the description is complete.\n")
@@ -140,20 +256,37 @@ def _answered_kinds(answers: dict[str, str]) -> set[str]:
     return closed
 
 
-def _resolve_answer(answers: dict[str, str], kind: str) -> str:
-    """The answer for a question kind, under its own name or any alias.
+def _cli_of(entry, steps: list[dict]) -> list[str]:
+    """Dependencies of the steps actually written into the skill.
 
-    Gap-closing already honours the aliases, so consuming an answer by literal
-    key alone would mark a trigger resolved while the content reached neither
-    the frontmatter nor the body — silently shipping a placeholder that nothing
-    flags as unresolved.
+    `entry.deps_cli` accumulates across every occurrence, so after
+    `recurring_steps` trims an episode it can still name programs from steps
+    that are no longer in the skill. Narrow it to what the kept steps use — but
+    only when something was trimmed, and only when the narrowing finds
+    anything: `deps_cli` also holds programs a path-invoked script needs, which
+    cannot be re-derived from the command text.
     """
-    for key, value in answers.items():
-        if not value:
-            continue
-        if key == kind or _ANSWER_ALIASES.get(key) == kind:
-            return str(value).strip()
-    return ""
+    from .capture import _cli_dependencies
+    from .lifecycle import COREUTILS, PROGRAM_RE, SHELL_BUILTINS
+
+    # Filtered here, not only where it is parsed: entries banked before the
+    # parser learned that a heredoc body is not shell keep their junk on disk
+    # forever, and one real candidate reached a skill declaring `')` and
+    # `console.log('ok')"` as requirements.
+    clean = [dep for dep in entry.deps_cli
+             if PROGRAM_RE.match(dep) and dep not in SHELL_BUILTINS
+             and dep not in COREUTILS]
+    if len(steps) == len(entry.steps):
+        return clean
+    narrowed = sorted(set(clean) & _cli_dependencies(steps))
+    return narrowed or clean
+
+
+# The marker a facts-only scaffold leaves where the procedure belongs. Fixed
+# text on purpose: skillpp's own `<!-- TODO: replace with the real trigger
+# condition -->` shipped verbatim into two real skills because nothing could
+# tell a finished draft from an untouched one.
+WRITE_HERE = "<!-- skillpp:write-the-procedure -->"
 
 
 def scaffold_skill(
@@ -162,15 +295,42 @@ def scaffold_skill(
     description: str = "",
     answers: dict[str, str] | None = None,
     tier: str = "provisional",
+    *,
+    body: str = "auto",
+    limit: int | None = None,
 ) -> str:
     """Deterministic starting point for a SKILL.md.
 
-    The engine produces structure, dependencies and the verbatim steps. The
-    judgement — prose, naming, when *not* to use it — is the agent's job at
-    review time, editing this scaffold.
+    The engine produces the facts — frontmatter, declared dependencies, the
+    destructive-operations warning. Whether it also produces a *procedure*
+    depends on what the candidate holds:
+
+    * **facts** — the run was steered through conversation, so `entry.turns`
+      has the method and the tool calls were only how it was carried out.
+      Writing the steps out here hands the agent a finished-looking document
+      to leave alone; both of the first real drafts came back as pure scaffold,
+      TODO comment and all. The agent writes the procedure from the turns.
+    * **full** — no turns, so the steps are all the evidence there is.
+
+    `auto` chooses on `bool(entry.turns)`. Resolved here rather than in
+    `cmd_scaffold` so every caller gets it and a new one cannot get it wrong.
+    Requirements stay in both modes: the "if a requirement is missing, stop"
+    contract is a fact, not a judgement. Destructive operations go to the
+    agent instead — `show --json --draft` lists them — because whether a
+    deletion matters is a judgement, and code made the wrong one.
     """
+    full = body == "full" or (body == "auto" and not getattr(entry, "turns", None))
     answers = answers or {}
-    eff = effects(entry.steps)
+    # The steps that happened every time, not the ones that happened once.
+    # Where an entry has only been seen once there is nothing to compare and
+    # this is the whole episode.
+    steps = recurring_steps(entry)
+    eff = effects(steps)
+    # One list for the frontmatter and the Requirements section. They used to
+    # disagree: the bullets iterated `entry.deps_cli`, which is unioned across
+    # every occurrence while `entry.steps` keeps one run's, so a real skill
+    # listed 27 requirements where its own steps justified 15.
+    cli = _cli_of(entry, steps)
     dictated = getattr(entry, "source", "capture") == "dictated"
     desc = description or f"{entry.title}. Use when repeating this workflow."
     # A dictated entry's title is the raw description, which makes a poor
@@ -181,35 +341,28 @@ def scaffold_skill(
         "---",
         f"name: {name}",
         f"description: {json.dumps(desc)}",
-    ]
-    # Claude Code's skill schema has a dedicated when_to_use field that becomes
-    # part of the tool description used at discovery — before the body ever
-    # loads. Writing this only to the body (below) means the trigger phrasing
-    # never reaches the one place that decides whether the skill fires.
-    when_to_use = _resolve_answer(answers, "missing_trigger")
-    if when_to_use:
-        lines.append(f"when_to_use: {json.dumps(when_to_use)}")
-    lines += [
         "metadata:",
         '  source: "skill-plus-plus"',
         f'  provenance: "ledger:{entry.id}"',
         f'  tier: "{tier}"',
         f"  occurrences: {entry.occurrences}",
-        f"  requires_cli: {_yaml_list(entry.deps_cli)}",
+        f"  requires_cli: {_yaml_list(cli)}",
         f"  requires_mcp: {_yaml_list(entry.deps_mcp)}",
         "---",
         "",
         f"# {heading}",
         "",
-        "## When to use",
-        "",
-        when_to_use or "<!-- TODO: replace with the real trigger condition -->",
-        "",
     ]
+    if full:
+        lines += ["## When to use", "",
+                  answers.get("when_to_use",
+                              "<!-- TODO: replace with the real trigger "
+                              "condition -->"),
+                  ""]
 
-    if entry.deps_cli or entry.deps_mcp:
+    if cli or entry.deps_mcp:
         lines += ["## Requirements", ""]
-        for dep in entry.deps_cli:
+        for dep in cli:
             lines.append(f"- `{dep}` on PATH")
         for dep in entry.deps_mcp:
             lines.append(f"- MCP tool `{dep}`")
@@ -220,32 +373,45 @@ def scaffold_skill(
             "",
         ]
 
-    lines += ["## Steps", ""]
-    for n, step in enumerate(entry.steps, 1):
-        lines.append(f"{n}. {describe_step(step)}")
-    lines.append("")
+    if full:
+        lines += ["## Steps", ""]
+        for n, step in enumerate(steps, 1):
+            lines.append(f"{n}. {describe_step(step)}")
+        lines.append("")
+    else:
+        lines += [WRITE_HERE, "",
+                  "Write the procedure here, from the turns in "
+                  "`skillpp show <id> --json --draft`: what was asked, what "
+                  "came back, which skills did the work. Leave the frontmatter "
+                  "and the sections above as they are.", ""]
 
-    if eff["destructive"]:
+    # Only in full mode. With turns, the agent is handed these commands in
+    # `show --json --draft` and writes the warning itself — code can flag `rm`,
+    # it cannot tell a dropped database from a procedure deleting its own
+    # scratch images, and the verbatim version shipped the second as a warning.
+    if full and eff["destructive"]:
         lines += ["## Destructive operations", "",
                   "These steps change or remove state. Confirm before running:", ""]
-        lines += [f"- `{c}`" for c in eff["destructive"]]
+        # One line each: a raw newline inside a bullet's backticks splits the
+        # code span on render, and the page read `slide-*.jpg` as italics.
+        lines += [f"- `{c.replace(chr(10), ' ⏎ ')}`" for c in eff["destructive"]]
         lines.append("")
 
-    # The trigger has its own frontmatter field and body section under any of
-    # its alias names; repeating it under Judgement would be a third copy.
-    answered = {k: v for k, v in answers.items()
-                if v and k != "missing_trigger"
-                and _ANSWER_ALIASES.get(k, k) != "missing_trigger"}
-    if answered:
+    answered = {k: v for k, v in answers.items() if k not in ("when_to_use",) and v}
+    if full and answered:
         lines += ["## Judgement", ""]
         for key, value in answered.items():
             lines.append(f"- **{key.replace('_', ' ').capitalize()}:** {value}")
         lines.append("")
 
     closed = _answered_kinds(answers)
+    # Capped like `questions_for` does: these now block a draft's download, and
+    # an unbounded list is a wall rather than a review.
     open_questions = [q for q in detect(entry) if q.kind not in closed]
-    if open_questions:
-        lines += ["## Known gaps", "",
+    if limit is not None:
+        open_questions = open_questions[:limit]
+    if full and open_questions:
+        lines += ["## Open questions", "",
                   "Unresolved at approval time. Close these the first time the "
                   "skill is run and the branch is hit.", ""]
         lines += [f"- {q.text}" for q in open_questions]
