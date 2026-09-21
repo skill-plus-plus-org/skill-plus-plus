@@ -33,8 +33,11 @@ from .config import Config
 from .ledger import (STATUS_CANDIDATE, STATUS_DISMISSED, STATUS_PROMOTED,
                      Ledger)
 from .lifecycle import parse_frontmatter
+from .normalize import parameterize
 from .summary import cached_summary, load_summaries, summaries_path
 from .sanitize import scrub
+from .segment import is_read_only
+from .signals import DESTRUCTIVE
 
 CLI = Path(__file__).resolve().parent.parent / "bin" / "skillpp"
 PROMPTS = Path(__file__).resolve().parent / "prompts"
@@ -148,31 +151,211 @@ def days_left(config: Config, entry, now=None) -> int | None:
     return max(0, math.ceil(seconds / 86400))    # part of a day left is a day left
 
 
-def step_outline(steps: list[dict], limit: int = 30) -> list[str]:
-    """One line per step, in order: the agent's own description of a shell
-    command where it wrote one, otherwise the tool and what it touched.
+# `AskUserQuestion` keeps nothing of its input once scrubbed, but what came back
+# names each question and the answer given: `"<question>"="<answer>"`.
+_ASKED = re.compile(r'"([^"]+)"="([^"]*)"')
+# A connector's MCP server can be named by a bare id; its tool name still reads.
+_ID_SERVER = re.compile(r"\A[0-9a-f]{8}-[0-9a-f]{4}-")
 
-    Descriptions are written by the agent at call time, so this reads as what
-    was done without a model. Consecutive repeats collapse to one line.
-    """
+
+def _squash(text) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _asked(step: dict) -> str:
+    """What a question to the developer asked and what they chose."""
+    return "; ".join(f"{q} → {a}" for q, a in
+                     _ASKED.findall(str(step.get("tool_returned") or "")))
+
+
+def step_label(step: dict) -> str:
+    """What one step did, in a few words and without a model: the agent's own
+    description of a shell command where it wrote one — written at call time,
+    for a reader — otherwise the tool and what it touched."""
+    tool = str(step.get("tool", "?"))
+    payload = step.get("input") or {}
+    note = _squash(payload.get("description") or payload.get("text"))
+    if note:
+        return note
+    if tool == "AskUserQuestion":
+        return _asked(step) or "a question"
+    if tool.startswith("mcp__"):
+        parts = tool.split("__")
+        leaf = parts[-1].replace("_", " ")
+        server = parts[1] if len(parts) > 2 else ""
+        return f"{server}: {leaf}" if server and not _ID_SERVER.match(server) else leaf
+    target = payload.get("file_path") or payload.get("path") or payload.get("pattern")
+    if target:
+        return f"{tool} {Path(str(target)).name or target}"
+    if tool == "Bash":
+        return _squash(payload.get("command"))[:80]
+    if tool == "Skill" and payload.get("skill"):
+        return f"Skill {payload['skill']}"
+    return tool
+
+
+def step_outline(steps: list[dict], limit: int = 30) -> list[str]:
+    """One line per step, in order — what the page shows when the steps cannot
+    be placed under the requests they served (`step_groups`). Consecutive
+    repeats collapse to one line."""
     lines: list[str] = []
     for step in steps:
-        tool = str(step.get("tool", "?"))
-        payload = step.get("input") or {}
-        note = " ".join(str(payload.get("description") or payload.get("text") or "").split())
-        if not note:
-            target = payload.get("file_path") or payload.get("path") or payload.get("pattern")
-            if tool.startswith("mcp__"):
-                note = tool.split("__")[-1].replace("_", " ")
-            elif target:
-                note = f"{tool} {Path(str(target)).name or target}"
-            elif tool == "Bash":
-                note = " ".join(str(payload.get("command", "")).split())[:80]
-            else:
-                note = tool
+        note = step_label(step)
+        if step.get("tool") == "AskUserQuestion":
+            note = f"Asked you: {note}"
         if not lines or lines[-1] != note:
             lines.append(note)
     return lines[:limit] + ([f"… {len(lines) - limit} more"] if len(lines) > limit else [])
+
+
+def _placement(entry) -> list[int] | None:
+    """Which request each step served, as an index into `entry.turns` — or
+    None when that cannot be told for certain.
+
+    Every step records `serves`, the number of prompts its session had seen
+    when it ran. A turn records no number of its own, and an episode seldom
+    starts at its session's first prompt, so the two are lined up through the
+    agent's words: what it said while serving a request is part of that
+    request's reply. Every anchor must agree, or nothing is placed: steps
+    shifted under the wrong requests would read worse than the flat list.
+    """
+    turns, steps = entry.turns or [], entry.steps or []
+    if not turns or not steps:
+        return None
+    if len(turns) == 1:
+        return [0] * len(steps)
+    try:
+        serves = [int(step["serves"]) for step in steps]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if serves != sorted(serves):
+        return None
+    cwd = (entry.projects or [None])[0]
+    replies = [_squash(turn.get("reply")) for turn in turns]
+    offsets = set()
+    for step, number in zip(steps, serves):
+        for said in (step.get("assistant_note"), step.get("closing_note")):
+            # Parameterised as the reply was, so a path in it still matches.
+            anchor = _squash(parameterize(str(said or ""), cwd))[:60]
+            if len(anchor) < 12:
+                continue
+            hits = [i for i, reply in enumerate(replies) if anchor in reply]
+            if len(hits) == 1:
+                offsets.add(hits[0] - number)
+    if len(offsets) != 1:
+        return None
+    offset = offsets.pop()
+    placed = [number + offset for number in serves]
+    return placed if placed[0] >= 0 and placed[-1] < len(turns) else None
+
+
+def _step_item(step: dict) -> dict:
+    tool = str(step.get("tool", ""))
+    payload = step.get("input") or {}
+    if tool == "AskUserQuestion":
+        kind = "ask"
+    elif is_read_only(step):
+        kind = "look"                   # a lookup that failed only looked
+    else:
+        kind = "fail" if step.get("failed") else "do"
+    command = str(payload.get("command", "")) if tool == "Bash" else ""
+    target = payload.get("file_path") if tool in ("Write", "Edit", "NotebookEdit") else ""
+    return {"kind": kind, "text": step_label(step),
+            # The same test that lists a run's destructive commands for the draft.
+            "warn": bool(command and DESTRUCTIVE.search(command)),
+            "verb": tool if target else "", "file": Path(str(target)).name if target else ""}
+
+
+def _fold(items: list[dict]) -> list[dict]:
+    """Lookups made back to back become one line, and so does one change made
+    again and again; every other change keeps a line of its own."""
+    lines: list[dict] = []
+    for item in items:
+        last = lines[-1] if lines else None
+        if last and item["kind"] == last["kind"] == "look":
+            names = last["names"]
+            if names[-1][0] == item["text"]:
+                names[-1][1] += 1
+            else:
+                names.append([item["text"], 1])
+            last["steps"] += 1
+            continue
+        if (last and item["kind"] == last["kind"] and item["warn"] == last["warn"]
+                and len(last["names"]) == 1 and last["names"][0][0] == item["text"]):
+            last["names"][0][1] += 1
+            last["steps"] += 1
+            continue
+        lines.append({**item, "steps": 1, "names": [[item["text"], 1]]})
+    for line in lines:
+        line["text"] = " · ".join(text if n == 1 else f"{text} ×{n}"
+                                  for text, n in line.pop("names"))
+    return lines
+
+
+def _digest(lines: list[dict]) -> tuple[list[dict], int, int]:
+    """The one line a closed request shows: what changed, in order — file
+    changes with one verb counted together, so four writes read "Write 4
+    files" — and the lookups and failures only as numbers."""
+    parts: list[dict] = []
+    run: list[dict] = []
+    looks = failed = 0
+
+    def flush() -> None:
+        if not run:
+            return
+        files = list(dict.fromkeys(line["file"] for line in run))
+        count = sum(line["steps"] for line in run)
+        text = (f"{run[0]['verb']} {files[0]}" + (f" ×{count}" if count > 1 else "")
+                if len(files) == 1 else f"{run[0]['verb']} {len(files)} files")
+        parts.append({"text": text, "warn": False})
+        run.clear()
+
+    for line in lines:
+        if line["kind"] == "look":
+            looks += line["steps"]
+        elif line["kind"] == "fail":
+            failed += line["steps"]
+        elif line["kind"] == "do" and line["verb"]:
+            if run and run[0]["verb"] != line["verb"]:
+                flush()
+            run.append(line)
+        else:
+            flush()
+            parts.append({"text": "asked you" if line["kind"] == "ask" else line["text"],
+                          "warn": line["warn"]})
+    flush()
+    return parts, looks, failed
+
+
+_REQUEST_CHARS = 1200
+
+
+def step_groups(entry) -> list[dict] | None:
+    """The steps under the request each one served, the developer's own words
+    as the headings — or None, and the page shows `step_outline` instead.
+
+    Per request: `lines` in order, for when it is opened, and a `digest` of
+    what changed, for the one line shown while it is closed. Most of a run is
+    looking around; that is what folding hides, not what it drops.
+    """
+    placed = _placement(entry)
+    if placed is None:
+        return None
+    served: list[list[dict]] = [[] for _ in entry.turns]
+    for step, index in zip(entry.steps, placed):
+        served[index].append(_step_item(step))
+    groups = []
+    for turn, items in zip(entry.turns, served):
+        request = str(turn.get("prompt") or "").strip()
+        if len(request) > _REQUEST_CHARS:
+            request = request[:_REQUEST_CHARS].rstrip() + "…"
+        lines = _fold(items)
+        digest, looks, failed = _digest(lines)
+        for line in lines:
+            del line["verb"], line["file"]
+        groups.append({"request": request, "tools": len(items), "lines": lines,
+                       "digest": digest, "looks": looks, "failed": failed})
+    return groups
 
 
 # The cache and the model call live in `skillpp.summary`, because capture asks
@@ -231,6 +414,7 @@ def collect_state(config: Config) -> dict:
                      **row_state(config, entry),
                      "seen": seen_runs(entry),
                      "outline": step_outline(entry.steps),
+                     "groups": step_groups(entry),
                      "summary": _cached_summary(summaries, entry)})
     # Expired last of all. Otherwise most-recognized first; at the same count,
     # the one closest to expiring first, then rows that never expire.
@@ -758,6 +942,28 @@ PAGE = r"""<!doctype html>
  .sum.pending{color:var(--muted);font-style:italic}
  .outline{margin:0 0 10px;padding-left:20px;font-size:13px;color:#cbd2e1}
  .outline li{margin:2px 0}
+ .cand .body h3 .meta{font:400 11px var(--mono);text-transform:none;letter-spacing:0;margin-left:6px}
+ .reqs{list-style:none;margin:0 0 14px;padding:0}
+ .req{border-top:1px solid var(--line)}
+ .req:first-child{border-top:0}
+ .req>button{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;background:none;
+   border:0;border-radius:0;padding:7px 0;color:inherit;font:inherit;cursor:pointer}
+ .req>button:hover .p{color:#fff}
+ .req .n{flex-shrink:0;width:20px;height:20px;margin-top:1px;border-radius:50%;border:1px solid var(--line);
+   font:11px/18px var(--mono);text-align:center;color:var(--muted)}
+ .req.open .n{border-color:var(--dim);color:var(--fg)}
+ .req .what{min-width:0;flex:1}
+ .req .p{display:block;font:13px/1.5 var(--sans);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .req.open .p{white-space:pre-wrap;overflow-wrap:anywhere}
+ .req.quiet .p{color:var(--muted)}
+ .req .dg{display:block;font:12px/1.5 var(--sans);color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .req.open:not(.quiet) .dg{display:none}
+ .req .chg{color:#cbd2e1} .req .lk{color:var(--muted)} .req .bad{color:var(--no)} .req .warn{color:#fbbf24}
+ .req .lines{margin:0 0 10px 30px;padding:2px 0 2px 12px;border-left:2px solid var(--line)}
+ .req .ln{display:grid;grid-template-columns:70px minmax(0,1fr);gap:8px;font:12.5px/1.55 var(--sans);color:#cbd2e1}
+ .req .ln .k{font:11px/1.95 var(--mono);color:var(--muted)}
+ .req .ln.look .t{color:var(--muted)} .req .ln.ask .t{color:var(--go)}
+ .req .ln.fail .t{color:var(--no)} .req .ln.warn .t{color:#fbbf24}
  .runs{list-style:none;margin:0;padding:0;font-size:13px}
  .runs li{margin:2px 0}
  .run{background:none;border:0;padding:0;font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -841,7 +1047,7 @@ const inDrafts = r => ["drafted", "revising"].includes(r.state);
 let view = "candidates", open = new Set(), writing = new Set(), drafts = {}, answers = {};
 let openRows = new Set(), summarising = new Set(), summaryError = {};
 let noting = new Set(), notes = {};
-let openRuns = new Set(), convos = {}, convoError = {};
+let openRuns = new Set(), convos = {}, convoError = {}, openReqs = new Set();
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -1079,9 +1285,38 @@ function candidateBody(r){
   const sum = r.summary ? `<p class="sum">${esc(r.summary)}</p>`
     : summaryError[r.id] ? `<p class="sum pending">No summary: ${esc(summaryError[r.id])}</p>`
     : `<p class="sum pending">Summarising…</p>`;
-  return `<h3>Summary</h3>${sum}
-    <h3>Steps</h3><ol class="outline">${r.outline.map(l => `<li>${esc(l)}</li>`).join("")}</ol>
-    ${seenIn(r)}`;
+  return `<h3>Summary</h3>${sum}${stepsBlock(r)}${seenIn(r)}`;
+}
+
+// The steps under the request each one served, every request closed until
+// clicked: your words, then one line of what changed, the lookups only as a
+// count. Opened, it lists the whole sequence in order. A candidate whose steps
+// cannot be placed for certain keeps the flat list (`step_groups` in web.py).
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const KINDS = {look: "looked", do: "did", ask: "asked you", fail: "failed"};
+
+function stepsBlock(r){
+  if(!r.groups) return `<h3>Steps</h3><ol class="outline">${r.outline.map(l => `<li>${esc(l)}</li>`).join("")}</ol>`;
+  const calls = r.groups.reduce((n, g) => n + g.tools, 0);
+  return `<h3>Steps <span class="meta">${plural(r.groups.length, "request")} · ${plural(calls, "tool call")}</span></h3>
+    <ol class="reqs">${r.groups.map((g, i) => requestItem(r, g, i)).join("")}</ol>`;
+}
+
+function requestItem(r, g, i){
+  const key = `${r.id}:${i}`, isOpen = openReqs.has(key);
+  const said = [
+    ...g.digest.map(d => `<span class="${d.warn ? "warn" : "chg"}">${esc(d.text)}</span>`),
+    g.looks ? `<span class="lk">${plural(g.looks, "lookup")}</span>` : "",
+    g.failed ? `<span class="bad">${g.failed} failed</span>` : "",
+  ].filter(Boolean).join(`<span class="lk"> · </span>`) || `<span class="lk">answered, no tools</span>`;
+  // Cut to one line while closed; the whole of it on hover.
+  const whole = [...g.digest.map(d => d.text), g.looks ? plural(g.looks, "lookup") : "",
+                 g.failed ? `${g.failed} failed` : ""].filter(Boolean).join(" · ");
+  const lines = isOpen && g.lines.length ? `<div class="lines">${g.lines.map(l =>
+    `<div class="ln ${l.kind}${l.warn ? " warn" : ""}"><span class="k">${KINDS[l.kind]}</span><span class="t">${esc(l.text)}</span></div>`).join("")}</div>` : "";
+  return `<li class="req${isOpen ? " open" : ""}${g.tools ? "" : " quiet"}">
+    <button data-req="${esc(key)}" aria-expanded="${isOpen}"><span class="n">${i + 1}</span>
+      <span class="what"><span class="p">${esc(g.request)}</span><span class="dg" title="${esc(whole)}">${said}</span></span></button>${lines}</li>`;
 }
 
 // Where the work actually happened. The session id is the link: clicking it
@@ -1207,6 +1442,11 @@ function paint(){
   list.querySelectorAll("[data-run]").forEach(b => b.onclick = () => {
     const s = b.dataset.run;
     if(openRuns.has(s)){ openRuns.delete(s); } else { openRuns.add(s); fetchConvo(s); }
+    render();
+  });
+  list.querySelectorAll("[data-req]").forEach(b => b.onclick = () => {
+    const k = b.dataset.req;
+    openReqs.has(k) ? openReqs.delete(k) : openReqs.add(k);
     render();
   });
   list.querySelectorAll("[data-goto]").forEach(a => a.onclick = () => {

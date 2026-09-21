@@ -3983,10 +3983,14 @@ class TestWeb(TempRoot):
             {"tool": "mcp__adk-docs__fetch_docs", "input": {"url": "https://x"}},
             {"tool": "Bash", "input": {"command": "npm   test"}},
             {"tool": "Stated", "input": {"text": "send the summary"}},
+            # Its input is scrubbed to nothing; what came back still says it all.
+            {"tool": "AskUserQuestion", "input": {},
+             "tool_returned": 'User has answered your questions: "Bundle or split?"="Split". Go on.'},
         ]
         self.assertEqual(step_outline(steps), ["Restart servers", "Edit cases.json",
-                                               "fetch docs", "npm test",
-                                               "send the summary"])
+                                               "adk-docs: fetch docs", "npm test",
+                                               "send the summary",
+                                               "Asked you: Bundle or split? → Split"])
 
     def test_a_summary_is_asked_on_demand_cached_and_redone_when_the_entry_grows(self):
         import skillpp.local as local
@@ -5032,6 +5036,119 @@ class TestJudgeInput(unittest.TestCase):
         b.judge({"tool": "Bash", "input": {"command": "x"}}, model="m", host="h")
         self.assertIs(sent["think"], False)
         self.assertNotIn("reserve", sent)
+
+
+class TestStepGroups(unittest.TestCase):
+    """A candidate's steps under the request each one served, as the page shows
+    them. The flat list read as thirty-odd tool calls with nothing to say which
+    request they belonged to, most of them only looking around, and its cut at
+    thirty hid the commit."""
+
+    def _entry(self, turns, steps, projects=()):
+        return Entry(id="g", signature="s", title="t", projects=list(projects),
+                     turns=[{"prompt": p, "reply": r, "used": []} for p, r in turns],
+                     steps=steps)
+
+    @staticmethod
+    def _step(serves, tool="Bash", closing="", **kw):
+        return {"tool": tool, "input": kw, "serves": serves, "closing_note": closing}
+
+    def _three_requests(self):
+        # The episode starts at the session's third prompt, so `serves` runs 3-5.
+        return self._entry(
+            [("fetch the ADK docs first", "Fetched the docs: an eval case has an id and a query."),
+             ("add the case", "Added case_x to cases.json after its sibling. JSON valid."),
+             ("commit", "Committed as abc123. Working tree clean.")],
+            [self._step(3, "mcp__adk-docs__fetch_docs",
+                        closing="Fetched the docs: an eval case has an id"),
+             self._step(4, "Read", file_path="/r/eval/cases.json"),
+             self._step(4, command="grep -n expect_card /r/eval/cases.json",
+                        description="Find card patterns"),
+             self._step(4, "Edit", file_path="/r/eval/cases.json"),
+             self._step(4, command="python3 -c 'import json'", description="Validate JSON",
+                        closing="Added case_x to cases.json after its sibling."),
+             self._step(5, command="git commit -m case", description="Commit")])
+
+    def test_steps_sit_under_the_request_they_served(self):
+        from skillpp.web import step_groups
+        groups = step_groups(self._three_requests())
+        self.assertEqual([g["request"] for g in groups],
+                         ["fetch the ADK docs first", "add the case", "commit"])
+        self.assertEqual([g["tools"] for g in groups], [1, 4, 1])
+        add = groups[1]
+        self.assertEqual([(line["kind"], line["text"]) for line in add["lines"]],
+                         [("look", "Read cases.json · Find card patterns"),
+                          ("do", "Edit cases.json"), ("do", "Validate JSON")])
+        self.assertEqual([d["text"] for d in add["digest"]], ["Edit cases.json", "Validate JSON"])
+        self.assertEqual(add["looks"], 2)
+        self.assertEqual(groups[0]["lines"][0]["text"], "adk-docs: fetch docs")
+
+    def test_steps_that_cannot_be_placed_for_certain_keep_the_flat_list(self):
+        """A list shifted under the wrong requests reads worse than a flat one."""
+        from skillpp.web import step_groups
+        turns = [("a", "Looked it up and found the answer."), ("b", "Changed the file as asked.")]
+        unanchored = self._entry(turns, [self._step(1), self._step(2)])
+        self.assertIsNone(step_groups(unanchored))
+        disagreeing = self._entry(turns, [
+            self._step(1, closing="Looked it up and found the answer."),
+            self._step(1, closing="Changed the file as asked.")])
+        self.assertIsNone(step_groups(disagreeing))
+        unnumbered = self._entry(turns, [{"tool": "Bash", "input": {},
+                                          "closing_note": "Looked it up and found the answer."}])
+        self.assertIsNone(step_groups(unnumbered))
+
+    def test_one_request_needs_no_anchor(self):
+        from skillpp.web import step_groups
+        groups = step_groups(self._entry([("do it", "done")], [self._step(7), self._step(7)]))
+        self.assertEqual([g["tools"] for g in groups], [2])
+
+    def test_a_path_in_the_agents_words_still_anchors(self):
+        """Replies are stored with paths parameterised; the notes are not."""
+        from pathlib import Path
+        from skillpp.web import step_groups
+        home = str(Path.home())
+        entry = self._entry(
+            [("look", "Nothing to change here."),
+             ("write it", "Wrote ${HOME}/proj/cases.json and ran the check.")],
+            [self._step(3, "Write", file_path=f"{home}/proj/cases.json",
+                        closing=f"Wrote {home}/proj/cases.json and ran the check.")])
+        groups = step_groups(entry)
+        self.assertIsNotNone(groups)
+        self.assertEqual([g["tools"] for g in groups], [0, 1])
+
+    def test_a_question_says_what_was_asked_and_answered(self):
+        from skillpp.web import step_groups
+        ask = {"tool": "AskUserQuestion", "input": {}, "serves": 1,
+               "tool_returned": 'User has answered your questions: '
+                                '"Bundle or split?"="Revert reformat". Go on.'}
+        group = step_groups(self._entry([("commit", "ok")], [ask]))[0]
+        self.assertEqual(group["lines"], [{"kind": "ask", "text": "Bundle or split? → Revert reformat",
+                                           "warn": False, "steps": 1}])
+        self.assertEqual(group["digest"], [{"text": "asked you", "warn": False}])
+
+    def test_back_to_back_file_changes_count_together_only_when_closed(self):
+        from skillpp.web import step_groups
+        writes = [self._step(1, "Write", file_path=f"/a/{n}.md") for n in ("one", "two", "three")]
+        edits = [self._step(1, "Edit", file_path="/a/LOG.md") for _ in range(3)]
+        group = step_groups(self._entry([("write", "ok")], writes + edits))[0]
+        self.assertEqual([d["text"] for d in group["digest"]], ["Write 3 files", "Edit LOG.md ×3"])
+        self.assertEqual([line["text"] for line in group["lines"]],
+                         ["Write one.md", "Write two.md", "Write three.md", "Edit LOG.md ×3"])
+
+    def test_a_failed_change_shows_a_failed_lookup_only_looked(self):
+        from skillpp.web import step_groups
+        group = step_groups(self._entry([("go", "ok")], [
+            {**self._step(1, "Write", file_path="/a/x.md"), "failed": True},
+            {**self._step(1, command="grep -n nothing x.md"), "failed": True}]))[0]
+        self.assertEqual([line["kind"] for line in group["lines"]], ["fail", "look"])
+        self.assertEqual((group["failed"], group["looks"]), (1, 1))
+
+    def test_a_destructive_command_is_marked_by_the_drafts_own_test(self):
+        from skillpp.web import step_groups
+        group = step_groups(self._entry([("clean", "ok")], [
+            self._step(1, command="rm -f slide-*.jpg", description="Clear old previews")]))[0]
+        self.assertTrue(group["lines"][0]["warn"])
+        self.assertEqual(group["digest"], [{"text": "Clear old previews", "warn": True}])
 
 
 class TestReviewPageRendering(unittest.TestCase):
