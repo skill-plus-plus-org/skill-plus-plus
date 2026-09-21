@@ -1,5 +1,8 @@
 # The episode filter
 
+> Part of the [research log](README.md), which says where things stand now.
+> The sessions cited below by tag are a private set, not in the repo.
+
 Segmentation answers *where* a task ended. It cannot answer whether the task was
 worth keeping, and the difference is arithmetic rather than tuning: **a partition
 cannot discard anything.** Cut a session more accurately and every step still

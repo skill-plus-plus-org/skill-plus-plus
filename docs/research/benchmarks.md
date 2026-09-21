@@ -1,5 +1,8 @@
 # Benchmarks
 
+> Part of the [research log](README.md), which says where things stand now.
+> The sessions cited below by tag are a private set, not in the repo.
+
 Every earlier measurement in this repo used fixtures written by whoever was also
 writing the detector, which tests internal consistency more than anything else.
 This corpus is written the other way round: from what the work actually looks

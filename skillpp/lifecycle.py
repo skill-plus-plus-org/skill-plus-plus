@@ -1,13 +1,13 @@
 """Tiering and decay for the skill library.
 
-Approved skills are never auto-deleted (README 6). Disuse is a poor proxy for
+Approved skills are never auto-deleted (docs/design.md §6). Disuse is a poor proxy for
 value — the incident runbook is rare *by nature* — so unused skills are
 demoted out of the always-loaded index, not destroyed:
 
     hot (indexed) → cold (searchable) → archived (explicit lookup only)
 
 Because Claude Code indexes everything under the skills directory, demotion is
-implemented as a file move rather than a flag (README 8).
+implemented as a file move rather than a flag (docs/design.md §8).
 
 Staleness is a separate signal from disuse: a skill rots when the script it
 calls is renamed or the flag it passes is removed. That is detected by

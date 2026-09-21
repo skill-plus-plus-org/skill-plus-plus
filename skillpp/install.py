@@ -176,7 +176,7 @@ def build_plugin_bundle(skills: list[Path], out_dir: Path, name: str,
         <root>/commands/<name>.md          (optional)
 
     This is the portable unit: the same bundle is what a team pull request
-    ships (README §13) and what a plugin-install flow consumes. It is *not* a
+    ships (docs/design.md §13) and what a plugin-install flow consumes. It is *not* a
     way to sideload into Claude Desktop's session cache — that directory is
     provisioned per session and anything written there is transient.
     """

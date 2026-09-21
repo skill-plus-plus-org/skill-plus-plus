@@ -2,7 +2,7 @@
 
 The engine never persists a raw trace. Every string captured from a hook goes
 through :func:`scrub` before it reaches disk, so the ledger is never a
-liability sitting in a buffer waiting to be cleaned up later (README 3.2).
+liability sitting in a buffer waiting to be cleaned up later (docs/design.md §3.2).
 
 Redactions keep a stable type label — ``[REDACTED:github-token]`` rather than
 ``***`` — so that scrubbing does not disturb recurrence matching: the same

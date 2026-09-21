@@ -1,6 +1,6 @@
 """Hook handlers — the capture layer.
 
-Wired to Claude Code hooks (README 8):
+Wired to Claude Code hooks (docs/design.md §8):
 
 * ``UserPromptSubmit`` records stated intent — the half of the picture a raw
   command log can never recover.
@@ -440,7 +440,7 @@ def handle_tool(config: Config, payload: dict) -> None:
     if not isinstance(raw_input, dict):
         raw_input = {"value": raw_input}
 
-    # A Skill invocation is how tiering learns what is actually used (README 6).
+    # A Skill invocation is how tiering learns what is actually used (docs/design.md §6).
     if tool == "Skill":
         from .lifecycle import record_use
         record_use(config, str(raw_input.get("skill", "")))
@@ -1029,7 +1029,7 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
                 existing.intents.append(intent)
         del existing.intents[8:]
         # Keep a few variants so divergence and conditional-step detection
-        # have something to compare (README 4).
+        # have something to compare (docs/design.md §4).
         if len(existing.variants) < 4:
             existing.variants.append(substantive)
         existing.deps_mcp = sorted(set(existing.deps_mcp) | set(deps_mcp))
@@ -1322,7 +1322,7 @@ def _shell_chunks(command: str) -> list[str]:
 
 
 def _cli_dependencies(steps: list[dict]) -> set[str]:
-    """Programs the workflow shells out to — declared deps (README 5)."""
+    """Programs the workflow shells out to — declared deps (docs/design.md §5)."""
     from .lifecycle import COREUTILS, PROGRAM_RE, SHELL_BUILTINS
     # Shell grammar, not programs. A real skill declared `requires_cli: ["\\",
     # "do", "done", "for", "grep"]` — it was telling the reader to install `do`

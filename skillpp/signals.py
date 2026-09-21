@@ -1,6 +1,6 @@
 """Gap detection — where the trace is ambiguous, and what to ask about it.
 
-README 4: the questions are generated *by the ambiguity in the trace*, never
+docs/design.md §4: the questions are generated *by the ambiguity in the trace*, never
 from a fixed questionnaire. A clean candidate asks nothing; a messy one asks
 precisely about the part that is messy.
 
@@ -74,7 +74,7 @@ def detect(entry) -> list[Question]:
 
 def _failure_retry(steps: list[dict]) -> list[Question]:
     """A command failed and a variant succeeded: the trace has the fix, not the
-    diagnosis. Highest-value question there is (README 4)."""
+    diagnosis. Highest-value question there is (docs/design.md §4)."""
     out: list[Question] = []
     for i, step in enumerate(steps):
         if not step.get("failed"):
@@ -339,7 +339,7 @@ def _first_match(pattern: re.Pattern[str], text: str) -> str:
 
 
 def effects(steps: list[dict]) -> dict:
-    """What the skill will *do* — the review surface (README 3.4).
+    """What the skill will *do* — the review surface (docs/design.md §3.4).
 
     Effects, not purpose: a purpose summary can be accurate while the steps
     underneath are wrong. That is why the command itself is what this returns
