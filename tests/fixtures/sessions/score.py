@@ -23,12 +23,18 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
+# The recorded sessions. The ones in this directory are public work; a set
+# recorded on work that cannot be published lives elsewhere and is scored by
+# pointing this at it. `expected.json` beside them holds the numbers that
+# belong to that set alone.
+SESSIONS = Path(os.environ.get("SKILLPP_FIXTURES") or HERE).expanduser()
 sys.path.insert(0, str(REPO))
 
 from skillpp.capture import fold_session  # noqa: E402
@@ -37,9 +43,17 @@ from skillpp.ledger import Ledger  # noqa: E402
 from skillpp.segment import is_marker, is_prompt  # noqa: E402
 
 
+def expected() -> dict:
+    """The numbers that belong to this set of sessions, or {} if none."""
+    path = SESSIONS / "expected.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
 def load(tag: str | None = None) -> list[dict]:
     out = []
-    for path in sorted(HERE.glob("*.json")):
+    for path in sorted(SESSIONS.glob("*.json")):
+        if path.name == "expected.json":
+            continue
         doc = json.loads(path.read_text(encoding="utf-8"))
         if tag is None or doc["tag"].startswith(tag):
             doc["_path"] = path

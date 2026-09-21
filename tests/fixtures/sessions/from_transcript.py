@@ -192,7 +192,8 @@ def main(argv: list[str]) -> int:
                   "failed": sum(1 for s in work if s.get("failed"))},
         "steps": steps,
     }
-    out = HERE / f"{args.tag[:8]}-{args.name}.json"
+    # Beside the others it will be scored with, public or private.
+    out = Path(os.environ.get("SKILLPP_FIXTURES") or HERE).expanduser() / f"{args.tag[:8]}-{args.name}.json"
     out.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
 
     got = segment([dict(s) for s in steps], 2)

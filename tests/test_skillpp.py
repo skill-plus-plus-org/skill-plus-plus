@@ -1893,10 +1893,14 @@ class TestNarrationIsAttributedToTheRightStep(TempRoot):
         self.assertEqual(_narration({"transcript_path": "/no/such/file"}), ("", ""))
 
     def test_the_live_session_carries_its_investigation_report(self):
-        """`241955c7`, the session this was found on."""
-        import glob
-        doc = json.loads(Path(glob.glob(
-            "tests/fixtures/sessions/241955c7*.json")[0]).read_text())
+        """`241955c7`, the session this was found on. A private one: it runs
+        where `SKILLPP_FIXTURES` points at the set that holds it."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "sessions"))
+        import score
+        found = score.load("241955c7")
+        if not found:
+            self.skipTest("session 241955c7 is not in this set")
+        doc = found[0]
         work = [s for s in doc["steps"] if not is_prompt(s)]
         last_of_task_one = work[5]           # the Read that ends the investigation
         self.assertEqual(last_of_task_one["tool"], "Read")
@@ -4138,6 +4142,12 @@ class TestLiveSessions(unittest.TestCase):
         import score
         cls.score = score
         cls.docs = score.load()
+        # A set pointed at and found empty is a mistake worth failing on; no
+        # public sessions recorded yet is not.
+        if not cls.docs and not os.environ.get("SKILLPP_FIXTURES"):
+            raise unittest.SkipTest(
+                "no recorded sessions in tests/fixtures/sessions; point "
+                "SKILLPP_FIXTURES at a set to score one")
 
     def test_every_banked_episode_has_a_family(self):
         """`recurrence.py` refuses to score if labels and episodes disagree.
@@ -4145,19 +4155,20 @@ class TestLiveSessions(unittest.TestCase):
         A family label per banked episode is the ground truth for whether
         repeated work becomes one candidate. If segmentation changes how many
         episodes a session banks, the labels must be rewritten, not silently
-        misaligned.
+        misaligned. How many each family should hold belongs to the set, so it
+        lives beside the sessions, in `expected.json`.
         """
         import recurrence
+        expected = self.score.expected().get("family_sizes")
+        if not expected:
+            self.skipTest("this set has no expected.json family_sizes")
         with tempfile.TemporaryDirectory() as tmp:
             config = Config(Path(tmp) / "skillpp")
             config.ensure_dirs()
             rows = recurrence.fold_all(config)
         sizes = recurrence.evaluate(rows)["sizes"]
-        self.assertEqual(sizes.get("add-eval-case"), 7)
-        self.assertEqual(sizes.get("coverage-writeup"), 2)
-        # Five runs, two of them cut at the review prompt: a recorded gap.
-        self.assertEqual(sizes.get("create-presentation"), 9)
-        self.assertEqual(sizes.get("write-linkedin-post"), 3)
+        for family, size in expected.items():
+            self.assertEqual(sizes.get(family), size, family)
 
     def test_there_are_live_sessions_to_score(self):
         """A silently empty directory would make every test below vacuous."""
@@ -4980,10 +4991,11 @@ class TestJudgeInput(unittest.TestCase):
     what was measured. Each optional slot exists to be measured one at a time
     (`tests/benchmarks/judge_replay.py`); none may move production."""
 
-    # All 45 judge prompts over the live fixtures, rendered before the slots
-    # existed: every session's steps set to "not a boundary", every gap asked
-    # in order, the stub answering "no" so no span ever resets.
-    PINNED = "a919869b3998cc6e242114f38d73476995e5623b61480a79e0ba4b863725259f"
+    # Every judge prompt over a set of recorded sessions, rendered before the
+    # slots existed: each session's steps set to "not a boundary", every gap
+    # asked in order, the stub answering "no" so no span ever resets. How many
+    # there are and their digest belong to the set, so they live in its
+    # `expected.json` under "judge_prompts".
 
     def setUp(self):
         import skillpp.boundary as boundary
@@ -4995,13 +5007,13 @@ class TestJudgeInput(unittest.TestCase):
         self.addCleanup(lambda: [setattr(boundary, k, v) for k, v in saved.items()])
 
     def _prompts(self):
-        import glob
         import hashlib
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "sessions"))
+        import score
         seen = []
         self.boundary.ask = lambda model, prompt, **kw: (seen.append(prompt), "no")[1]
-        for path in sorted(glob.glob(str(Path(__file__).parent / "fixtures" /
-                                         "sessions" / "*.json"))):
-            steps = json.loads(Path(path).read_text(encoding="utf-8"))["steps"]
+        for doc in score.load():
+            steps = doc["steps"]
             for step in steps:
                 if not is_prompt(step):
                     step["end"] = False
@@ -5011,9 +5023,14 @@ class TestJudgeInput(unittest.TestCase):
         return seen, hashlib.sha256("\x00".join(seen).encode()).hexdigest()
 
     def test_the_defaults_render_every_measured_prompt_unchanged(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "sessions"))
+        import score
+        pinned = score.expected().get("judge_prompts")
+        if not pinned:
+            self.skipTest("this set has no expected.json judge_prompts")
         seen, digest = self._prompts()
-        self.assertEqual(len(seen), 45)
-        self.assertEqual(digest, self.PINNED)
+        self.assertEqual(len(seen), pinned["count"])
+        self.assertEqual(digest, pinned["sha256"])
 
     def _gap(self, **slots):
         b = self.boundary
