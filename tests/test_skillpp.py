@@ -5074,6 +5074,61 @@ class TestJudgeInput(unittest.TestCase):
         self.assertNotIn("reserve", sent)
 
 
+class TestWebRefusesOtherPages(TempRoot):
+    """The review page binds to loopback, which keeps other machines out but
+    not other pages in the same browser. A POST starts `claude -p` with Write
+    and Edit, and the page used to accept one from anywhere: its own calls sent
+    `text/plain`, a body any site may send cross-site without asking."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        import threading
+        from skillpp.web import serve
+        self.httpd = serve(self.config, port=0, open_browser=False)
+        self.port = self.httpd.server_address[1]
+        worker = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+
+    def _ask(self, method, path, body=None, **headers):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        self.addCleanup(conn.close)
+        conn.request(method, path, body=body, headers=headers)
+        resp = conn.getresponse()
+        return resp.status, resp.read()
+
+    def _json_post(self, **headers):
+        return self._ask("POST", "/api/accept", json.dumps({"id": "nope"}),
+                         **{"Content-Type": "application/json", **headers})
+
+    def test_its_own_page_and_local_tools_get_through(self):
+        status, body = self._json_post(Origin=f"http://127.0.0.1:{self.port}")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["error"], "no such entry")
+        self.assertEqual(self._json_post()[0], 200, "curl sends no Origin")
+        self.assertEqual(self._ask("GET", "/api/state")[0], 200)
+
+    def test_a_body_another_site_could_send_is_refused(self):
+        status, _ = self._ask("POST", "/api/accept", json.dumps({"id": "nope"}),
+                              **{"Content-Type": "text/plain;charset=UTF-8"})
+        self.assertEqual(status, 415)
+
+    def test_a_post_from_another_origin_is_refused(self):
+        self.assertEqual(self._json_post(Origin="https://example.com")[0], 403)
+        self.assertEqual(self._json_post(Origin="null")[0], 403)
+
+    def test_a_rebound_host_is_refused_even_for_reading(self):
+        status, _ = self._ask("GET", "/api/state", Host=f"attacker.example:{self.port}")
+        self.assertEqual(status, 403)
+
+    def test_the_page_sends_json(self):
+        from skillpp.web import PAGE
+        self.assertIn('headers: {"Content-Type": "application/json"}', PAGE)
+        self.assertNotIn('method:"POST", body:', PAGE)
+
+
 class TestStepGroups(unittest.TestCase):
     """A candidate's steps under the request each one served, as the page shows
     them. The flat list read as thirty-odd tool calls with nothing to say which

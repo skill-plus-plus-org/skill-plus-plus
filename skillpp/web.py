@@ -803,7 +803,44 @@ def make_handler(config: Config):
             self.end_headers()
             self.wfile.write(raw)
 
+        def _refused(self, post: bool = False) -> bool:
+            """Turn away a request that another web page made, and say so.
+
+            Loopback keeps other machines out, not other pages in the same
+            browser. Any site the developer has open could POST here, and a
+            POST starts `claude -p` with Write and Edit — so:
+
+            - `Host` must name this server. A page on a domain that resolves
+              to 127.0.0.1 (DNS rebinding) is same-origin as far as the
+              browser can tell, and only its `Host` gives it away.
+            - A POST must be JSON. Browsers send `text/plain` and form bodies
+              cross-site without asking; a JSON body makes them ask first,
+              and nothing here answers that preflight.
+            - A POST's `Origin`, when the browser sends one, must be this page.
+
+            Tools that send neither header, like `curl` or the tests, pass.
+            """
+            port = self.server.server_address[1]
+            ours = {f"127.0.0.1:{port}", f"localhost:{port}"}
+            host = self.headers.get("Host")
+            if host is not None and host not in ours:
+                self._send(403, json.dumps({"error": "unknown host"}))
+                return True
+            if not post:
+                return False
+            origin = self.headers.get("Origin")
+            if origin is not None and origin not in {f"http://{h}" for h in ours}:
+                self._send(403, json.dumps({"error": "cross-origin request"}))
+                return True
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip()
+            if ctype != "application/json":
+                self._send(415, json.dumps({"error": "send application/json"}))
+                return True
+            return False
+
         def do_GET(self):
+            if self._refused():
+                return
             url = urlparse(self.path)
             if url.path in ("/", "/index.html"):
                 return self._send(200, PAGE, "text/html; charset=utf-8")
@@ -832,6 +869,8 @@ def make_handler(config: Config):
             self._send(404, json.dumps({"error": "not found"}))
 
         def do_POST(self):
+            if self._refused(post=True):
+                return
             length = int(self.headers.get("Content-Length") or 0)
             try:
                 payload = json.loads(self.rfile.read(length) or b"{}")
@@ -1048,6 +1087,10 @@ let view = "candidates", open = new Set(), writing = new Set(), drafts = {}, ans
 let openRows = new Set(), summarising = new Set(), summaryError = {};
 let noting = new Set(), notes = {};
 let openRuns = new Set(), convos = {}, convoError = {}, openReqs = new Set();
+// Every POST says it is JSON: the server refuses anything else, because a
+// body without that header is one another site could send cross-site.
+const post = (path, body) => fetch(path, {method: "POST",
+  headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -1093,7 +1136,7 @@ async function startDraft(id){
   busy.add(id); render();
   try {
     const note = (notes[id] || "").trim();
-    const r = await (await fetch("/api/create", {method:"POST", body: JSON.stringify({id, note})})).json();
+    const r = await (await post("/api/create", {id, note})).json();
     if(!r.ok){ alert(r.error || "failed"); return; }
     // The note stays in `notes`, so a retry after a failed run starts from it.
     noting.delete(id);
@@ -1261,7 +1304,7 @@ function renderDrafts(list){
       .filter(a => a.answer);
     if(!payload.length){ alert("Answer at least one question."); return; }
     b.disabled = true;
-    const r = await (await fetch("/api/answer", {method:"POST", body: JSON.stringify({id, answers: payload})})).json();
+    const r = await (await post("/api/answer", {id, answers: payload})).json();
     if(!r.ok){ alert(r.error || "failed"); b.disabled = false; return; }
     delete answers[id]; await load();
   });
@@ -1269,7 +1312,7 @@ function renderDrafts(list){
     const id = b.dataset.reviseSend, instruction = (drafts[id] || "").trim();
     if(!instruction) return;
     b.disabled = true;
-    const r = await (await fetch("/api/revise", {method:"POST", body: JSON.stringify({id, instruction})})).json();
+    const r = await (await post("/api/revise", {id, instruction})).json();
     if(!r.ok){ alert(r.error || "failed"); b.disabled = false; return; }
     writing.delete(id); delete drafts[id]; await load();
   });
@@ -1354,8 +1397,7 @@ function renderConvo(c){
 async function fetchConvo(session){
   if(convos[session] || convoError[session]) return;
   try {
-    const res = await (await fetch("/api/transcript", {method:"POST",
-                                                       body: JSON.stringify({session})})).json();
+    const res = await (await post("/api/transcript", {session})).json();
     if(res.ok){ convos[session] = res; } else { convoError[session] = res.error || "failed"; }
   } catch(e){ convoError[session] = String(e); }
   if(view === "candidates") render();
@@ -1366,7 +1408,7 @@ async function fetchSummary(id){
   if(!r || r.summary || summarising.has(id) || summaryError[id]) return;
   summarising.add(id);
   try {
-    const res = await (await fetch("/api/summary", {method:"POST", body: JSON.stringify({id})})).json();
+    const res = await (await post("/api/summary", {id})).json();
     const row = S.rows.find(x => x.id === id);
     if(res.ok){ if(row) row.summary = res.summary; } else { summaryError[id] = res.error || "failed"; }
   } catch(e){ summaryError[id] = String(e); }
@@ -1457,7 +1499,7 @@ function paint(){
 async function act(what, id){
   busy.add(id); render();
   try {
-    const r = await (await fetch("/api/" + what, {method:"POST", body: JSON.stringify({id})})).json();
+    const r = await (await post("/api/" + what, {id})).json();
     if(!r.ok) alert(r.error || "failed");
   } finally { busy.delete(id); await load(); }
 }
