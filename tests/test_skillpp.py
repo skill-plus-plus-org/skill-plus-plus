@@ -2382,6 +2382,10 @@ class TestDraftCommand(TempRoot):
         def fake(argv, **kw):
             seen["argv"] = argv
             seen["kw"] = kw
+            # Looked at now: the agent's home is removed once it returns.
+            home = Path(kw["cwd"])
+            seen["home"] = sorted(str(p.relative_to(home))
+                                  for p in home.rglob("*") if p.is_file())
             # Where a real agent writes: the directory it was handed, which
             # is a workspace outside `~/.claude` — `Write` is denied under
             # there. `cmd_draft` moves the result into `drafts/<id>/`.
@@ -2417,11 +2421,32 @@ class TestDraftCommand(TempRoot):
         self.assertIn("Bash(python3 bin/skillpp *),Read,Write,Edit", argv)
 
     def test_the_agent_runs_where_the_cli_resolves(self):
-        """The allowed-tools pattern is relative, so the cwd is load-bearing."""
+        """The allowed-tools pattern is relative, so the cwd is load-bearing.
+        It used to be this checkout, which an installed package does not have:
+        the agent now runs from a home holding exactly what its prompt uses,
+        removed afterwards."""
         from skillpp.cli import cmd_draft
         seen = self._spy()
         cmd_draft(self._args(apply=True))
-        self.assertTrue((Path(seen["kw"]["cwd"]) / "bin" / "skillpp").exists())
+        self.assertEqual(seen["home"], [".claude/commands/skillpp-draft.md", "bin/skillpp"])
+        self.assertFalse(Path(seen["kw"]["cwd"]).exists())
+
+    def test_the_agents_cli_is_the_skillpp_that_started_it(self):
+        """Run from an unrelated directory with a plain `python3`, as the agent's
+        Bash runs it: this package answers, whether installed or checked out."""
+        import shutil
+        import subprocess
+        import skillpp
+        from skillpp.cli import _agent_home
+        home = _agent_home("cand1")
+        self.addCleanup(lambda: shutil.rmtree(home, ignore_errors=True))
+        out = subprocess.run(["python3", "bin/skillpp", "--version"], cwd=home,
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn(skillpp.__version__, out.stdout)
+        from skillpp.install import COMMANDS
+        self.assertEqual((home / ".claude/commands/skillpp-draft.md").read_bytes(),
+                         (COMMANDS / "skillpp-draft.md").read_bytes())
 
     def test_the_agent_is_configurable(self):
         """A command template, so no vendor and no API key are baked in."""
@@ -4664,19 +4689,41 @@ class TestFoldPending(TempRoot):
 
 
 class TestShippedCommands(unittest.TestCase):
-    """`commands/` is the source `install` copies from; `.claude/commands/` is
-    the copy `skillpp draft` relies on, because the agent runs from this
-    checkout and resolves `/skillpp-draft` there. An edit made to one and not
-    the other drafts with instructions nobody reviewed."""
+    """The slash commands ship inside the package, so an installed copy has
+    them. `install` used to copy `/skillpp-review` only, and `--remove` left
+    even that one behind."""
 
-    def test_the_two_copies_are_identical(self):
-        repo = Path(__file__).resolve().parent.parent
-        source = {p.name: p.read_bytes() for p in (repo / "commands").glob("*.md")}
-        copy = {p.name: p.read_bytes() for p in (repo / ".claude" / "commands").glob("*.md")}
-        self.assertTrue(source)
-        self.assertEqual(sorted(source), sorted(copy))
-        for name in source:
-            self.assertEqual(source[name], copy[name], f"{name} differs")
+    def test_install_copies_the_commands_a_developer_types(self):
+        from skillpp.install import install_command_files
+        with tempfile.TemporaryDirectory() as tmp:
+            written = install_command_files(Path(tmp) / "commands")
+            self.assertEqual(sorted(p.name for p in written),
+                             ["skillpp-keep.md", "skillpp-new.md", "skillpp-review.md"])
+            self.assertTrue(all(p.read_text(encoding="utf-8").strip() for p in written))
+
+    def test_remove_keeps_a_command_the_developer_edited(self):
+        from skillpp.install import install_command_files, remove_command_files
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "commands"
+            install_command_files(target)
+            (target / "skillpp-new.md").write_text("mine now", encoding="utf-8")
+            removed = remove_command_files(target)
+            self.assertEqual(sorted(p.name for p in removed),
+                             ["skillpp-keep.md", "skillpp-review.md"])
+            self.assertEqual((target / "skillpp-new.md").read_text(), "mine now")
+
+    def test_an_installed_package_hooks_through_its_console_script(self):
+        """A PYTHONPATH into a venv's site-packages names the Python version and
+        breaks with the next upgrade; the console script's path does not."""
+        from skillpp.install import MARKER, hook_command
+        with tempfile.TemporaryDirectory() as site:
+            installed = hook_command(package_root=Path(site),
+                                     script="/home/dev/.local/bin/skillpp")
+            self.assertEqual(installed, "/home/dev/.local/bin/skillpp hook")
+            spaced = hook_command(package_root=Path(site),
+                                  script="/Users/A Dev/.local/bin/skillpp")
+            self.assertIn("-m skillpp hook", spaced)
+            self.assertTrue(all(MARKER in c for c in (installed, spaced)))
 
 
 class TestInstallScopes(TempRoot):

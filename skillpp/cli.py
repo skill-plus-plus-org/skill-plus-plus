@@ -122,6 +122,37 @@ def _agent_workspace(entry_id: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=f"skillpp-{entry_id[:8]}-"))
 
 
+def _agent_home(entry_id: str) -> Path:
+    """Where the drafting agent runs: a directory holding the two things its
+    prompt relies on, `/skillpp-draft` and `python3 bin/skillpp`.
+
+    It used to run from this checkout, where both happen to exist. An installed
+    package has neither beside it, so a `pipx` install could draft nothing.
+    `bin/skillpp` here runs the skillpp that started the agent, whichever way it
+    was installed. Kept apart from the draft workspace, because everything
+    beside a written SKILL.md is collected into the draft.
+    """
+    import shutil
+    import tempfile
+    from .install import COMMANDS
+    home = Path(tempfile.mkdtemp(prefix=f"skillpp-agent-{entry_id[:8]}-"))
+    commands = home / ".claude" / "commands"
+    commands.mkdir(parents=True)
+    shutil.copy2(COMMANDS / "skillpp-draft.md", commands / "skillpp-draft.md")
+    shim = home / "bin" / "skillpp"
+    shim.parent.mkdir()
+    package_parent = Path(__file__).resolve().parent.parent
+    shim.write_text(
+        "#!/usr/bin/env python3\n"
+        '"""The skillpp that started this agent (see `cli._agent_home`)."""\n'
+        "import sys\n"
+        f"sys.path.insert(0, {str(package_parent)!r})\n"
+        "from skillpp.cli import main\n"
+        "raise SystemExit(main())\n", encoding="utf-8")
+    shim.chmod(0o755)
+    return home
+
+
 def _collect(work: Path, out_dir: Path) -> list[Path]:
     """Move what the agent wrote into the draft directory."""
     import shutil
@@ -225,10 +256,11 @@ def cmd_draft(args: argparse.Namespace) -> int:
 
     out_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
+    # The allowed-tools pattern names `python3 bin/skillpp`, and the prompt is
+    # `/skillpp-draft`: both resolve from the agent's home, installed or not.
+    home = None if args.cwd else _agent_home(entry.id)
+    where = args.cwd or home
     try:
-        # Default to the package root: the allowed-tools pattern names
-        # `python3 bin/skillpp`, which only resolves from there.
-        where = args.cwd or Path(__file__).resolve().parent.parent
         # Captured rather than streamed so the decline sentinel can be read out
         # of it; echoed below so nothing is hidden.
         # The agent runs `python3 bin/skillpp show <id>` with no --root, so
@@ -262,6 +294,9 @@ def cmd_draft(args: argparse.Namespace) -> int:
         print(f"\nThe agent did not finish within {args.timeout}s.",
               file=sys.stderr)
         return 1
+    finally:
+        if home:
+            shutil.rmtree(home, ignore_errors=True)
 
     renamed = Ledger(config).get(entry.id)
     if renamed and (renamed.title != entry.title or renamed.description):
@@ -381,8 +416,10 @@ def cmd_revise(args: argparse.Namespace) -> int:
     (history / f"SKILL.{stamp}.md").write_bytes(before)
     env = dict(os.environ, SKILLPP_INTERNAL="1", SKILLPP_ROOT=str(config.root),
                SKILLPP_DRAFT_DIR=str(work))
+    # The prompt says `python3 bin/skillpp show`; see `_agent_home`.
+    home = None if args.cwd else _agent_home(entry.id)
     try:
-        proc = subprocess.run(argv, cwd=args.cwd or Path(__file__).resolve().parent.parent,
+        proc = subprocess.run(argv, cwd=args.cwd or home,
                               timeout=args.timeout, capture_output=True, text=True,
                               env=env, stdin=subprocess.DEVNULL)
         said = (proc.stdout or "") + (proc.stderr or "")
@@ -399,6 +436,10 @@ def cmd_revise(args: argparse.Namespace) -> int:
                          f"timed out after {args.timeout}s")
         print(f"\nThe agent did not finish within {args.timeout}s.", file=sys.stderr)
         return 1
+    finally:
+        if home:
+            import shutil
+            shutil.rmtree(home, ignore_errors=True)
 
     if proc.returncode != 0:
         print(f"\nThe agent failed (exit {proc.returncode}).", file=sys.stderr)
@@ -1424,8 +1465,8 @@ def cmd_bundle(args: argparse.Namespace) -> int:
 
     commands = []
     if args.with_commands:
-        commands_dir = Path(__file__).resolve().parent.parent / "commands"
-        commands = sorted(commands_dir.glob("*.md"))
+        from .install import COMMANDS, INTERACTIVE_COMMANDS
+        commands = [COMMANDS / name for name in INTERACTIVE_COMMANDS]
 
     result = build_plugin_bundle(
         [s.path for s in found], out, args.plugin_name, args.description,
@@ -1495,8 +1536,8 @@ def _usable_interpreter(python: str | None) -> str:
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    from .install import (apply_settings, hook_command, install_command_file,
-                          plan_removal, plan_settings)
+    from .install import (apply_settings, hook_command, install_command_files,
+                          plan_removal, plan_settings, remove_command_files)
 
     target = _settings_target(args)
     if target is None:
@@ -1549,13 +1590,15 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     backup = apply_settings(settings_path, merged)
     print(f"\nwrote {settings_path}" + (f" (backup: {backup})" if backup else ""))
-    if args.remove:
-        return 0
     try:
-        dest = install_command_file(commands_dir)
-        print(f"wrote {dest}")
+        if args.remove:
+            for path in remove_command_files(commands_dir):
+                print(f"removed {path}")
+            return 0
+        for path in install_command_files(commands_dir):
+            print(f"wrote {path}")
     except OSError as exc:
-        print(f"could not install slash command: {exc}", file=sys.stderr)
+        print(f"could not update the slash commands: {exc}", file=sys.stderr)
     return 0
 
 

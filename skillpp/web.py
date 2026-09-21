@@ -516,7 +516,7 @@ def split_open_questions(text: str) -> tuple[list[str], str]:
     """The draft's `## Open questions` and the SKILL.md without that section.
 
     The drafting agent cannot ask, so it writes what it could not tell from the
-    runs there (`commands/skillpp-draft.md`, step 5). Those are gaps in the
+    runs there (`skillpp/commands/skillpp-draft.md`, step 5). Those are gaps in the
     skill, not part of it: the page shows them as answer fields, hides the
     section from the rendered draft, and refuses the download while any remain.
     The section ends at the next heading or horizontal rule.

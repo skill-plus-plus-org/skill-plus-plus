@@ -7,7 +7,7 @@ description: Save the work just done as a skill candidate, without ending the se
 The developer has decided that what just happened is worth keeping. Bank it now.
 
 ```bash
-python3 bin/skillpp keep
+skillpp keep
 ```
 
 That folds the session buffer as it stands, cuts it into episodes, and records
@@ -25,7 +25,7 @@ A candidate is titled with whatever was typed, which is rarely what the task
 should be called. Name it while the work is fresh:
 
 ```bash
-python3 bin/skillpp draft <id> --apply
+skillpp draft <id> --apply
 ```
 
 That gives it a task-shaped name and a description saying when it applies, and
@@ -35,5 +35,5 @@ writes a draft `SKILL.md` — without installing anything.
 
 `SessionEnd` is otherwise the only thing that folds, so there was no way to keep
 something without closing the session. And recurrence — the automatic route to a
-candidate — has never fired on real work, which leaves an explicit save as the
-shortest path from doing something to having a skill for it.
+candidate — waits for the same work three times, which leaves an explicit save
+as the shortest path from doing something to having a skill for it.
