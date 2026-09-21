@@ -18,8 +18,14 @@ from .normalize import normalize_command, step_shape
 # Commands that change the world. Used both for the effect summary and for
 # spotting a workflow that ends without a verification step.
 DESTRUCTIVE = re.compile(
-    r"(?:^|\s|/)(rm|rmdir|drop|truncate|delete|destroy|prune|reset\s+--hard|"
-    r"push\s+--force|push\s+-f|kill|shutdown)\b", re.IGNORECASE)
+    r"(?:^|\s|/)(?:(?:rm|rmdir|drop|truncate|delete|destroy|prune|reset\s+--hard|"
+    r"push\s+--force|push\s+-f|kill|shutdown)\b"
+    # Git forms that throw away uncommitted work. A real run restored a file to
+    # HEAD with `git checkout HEAD -- cases.json` and the draft carried no
+    # warning. A branch switch (`git checkout main`, `-b new`) is not one of
+    # them, and `git restore --staged` only unstages.
+    r"|checkout\s+(?:\S+\s+)?--\s|checkout\s+\.(?:\s|$)"
+    r"|restore\s+(?!--staged\s+[^-])|clean\s+-\w*f|stash\s+clear\b)", re.IGNORECASE)
 MUTATING = re.compile(
     r"(?:^|\s|/)(deploy|apply|publish|release|push|upload|migrate|terraform|"
     r"kubectl|helm|ansible|npm\s+publish|docker\s+push)\b", re.IGNORECASE)

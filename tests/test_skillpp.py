@@ -510,6 +510,20 @@ class TestSignals(unittest.TestCase):
         self.assertIn("out.txt", eff["writes"])
         self.assertIn("src/a.py", eff["writes"])
 
+    def test_git_commands_that_discard_uncommitted_work_are_destructive(self):
+        """A real run restored `cases.json` to HEAD and its draft said nothing."""
+        from skillpp.signals import DESTRUCTIVE
+        discards = ["git checkout HEAD -- backend/eval/cases.json && git diff --stat",
+                    "git checkout -- .", "git checkout .", "git -C repo checkout main -- a.py",
+                    "git restore cases.json", "git restore --staged --worktree a.py",
+                    "git clean -fd", "git clean -xdf", "git stash clear", "git stash drop"]
+        keeps = ["git checkout main", "git checkout -b feat/x", "git restore --staged a.py",
+                 "git clean -n", "git status", "pg_restore -d app dump.sql"]
+        for cmd in discards:
+            self.assertTrue(DESTRUCTIVE.search(cmd), cmd)
+        for cmd in keeps:
+            self.assertFalse(DESTRUCTIVE.search(cmd), cmd)
+
 
 class TestCapture(TempRoot):
     def _session(self, commands, prompts=("do the thing",), sid="s1"):
