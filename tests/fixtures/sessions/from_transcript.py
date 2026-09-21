@@ -17,9 +17,10 @@ loader in `tests/benchmarks/boundaries.py` deliberately adds a `Read`'s path for
 readable narration, and fixtures built there were for a while unfaithful to what
 the pipeline actually stores — which hid a rule that could never fire.
 
-`$HOME` is templated out and the result is scanned for secrets before it lands,
-because an earlier attempt at fixtures shipped a token-shaped string into a repo
-file.
+`$HOME`, the account name and UUIDs are templated out of every row before
+anything is cut, and the result goes through `scripts/leak_guard.py` before it
+lands, because an earlier attempt at fixtures shipped a token-shaped string
+into a repo file.
 """
 
 from __future__ import annotations
@@ -50,6 +51,30 @@ SECRETS = re.compile(r"(ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}"
                      r"|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY)")
 
 
+_UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+                   re.IGNORECASE)
+
+
+def _template(value):
+    """Environment literals out of every string in a transcript row, before
+    anything is cut. Templating the finished fixture instead let a path cut in
+    half at 2,000 characters, the home folder and one letter of the name,
+    past both the substitution and the check: neither the home path nor the
+    account name was whole any more.
+    Account and session UUIDs go too; the rows are linked by tool-use ids."""
+    if isinstance(value, dict):
+        return {k: _template(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_template(v) for v in value]
+    if not isinstance(value, str):
+        return value
+    user = Path(HOME).name
+    text = value.replace(HOME, "${HOME}")
+    text = text.replace("-Users-" + user.replace(".", "-") + "-", "-Users-${USER}-")
+    text = re.sub(rf"(?<![\w.]){re.escape(user)}(?![\w])", "${USER}", text)
+    return _UUID.sub("${UUID}", text)
+
+
 def find(tag: str) -> Path:
     matches = sorted(Path.home().glob(f".claude/projects/*/{tag}*.jsonl"))
     if not matches:
@@ -58,7 +83,7 @@ def find(tag: str) -> Path:
 
 
 def extract(path: Path) -> list[dict]:
-    rows = [json.loads(line) for line in path.open(errors="ignore")
+    rows = [_template(json.loads(line)) for line in path.open(errors="ignore")
             if line.strip()]
     failures: dict[str, bool] = {}
     replies: dict[str, object] = {}
@@ -177,6 +202,14 @@ def main(argv: list[str]) -> int:
         raise SystemExit(f"refusing to write: {len(hits)} secret-shaped string(s)")
     if HOME in blob or Path(HOME).name in blob:
         raise SystemExit("refusing to write: $HOME or the account name survived templating")
+    # The same check the repo runs before anything is published, including the
+    # private denylist when SKILLPP_DENYLIST names one.
+    sys.path.insert(0, str(REPO / "scripts"))
+    import leak_guard
+    leaks = leak_guard.scan_text("fixture", json.dumps(steps, indent=1),
+                                 leak_guard.denylist(None))
+    if leaks:
+        raise SystemExit("refusing to write, the leak guard found:\n  " + "\n  ".join(leaks[:20]))
 
     work = [s for s in steps if not is_prompt(s)]
     doc = {

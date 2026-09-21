@@ -4728,6 +4728,20 @@ class TestNothingPrivateIsTracked(unittest.TestCase):
         kinds = [hit.split(": ")[1] for hit in hits]
         self.assertEqual(kinds, ["home path", "email", "uuid", "secret", "denylist"])
 
+    def test_a_recorded_session_cannot_keep_half_a_home_path(self):
+        """The fixture builder cut each field to 2,000 characters before
+        templating `$HOME`, so a path crossing the cut kept the home folder and
+        the first letter of the account name, and passed the check."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "sessions"))
+        import from_transcript
+        home = os.path.expanduser("~")
+        uid = "-".join(["12345678", "90ab", "cdef", "1234", "567890abcdef"])
+        row = {"text": "x" * 1990 + home + "/proj/a.py, account " + uid}
+        text = from_transcript._template(row)["text"]
+        self.assertNotIn(os.path.basename(home), text[:2000])
+        self.assertTrue(text[:2000].endswith("${HOME}/pr"))
+        self.assertNotIn(uid, text)
+
 
 class TestShippedCommands(unittest.TestCase):
     """The slash commands ship inside the package, so an installed copy has
