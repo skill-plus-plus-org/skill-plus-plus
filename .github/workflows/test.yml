@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # For the two tests that run the review page's JavaScript.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # No model anywhere in CI: the suite stubs the judge, the embeddings,
+      # the describer and naming, and the leak guard is pattern matching.
+      - name: Unit tests
+        run: python -m unittest discover -s tests
+      - name: Leak guard
+        run: python scripts/leak_guard.py
+      - name: Package builds and installs
+        run: |
+          python -m pip install --quiet .
+          skillpp --version
