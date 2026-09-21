@@ -4786,6 +4786,36 @@ class TestDraftInput(TempRoot):
         self.assertEqual(self._show("d2")["deps_cli"], ["npm"])
 
 
+class TestFoldWithoutMatching(TempRoot):
+    """Detection measured on its own. Scoring a session folds it, and folding
+    ran matching: two episodes cut from one session that looked alike merged
+    back into one entry, so the count read as if the judge had never cut."""
+
+    def test_matching_off_banks_every_episode_and_never_embeds(self):
+        import skillpp.matching as matching
+        from skillpp.capture import fold_session
+
+        def forbidden(*a, **k):
+            raise AssertionError("the embedding model was asked")
+        real = matching.embed
+        matching.embed = forbidden
+        self.addCleanup(lambda: setattr(matching, "embed", real))
+        self.config.match_candidates = False
+        steps = [{"tool": "UserPrompt", "input": {"text": "ship it"}},
+                 {"tool": "Bash", "input": {"command": "npm test"}, "end": False},
+                 {"tool": "Bash", "input": {"command": "git commit -m a"}, "end": True},
+                 {"tool": "UserPrompt", "input": {"text": "ship it again"}},
+                 {"tool": "Bash", "input": {"command": "npm test"}, "end": False},
+                 {"tool": "Bash", "input": {"command": "git commit -m b"}, "end": True}]
+        result = fold_session(self.config, {"session_id": "s", "cwd": "/r",
+                                            "prompts": [], "steps": steps})
+        self.assertNotEqual(result["status"], "offline",
+                            "off by choice is not an outage")
+        entries = list(Ledger(self.config).all())
+        self.assertEqual(len(entries), 2, "two identical episodes stay two")
+        self.assertTrue(all(e.unmatched for e in entries))
+
+
 class TestJudgeInput(unittest.TestCase):
     """What the boundary judge is shown, and that the defaults show exactly
     what was measured. Each optional slot exists to be measured one at a time

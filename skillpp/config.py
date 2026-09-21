@@ -84,6 +84,14 @@ class Config:
         # at fold time, not while the developer waits, and the sentence it also
         # returns is what the review page shows. `SKILLPP_NAME=0` turns it off.
         self.name_candidates = _bool_env("SKILLPP_NAME", True)
+        # Whether a banked episode is compared with the ledger at all. On in
+        # use. Off only to measure detection on its own: scoring a session by
+        # folding it runs matching too, and two episodes cut from one session
+        # that look alike merge back into one entry — the count then reads as
+        # if the judge had never cut. `SKILLPP_MATCH=0` turns it off; that is
+        # a choice, and banks the episodes unmatched rather than holding the
+        # session the way an unreachable embedding model does.
+        self.match_candidates = _bool_env("SKILLPP_MATCH", True)
         # A boundary that would close an episode smaller than this is ignored:
         # one step is not a workflow.
         # Where a local model is served, and which one to ask. The episode

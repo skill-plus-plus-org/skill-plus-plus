@@ -877,8 +877,9 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
     # A captured session is held, the same as one with no boundary verdicts. An
     # explicit keep is a person saying "save this", so it banks unmatched.
     from .matching import model_reachable
-    can_match = bool(foldable) and model_reachable(config)
-    if foldable and not can_match and not force:
+    wants_match = config.match_candidates
+    can_match = bool(foldable) and wants_match and model_reachable(config)
+    if foldable and wants_match and not can_match and not force:
         return {"status": "offline", "steps": len(session.get("steps", [])),
                 "episodes": [], "flagged": 0,
                 "reason": f"no embeddings: {config.embed_model} did not answer"}
