@@ -1331,6 +1331,64 @@ Given up: **a boundary with no prompt in the gap** — a task ending where the
 developer says nothing. No live session shows that shape, and the per-step judge
 could see it in principle, so this is a trade rather than a free win.
 
+## gemma4:e4b as the judge: more to read, one input at a time
+
+Measured 21 Sep 2026 on the 21 live sessions, `tests/benchmarks/judge_replay.py`
+with `SKILLPP_MATCH=0` so a cut episode is never merged back before it is
+counted, one model resident, every run valid (45/45 gaps answered).
+
+**Read the gaps, not the sessions.** Only 2 of the 45 gaps are real boundaries
+(`241955c7` step 6, `263d65ce` step 9). A judge that answers "no" everywhere
+scores 19/21 — gemma3n's score, and gemma4's at the default settings, where it
+answers "no" to all 45. A judge that cuts exactly at the two scores 21/21. Both
+checked with no model before any run was trusted.
+
+### Thinking off: each input alone, against the defaults
+
+| dimension | values | effect |
+|---|---|---|
+| steps before the gap | 4, 5, 6, 8, 10, 15, 20, all | none — all history for both boundaries changed nothing |
+| steps after the gap | 4, 5, 6, 7 | none; one false cut at 6 (`263d65ce` step 31), gone at 7 |
+| the developer's prompt | 800, 1600, full | none (2 of 45 prompts exceed 400) |
+| other step fields | 200, 400, full | none |
+| **tail of the assistant's last reply before the gap** | 200, **400, 800**, 1600, 3200, full | **catches `241955c7` at 400–800, no false cuts** |
+| head of its reply to the new instruction | 200, 400, 800, 1600, full | none |
+| what the step before the gap returned | 200, 400 | catches `241955c7` at 400 — unconfirmed |
+
+**Best: `--reply-before 400` — 20/21 against gemma3n's 19/21, 0 false cuts.**
+It catches the "Separate job:" boundary and keeps its near-twin, `71448e61`
+step 5 (the same instruction, not a new job), at "no". At 400 characters the
+tail is the assistant delivering findings on the previous task and then asking
+a follow-up the developer ignores; at 1600 and beyond it reaches back into the
+unfinished investigation and the signal is gone. It works in a window, not as
+a trend.
+
+Controlled at the same slot, position and length on that gap: the real tail
+flips the verdict to "yes"; a tail from an unrelated session and neutral filler
+both leave it "no". Content, not length. The step-output catch has no such
+control and its text is raw source, so it is not counted.
+
+`263d65ce` step 9 was never caught with thinking off.
+
+### Thinking on, at the defaults
+
+`think=True`, a 4,096-token answer reserve and a 180s timeout: **2/2 real
+boundaries caught — `263d65ce` step 9 for the first time — with 3 false cuts**:
+`698c7529` steps 4 and 5 (the "Two things. Check every command…" review prompt
+and the "go" after it, gemma3n's own mistake) and `2095a8af` step 35 ("Before
+you commit — check the docstring"). 19/21. Clean answers on all 45; median
+2,061 characters of reasoning, ~506 tokens, 15.1s a gap against 1.3s.
+
+Timing caution: the reserve makes `num_ctx` differ on every call, and 44 of 45
+calls reloaded the model (6.4s each, 311s of the run's 1,013s). Pin the context
+before timing thinking runs.
+
+The two levers fail in opposite directions — the reply tail makes gemma4 more
+discerning, thinking makes it more willing — so the combination is the next
+measurement, not either one alone. Nothing here changes a default: the
+production judge is still gemma3n with no reply shown, and gemma3n has not been
+measured with the reply tail.
+
 ## Same procedure, decided by embedding
 
 Whether a saved episode is a repeat of an existing candidate used to be decided
