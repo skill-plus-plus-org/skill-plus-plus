@@ -859,7 +859,12 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
     if not was_judged(session.get("steps", [])) and not force:
         return {"status": "offline", "steps": len(session.get("steps", [])),
                 "episodes": [], "flagged": 0,
-                "reason": f"no verdicts: {config.local_model} did not answer"}
+                # Held either way, but a developer who switched judging off
+                # should not be told the model is down.
+                "reason": (f"no verdicts: {config.local_model} did not answer"
+                           if config.judge_boundaries else
+                           "no verdicts: judging is off (SKILLPP_JUDGE=0); "
+                           "`skillpp keep` still banks")}
 
     episodes = segment(session.get("steps", []), config.min_episode_steps)
 

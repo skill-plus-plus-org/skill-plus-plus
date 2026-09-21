@@ -55,28 +55,30 @@ class Config:
         else:
             self.root = DEFAULT_ROOT
 
-        # A workflow must recur this many times before it is proposed (README 3.3).
+        # A workflow must recur this many times before it is proposed.
         self.recurrence_threshold = _int_env("SKILLPP_RECURRENCE", 3)
-        # Lexical similarity above which two traces are considered the same workflow.
-        # Unapproved candidates self-delete after this long (README 5).
+        # How long `skillpp expire` keeps a candidate that is still collecting,
+        # counted from the last time it was recognized. Nothing runs it for you.
         self.candidate_ttl_days = _int_env("SKILLPP_TTL_DAYS", 14)
         # Hard caps so a runaway session cannot bloat the ledger.
         self.max_steps_per_session = _int_env("SKILLPP_MAX_STEPS", 500)
         self.max_field_chars = _int_env("SKILLPP_MAX_FIELD", 2000)
-        # Never ask the developer more than this many questions (README 4).
+        # Never ask the developer more than this many questions.
         self.max_questions = _int_env("SKILLPP_MAX_QUESTIONS", 3)
-        # Ask a local model, on every tool call, whether the task ended there
-        # (`skillpp.boundary`). Off restores the marker-and-prompt rules, which
-        # is what every session captured before it, and every fixture, records —
-        # so turn it off when recording a fixture that has to stay comparable
-        # with those, or when the ~1.6s per tool call is not worth paying.
+        # Ask the local model, once per prompt gap when a session is folded,
+        # whether a new task started there (`skillpp.boundary`). The fold runs
+        # detached after the session ends, so nobody waits on it. Off, nothing
+        # is judged, and an unjudged session is held rather than cut by guess:
+        # guessing from git verbs measured worse than making no cuts at all.
+        # Only an explicit `skillpp keep` still banks.
         self.judge_boundaries = _bool_env("SKILLPP_JUDGE", True)
-        # Ask the same model, on every tool call, to write one sentence saying
-        # what the step did and the part it plays (`skillpp.boundary.describe`).
-        # Same trade as the judge: it costs the developer a second or two per
-        # step and it is what lets a later stage read intent instead of parsing
-        # a command. `SKILLPP_DESCRIBE=0` turns it off.
-        self.describe_steps = _bool_env("SKILLPP_DESCRIBE", True)
+        # Ask the same model, inside every PostToolUse hook, for one sentence
+        # saying what the step did (`skillpp.boundary.describe`). Off by
+        # default: it made the developer wait 2-11s on every tool call, and its
+        # only reader, the judge, was measured worse with it and stopped reading
+        # it (`boundary.JUDGE_READS_SUMMARY`). `SKILLPP_DESCRIBE=1` records it
+        # again, for a benchmark that re-measures it.
+        self.describe_steps = _bool_env("SKILLPP_DESCRIBE", False)
         # Ask the same model, once per banked candidate, to name the procedure
         # and say in one sentence what the run did. Without it a candidate is
         # titled with a string capture happened to observe: on the real ledger
@@ -92,12 +94,6 @@ class Config:
         # a choice, and banks the episodes unmatched rather than holding the
         # session the way an unreachable embedding model does.
         self.match_candidates = _bool_env("SKILLPP_MATCH", True)
-        # A boundary that would close an episode smaller than this is ignored:
-        # one step is not a workflow.
-        # Where a local model is served, and which one to ask. The episode
-        # filter is the only thing that uses these, and it runs on demand
-        # rather than in a hook: a hook that waits on a model is a hook
-        # that stalls a session.
         # How to invoke the developer's own agent to write a draft. A command
         # template rather than an API call, so this needs no key and no
         # vendor: whatever agent the developer already uses writes the body,
@@ -107,6 +103,10 @@ class Config:
             "SKILLPP_AGENT",
             "claude -p {PROMPT} --no-session-persistence "
             '--allowed-tools "Bash(python3 bin/skillpp *),Read,Write,Edit"')
+        # Where the local model is served, and which one to ask. It judges
+        # boundaries and names candidates when a session is folded, after the
+        # session ends, and writes the summaries the review page shows. None
+        # of it runs while the developer works.
         self.ollama_url = _str_env("SKILLPP_OLLAMA", "http://127.0.0.1:11434")
         self.local_model = _str_env("SKILLPP_LOCAL_MODEL", "gemma3n:e4b")
         # Which embedding model decides "same procedure" (`skillpp.matching`).
@@ -121,6 +121,8 @@ class Config:
         self.match_floor = _float_env("SKILLPP_MATCH_FLOOR", 0.93)
         # Conversation text scores on its own scale; see `matching`.
         self.match_floor_turns = _float_env("SKILLPP_MATCH_FLOOR_TURNS", 0.85)
+        # A boundary that would close an episode smaller than this is ignored:
+        # one step is not a workflow.
         self.min_episode_steps = _int_env("SKILLPP_MIN_EPISODE_STEPS", 2)
 
     @property

@@ -684,6 +684,8 @@ class TestCapture(TempRoot):
         """
         import skillpp.boundary as boundary
         seen = {}
+        # Off by default now that nothing reads it; this is how it reads when on.
+        self.config.describe_steps = True
 
         def spy(config, session, step, reply=""):
             seen["reply"] = reply
