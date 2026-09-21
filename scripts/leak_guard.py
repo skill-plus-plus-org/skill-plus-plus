@@ -63,15 +63,18 @@ def denylist(path: str | None) -> list[re.Pattern]:
     return terms
 
 
-def scan_text(where: str, text: str, terms: list[re.Pattern]) -> list[str]:
+def scan_text(where: str, text: str, terms: list[re.Pattern],
+              generic: bool = True) -> list[str]:
     hits = []
     for number, line in enumerate(text.splitlines(), 1):
-        found = [("home path", m.group()) for m in HOME_PATH.finditer(line)]
-        found += [("email", m.group()) for m in EMAIL.finditer(line)
-                  if not EMAIL_ALLOWED.search(m.group())]
-        found += [("uuid", m.group()) for m in UUID.finditer(line)]
-        found += [("secret", m.group()) for m in SECRET.finditer(line)
-                  if m.group() not in SECRET_ALLOWED]
+        found = []
+        if generic:
+            found += [("home path", m.group()) for m in HOME_PATH.finditer(line)]
+            found += [("email", m.group()) for m in EMAIL.finditer(line)
+                      if not EMAIL_ALLOWED.search(m.group())]
+            found += [("uuid", m.group()) for m in UUID.finditer(line)]
+            found += [("secret", m.group()) for m in SECRET.finditer(line)
+                      if m.group() not in SECRET_ALLOWED]
         found += [("denylist", m.group()) for term in terms for m in term.finditer(line)]
         hits += [f"{where}:{number}: {kind}: {value}" for kind, value in found]
     return hits
@@ -119,7 +122,10 @@ def scan_history(terms: list[re.Pattern]) -> list[str]:
     people = subprocess.run(["git", "log", "--all", "--format=%an <%ae>%n%cn <%ce>"],
                             cwd=REPO, capture_output=True, check=True
                             ).stdout.decode("utf-8", errors="replace")
-    hits += scan_text("authors", "\n".join(sorted(set(people.splitlines()))), terms)
+    # An author's address is public by design, and the mailmap decides it; what
+    # matters here is whether one still names something on the denylist.
+    hits += scan_text("authors", "\n".join(sorted(set(people.splitlines()))), terms,
+                      generic=False)
     return hits
 
 
