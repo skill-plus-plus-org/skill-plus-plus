@@ -103,6 +103,41 @@ def _agent_argv(config: Config, prompt: str) -> list[str]:
             for part in shlex.split(config.agent_command)]
 
 
+def _agent_workspace(entry_id: str) -> Path:
+    """A directory the drafting agent is actually allowed to write to.
+
+    The draft belongs under `<root>/drafts/<id>/`, which on a default install
+    is inside `~/.claude` — and the agent's sandbox refuses `Write` and `Edit`
+    on anything under there. Measured, not guessed: the first run after the
+    agent's output was kept said so in as many words, having spent 93 seconds
+    composing a draft it could not save. Only `skillpp scaffold` got through,
+    because that write happens inside an allowed `Bash` subprocess, so every
+    draft was the scaffold and nothing else.
+
+    The lab that produced a good draft wrote into a temp directory, which is
+    the difference nobody could see. So the agent works in temp and the result
+    is moved into place afterwards by this process, which has no such limit.
+    """
+    import tempfile
+    return Path(tempfile.mkdtemp(prefix=f"skillpp-{entry_id[:8]}-"))
+
+
+def _collect(work: Path, out_dir: Path) -> list[Path]:
+    """Move what the agent wrote into the draft directory."""
+    import shutil
+    written = sorted(work.rglob("SKILL.md"))
+    landed = []
+    for source in written:
+        for path in sorted(source.parent.rglob("*")):
+            if not path.is_file():
+                continue
+            target = out_dir / path.relative_to(source.parent)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+            landed.append(target)
+    return sorted(p for p in landed if p.name == "SKILL.md")
+
+
 def _write_agent_log(out_dir: Path, argv: list[str], started: float,
                      said: str, outcome: str) -> None:
     """Keep what the drafting agent said, beside the draft, on every run.
@@ -157,7 +192,8 @@ def cmd_draft(args: argparse.Namespace) -> int:
     # pattern cannot be checked against a command whose text is not yet known.
     # SKILLPP_ROOT below still works, because that is read by the Python
     # process rather than expanded in a shell.
-    prompt = f"/skillpp-draft {entry.id} {out_dir}"
+    work = _agent_workspace(entry.id)
+    prompt = f"/skillpp-draft {entry.id} {work}"
     try:
         argv = _agent_argv(config, prompt)
     except ValueError as exc:
@@ -168,6 +204,7 @@ def cmd_draft(args: argparse.Namespace) -> int:
     found = shutil.which(argv[0])
     print(f"candidate  {entry.id}  x{entry.occurrences}  {entry.title[:60]}")
     print(f"draft dir  {out_dir}")
+    print(f"workspace  {work}")
     print(f"agent      {' '.join(shlex.quote(a) for a in argv)}")
     # Said before the call rather than discovered during it: `claude` is often
     # not on PATH even where Claude Code is in use.
@@ -194,7 +231,7 @@ def cmd_draft(args: argparse.Namespace) -> int:
                    # `<draft-dir>` with nothing substituting it, so the agent
                    # invented a path in its own scratchpad and the draft was
                    # written correctly to somewhere nobody would look.
-                   SKILLPP_DRAFT_DIR=str(out_dir))
+                   SKILLPP_DRAFT_DIR=str(work))
         proc = subprocess.run(argv, cwd=where, timeout=args.timeout,
                               capture_output=True, text=True, env=env,
                               # Without this the agent waits on a tty it will
@@ -222,7 +259,7 @@ def cmd_draft(args: argparse.Namespace) -> int:
         if renamed.description:
             print(f"           {renamed.description}")
 
-    written = sorted(out_dir.rglob("SKILL.md"))
+    written = _collect(work, out_dir)
     if not written:
         # "Declined" and "broke" must not look alike, or an unattended run
         # reports a dead agent as a considered judgement. The exit code is what
@@ -306,7 +343,13 @@ def cmd_revise(args: argparse.Namespace) -> int:
               f"{entry.id} --apply", file=sys.stderr)
         return 1
     skill_md = drafted[0]
-    prompt = _REVISE_PROMPT.format(skill_md=skill_md, instruction=instruction,
+    # Revised in a workspace for the same reason a draft is written in one:
+    # `Edit` is denied on anything under `~/.claude`, so an in-place revision
+    # silently changed nothing. See `_agent_workspace`.
+    work = _agent_workspace(entry.id)
+    working_copy = work / skill_md.name
+    working_copy.write_bytes(skill_md.read_bytes())
+    prompt = _REVISE_PROMPT.format(skill_md=working_copy, instruction=instruction,
                                    entry_id=entry.id)
     try:
         argv = _agent_argv(config, prompt)
@@ -321,22 +364,29 @@ def cmd_revise(args: argparse.Namespace) -> int:
         return 0
 
     before = skill_md.read_bytes()
+    started = time.time()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     history = skill_md.parent / ".revisions"
     history.mkdir(exist_ok=True)
     (history / f"SKILL.{stamp}.md").write_bytes(before)
     env = dict(os.environ, SKILLPP_INTERNAL="1", SKILLPP_ROOT=str(config.root),
-               SKILLPP_DRAFT_DIR=str(skill_md.parent))
+               SKILLPP_DRAFT_DIR=str(work))
     try:
         proc = subprocess.run(argv, cwd=args.cwd or Path(__file__).resolve().parent.parent,
                               timeout=args.timeout, capture_output=True, text=True,
                               env=env, stdin=subprocess.DEVNULL)
-        print((proc.stdout or "") + (proc.stderr or ""), end="")
+        said = (proc.stdout or "") + (proc.stderr or "")
+        _write_agent_log(skill_md.parent, argv, started, said,
+                         f"revise, exit {proc.returncode}")
+        print(said, end="")
     except FileNotFoundError:
+        _write_agent_log(skill_md.parent, argv, started, "", "agent not found")
         print(f"\nNo such agent: {argv[0]}. Set SKILLPP_AGENT to how yours is "
               f"invoked.", file=sys.stderr)
         return 1
     except subprocess.TimeoutExpired:
+        _write_agent_log(skill_md.parent, argv, started, "",
+                         f"timed out after {args.timeout}s")
         print(f"\nThe agent did not finish within {args.timeout}s.", file=sys.stderr)
         return 1
 
@@ -348,14 +398,16 @@ def cmd_revise(args: argparse.Namespace) -> int:
         if line.strip().startswith("SKILLPP-DECLINE:"):
             print(f"\nNot revised: {line.split(':', 1)[1].strip()}", file=sys.stderr)
             return 1
-    if not skill_md.exists():
-        skill_md.write_bytes(before)
-        print("\nThe agent removed the draft; the previous version was restored.",
+    if not working_copy.exists():
+        print("\nThe agent removed the draft; the previous version was kept.",
               file=sys.stderr)
         return 1
-    if hashlib.sha256(skill_md.read_bytes()).digest() == hashlib.sha256(before).digest():
+    after = working_copy.read_bytes()
+    if hashlib.sha256(after).digest() == hashlib.sha256(before).digest():
         print("\nThe agent made no change to the draft.", file=sys.stderr)
         return 1
+    # Moved back by this process. The agent cannot write here itself.
+    skill_md.write_bytes(after)
     print(f"\nrevised {skill_md}  (previous version in {history.name}/SKILL.{stamp}.md)")
     return 0
 

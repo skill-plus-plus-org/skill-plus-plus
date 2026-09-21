@@ -2342,8 +2342,12 @@ class TestDraftCommand(TempRoot):
         def fake(argv, **kw):
             seen["argv"] = argv
             seen["kw"] = kw
+            # Where a real agent writes: the directory it was handed, which
+            # is a workspace outside `~/.claude` — `Write` is denied under
+            # there. `cmd_draft` moves the result into `drafts/<id>/`.
+            workspace = Path(kw["env"]["SKILLPP_DRAFT_DIR"])
             for rel in (writes or []):
-                path = self.config.root / "drafts" / rel
+                path = workspace / rel.split("/", 1)[1]
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("---\nname: x\n---\n", encoding="utf-8")
             return subprocess.CompletedProcess(argv, exit_code,
@@ -2399,8 +2403,13 @@ class TestDraftCommand(TempRoot):
         # A literal in the prompt, not an environment variable: a sandboxed
         # Bash call containing `$VAR` is rejected as "Contains expansion".
         prompt = next(a for a in seen["argv"] if a.startswith("/skillpp-draft"))
-        self.assertTrue(prompt.endswith("drafts/cand1"))
+        workspace = seen["kw"]["env"]["SKILLPP_DRAFT_DIR"]
+        self.assertTrue(prompt.endswith(workspace))
         self.assertNotIn("$", prompt)
+        # Never inside the ledger root: on a default install that is under
+        # `~/.claude`, where the agent's `Write` and `Edit` are refused, and
+        # every draft came back as the bare scaffold because of it.
+        self.assertFalse(Path(workspace).is_relative_to(self.config.root))
         # SKILLPP_ROOT stays in the environment; Python reads it directly.
         self.assertEqual(seen["kw"]["env"]["SKILLPP_ROOT"],
                          str(self.config.root))
@@ -2491,7 +2500,8 @@ class TestReviseCommand(TempRoot):
         def fake(argv, **kw):
             seen["argv"], seen["kw"] = argv, kw
             if edit:
-                edit(self.skill)
+                # The working copy the prompt names, never the draft itself.
+                edit(Path(kw["env"]["SKILLPP_DRAFT_DIR"]) / "SKILL.md")
             return subprocess.CompletedProcess(argv, exit_code, stdout=say, stderr="")
         real, subprocess.run = subprocess.run, fake
         self.addCleanup(lambda: setattr(subprocess, "run", real))
@@ -2509,7 +2519,12 @@ class TestReviseCommand(TempRoot):
         cmd_revise(self._args(instruction="also cover fact cases"))
         prompt = next(a for a in seen["argv"] if "Revise a draft skill" in a)
         self.assertIn("also cover fact cases", prompt)
-        self.assertIn(str(self.skill), prompt)
+        working_copy = Path(seen["kw"]["env"]["SKILLPP_DRAFT_DIR"]) / "SKILL.md"
+        self.assertIn(str(working_copy), prompt)
+        self.assertNotIn(str(self.skill), prompt,
+                         "the agent was pointed at a path it may not edit")
+        # And the change reached the real draft anyway, moved by skillpp.
+        self.assertTrue(self.skill.read_text().endswith("more\n"))
         self.assertEqual(seen["kw"]["env"]["SKILLPP_INTERNAL"], "1")
 
     def test_a_revision_keeps_the_previous_version(self):

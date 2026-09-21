@@ -47,7 +47,10 @@ DRAFT_STALE_SECONDS = 1200
 
 _SAFE_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 # Written by this page or by the agent's editor, never part of the skill.
-_NOT_SKILL_FILES = ("status.json", "downloaded.json")
+# Bookkeeping beside a draft, never part of the skill. `agent.log` is the drafting
+# agent's transcript: it names local paths and it is not a file anyone who
+# installs the skill should receive.
+_NOT_SKILL_FILES = ("status.json", "downloaded.json", "agent.log")
 
 _jobs: dict[str, threading.Thread] = {}
 # Which server process started a run. A run marked running by a server that is
