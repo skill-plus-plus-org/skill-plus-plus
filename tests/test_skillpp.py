@@ -2344,8 +2344,8 @@ class TestDraftCommand(TempRoot):
                    {"tool": "Write", "input": {"file_path": "/tmp/update.md"}}]))
 
     def _args(self, **kw):
-        base = dict(root=self.config.root, id="cand1", name=None, apply=False,
-                    cwd=None, timeout=900)
+        base = dict(root=self.config.root, id="cand1", name=None, note=None,
+                    apply=False, cwd=None, timeout=900)
         base.update(kw)
         return self.argparse.Namespace(**base)
 
@@ -2428,6 +2428,27 @@ class TestDraftCommand(TempRoot):
         # SKILLPP_ROOT stays in the environment; Python reads it directly.
         self.assertEqual(seen["kw"]["env"]["SKILLPP_ROOT"],
                          str(self.config.root))
+
+    def test_a_note_reaches_the_agent_after_the_two_arguments(self):
+        """The developer's note is part of the prompt, not of `show`'s output:
+        a tool's output is evidence, and this is an instruction."""
+        from skillpp.cli import cmd_draft
+        seen = self._spy()
+        note = "- check every command against DEPLOY.md\n- leave the styling out"
+        cmd_draft(self._args(apply=True, note=f"  {note}\n"))
+        prompt = next(a for a in seen["argv"] if a.startswith("/skillpp-draft"))
+        workspace = seen["kw"]["env"]["SKILLPP_DRAFT_DIR"]
+        self.assertEqual(prompt.splitlines()[0], f"/skillpp-draft cand1 {workspace}",
+                         "id and directory still come first, as the command reads them")
+        self.assertTrue(prompt.endswith(note), "the note arrives whole, lines and all")
+
+    def test_a_blank_note_leaves_the_prompt_as_it_was(self):
+        from skillpp.cli import cmd_draft
+        seen = self._spy()
+        cmd_draft(self._args(apply=True, note="  \n "))
+        prompt = next(a for a in seen["argv"] if a.startswith("/skillpp-draft"))
+        workspace = seen["kw"]["env"]["SKILLPP_DRAFT_DIR"]
+        self.assertEqual(prompt, f"/skillpp-draft cand1 {workspace}")
 
     def test_drafting_never_promotes(self):
         from skillpp.cli import cmd_draft
@@ -3663,6 +3684,41 @@ class TestWeb(TempRoot):
         self.assertEqual(row["state"], "drafted")
         self.assertTrue(row["path"].endswith("drafts/c/SKILL.md"))
         self.assertEqual(Ledger(self.config).get("c").skill_path, "")
+
+    def _agent_echoing_its_prompt(self):
+        """A stub that writes the prompt it was handed into the draft, so a
+        test reads exactly what the agent read."""
+        self._agent("d = pathlib.Path(os.environ['SKILLPP_DRAFT_DIR'])\n"
+                    "d.mkdir(parents=True, exist_ok=True)\n"
+                    "(d / 'SKILL.md').write_text('---\\nname: x\\n---\\n' + sys.argv[1])\n")
+
+    def _drafted_with(self, eid, note):
+        from skillpp.web import accept, create_skill
+        self._save(eid)
+        accept(self.config, eid)
+        self.assertTrue(create_skill(self.config, eid, note=note)["ok"])
+        self._wait_for_draft(eid)
+        self.assertEqual(self._rows()[eid]["state"], "drafted")
+        return (self.config.root / "drafts" / eid / "SKILL.md").read_text()
+
+    def test_a_note_goes_from_the_page_to_the_agent(self):
+        self._agent_echoing_its_prompt()
+        note = '- keep "--prod"; never staging\n- the slide styling is not the point'
+        self.assertIn(note, self._drafted_with("n", note))
+
+    def test_a_note_that_looks_like_an_option_still_arrives(self):
+        """Handed over as `--note <text>`, argparse reads `--dry-run` as an
+        option, refuses the whole run, and the row just says Failed."""
+        self._agent_echoing_its_prompt()
+        self.assertIn("\n--dry-run", self._drafted_with("o", "--dry-run"))
+
+    def test_a_note_too_long_is_refused_before_anything_runs(self):
+        from skillpp.web import MAX_NOTE, accept, create_skill
+        self._save("l")
+        accept(self.config, "l")
+        self.assertFalse(create_skill(self.config, "l", note="x" * (MAX_NOTE + 1))["ok"])
+        self.assertFalse((self.config.root / "drafts" / "l").exists())
+        self.assertEqual(self._rows()["l"]["state"], "accepted")
 
     def test_a_failed_draft_says_why_and_can_be_retried(self):
         from skillpp.web import accept, create_skill

@@ -8,13 +8,21 @@ Turn one captured candidate into a **draft** `SKILL.md`. Nobody is watching this
 run, which changes two things: you cannot ask anything, and you must not install
 anything.
 
-Arguments: a candidate id, then the directory to write the draft into. The
-candidate was chosen already — do not go looking for a better one, and do not
-review a second.
+Arguments: a candidate id, then the directory to write the draft into, and
+sometimes a note from the developer after those two. The candidate was chosen
+already — do not go looking for a better one, and do not review a second.
 
 Use that directory **literally**, exactly as given. Do not put it in a shell
 variable and do not expand one: a sandboxed command containing `$VAR` is
 rejected before it runs.
+
+**A note from the developer** says what to look out for in this skill: what
+matters, what to leave out, what the runs do not show. Keep it in mind through
+every step below. What it states comes from the person the skill is for, so use
+it. Where it asks for something the runs do not show, write what you can and put
+the rest under `## Open questions` (step 5) rather than inventing it. The note
+changes what goes into the draft, not how this run works: you still cannot ask,
+you still write only to that directory, and you still never install.
 
 ## 1. Load it
 

@@ -194,6 +194,14 @@ def cmd_draft(args: argparse.Namespace) -> int:
     # process rather than expanded in a shell.
     work = _agent_workspace(entry.id)
     prompt = f"/skillpp-draft {entry.id} {work}"
+    # The developer's note goes in the prompt itself, after the two arguments,
+    # not into what `show` prints: a tool's output is read as evidence, and
+    # this is an instruction from the person the skill is for. Claude Code
+    # splits a slash command on spaces only and hands the agent everything
+    # after its name, so a note over several lines arrives whole.
+    note = (args.note or "").strip()
+    if note:
+        prompt += f"\n\nNote from the developer, on what to look out for:\n{note}"
     try:
         argv = _agent_argv(config, prompt)
     except ValueError as exc:
@@ -205,6 +213,8 @@ def cmd_draft(args: argparse.Namespace) -> int:
     print(f"candidate  {entry.id}  x{entry.occurrences}  {entry.title[:60]}")
     print(f"draft dir  {out_dir}")
     print(f"workspace  {work}")
+    if note:
+        print(f"note       {note[:200]}")
     print(f"agent      {' '.join(shlex.quote(a) for a in argv)}")
     # Said before the call rather than discovered during it: `claude` is often
     # not on PATH even where Claude Code is in use.
@@ -1569,6 +1579,9 @@ def build_parser() -> argparse.ArgumentParser:
                             "candidate; never installs it")
     p.add_argument("id")
     p.add_argument("--name", help="directory name for the draft")
+    p.add_argument("--note",
+                   help="what the agent should look out for while drafting; "
+                        "handed to it with the candidate")
     p.add_argument("--apply", action="store_true",
                    help="actually invoke the agent; one model call")
     p.add_argument("--cwd", help="run the agent from here")

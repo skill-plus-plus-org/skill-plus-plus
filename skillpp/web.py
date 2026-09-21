@@ -472,9 +472,12 @@ def reinstate(config: Config, entry_id: str) -> dict:
     return {"ok": True}
 
 
-def _draft_job(config: Config, entry_id: str) -> None:
+def _draft_job(config: Config, entry_id: str, note: str = "") -> None:
     try:
-        proc = _run(config, "draft", entry_id, "--apply")
+        # `--note=` rather than `--note <text>`: argparse takes a note such as
+        # `--dry-run` for an option and refuses the whole run.
+        proc = _run(config, "draft", entry_id, "--apply",
+                    *([f"--note={note}"] if note else []))
         said = (proc.stdout or "") + (proc.stderr or "")
         if proc.returncode != 0:
             _write_status(config, entry_id, state="failed", message=_tail(said))
@@ -491,12 +494,20 @@ def _draft_job(config: Config, entry_id: str) -> None:
             _jobs.pop(entry_id, None)
 
 
-def create_skill(config: Config, entry_id: str) -> dict:
+MAX_NOTE = 2000
+
+
+def create_skill(config: Config, entry_id: str, note: str = "") -> dict:
     """Draft: `skillpp draft <id> --apply`, in the background.
 
     Only for an accepted candidate, and one run at a time per candidate. The
-    draft lands in `<root>/drafts/<id>/` and is never installed from here.
+    draft lands in `<root>/drafts/<id>/` and is never installed from here. A
+    note, when given, reaches the agent as `--note`: what the developer wants
+    it to look out for. Without one the draft is written from the run alone.
     """
+    note = (note or "").strip()
+    if len(note) > MAX_NOTE:
+        return {"ok": False, "error": f"keep the note under {MAX_NOTE} characters"}
     entry = Ledger(config).get(entry_id)
     if not entry:
         return {"ok": False, "error": "no such entry"}
@@ -508,7 +519,7 @@ def create_skill(config: Config, entry_id: str) -> dict:
             return {"ok": False,
                     "error": f"cannot create a skill for a row that is {state}"}
         _write_status(config, entry.id, state="running", started=time.time(), boot=_BOOT)
-        job = threading.Thread(target=_draft_job, args=(config, entry.id),
+        job = threading.Thread(target=_draft_job, args=(config, entry.id, note),
                                daemon=True)
         _jobs[entry.id] = job
     job.start()
@@ -588,7 +599,8 @@ def make_handler(config: Config):
         "/api/transcript": lambda p: transcript(config, str(p.get("session", ""))),
         "/api/decline": lambda p: decline(config, str(p.get("id", ""))),
         "/api/reinstate": lambda p: reinstate(config, str(p.get("id", ""))),
-        "/api/create": lambda p: create_skill(config, str(p.get("id", ""))),
+        "/api/create": lambda p: create_skill(config, str(p.get("id", "")),
+                                              str(p.get("note") or "")),
         "/api/revise": lambda p: revise(config, str(p.get("id", "")),
                                         str(p.get("instruction", ""))),
         "/api/answer": lambda p: answer_questions(config, str(p.get("id", "")),
@@ -806,6 +818,13 @@ PAGE = r"""<!doctype html>
  .questions code{font:12px var(--mono);background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
  .questions textarea{width:100%;min-height:52px;resize:vertical;font:13px/1.5 var(--sans);
    color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px}
+ .cand .note{border-top:1px solid var(--line);padding:12px 16px 14px 44px}
+ .note label{display:block;margin:0 0 2px;font-size:13px;color:var(--fg)}
+ .note .hint{margin:0 0 8px;font-size:12px;color:var(--dim)}
+ .note textarea{width:100%;min-height:72px;resize:vertical;font:13px/1.5 var(--sans);
+   color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;
+   padding:10px;margin:0 0 8px}
+ .note .bar{display:flex;gap:8px;align-items:center}
  .blocked{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;color:var(--muted);
    border:1px solid var(--line);white-space:nowrap;cursor:not-allowed}
  a.download{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;text-decoration:none;
@@ -821,6 +840,7 @@ let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
 const inDrafts = r => ["drafted", "revising"].includes(r.state);
 let view = "candidates", open = new Set(), writing = new Set(), drafts = {}, answers = {};
 let openRows = new Set(), summarising = new Set(), summaryError = {};
+let noting = new Set(), notes = {};
 let openRuns = new Set(), convos = {}, convoError = {};
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -831,17 +851,47 @@ function actions(r){
     case "collecting": return "";
     case "undecided": return `<button class="accept" data-act="accept" data-id="${id}"${off}>Promote</button>
       <button class="decline" data-act="decline" data-id="${id}"${off}>Dismiss</button>`;
-    case "accepted": return `<button class="create" data-act="create" data-id="${id}"${off}>Draft Skill</button>`;
+    case "accepted": return draftButton(r);
     case "creating": return `<span class="state"><span class="spin"></span>Creating skill…</span>`;
     case "drafted": return `<a class="state ok" data-goto="${id}" title="Review in Drafts">Review</a>`;
     case "revising": return `<span class="state"><span class="spin"></span>Revising…</span>`;
     case "installed": return `<span class="state ok" title="${esc(r.path)}">Skill installed</span>`;
     case "failed": case "declined":
       return `<span class="msg" title="${esc(r.message)}">${r.state==="declined" ? "Agent declined" : "Failed"}: ${esc(r.message)}</span>
-        <button class="create" data-act="create" data-id="${id}"${off}>Draft Skill</button>`;
+        ${draftButton(r)}`;
     case "dismissed": return `<button class="reinstate" data-act="reinstate" data-id="${id}"${off}>Reinstate</button>`;
     default: return "";
   }
+}
+
+// Draft Skill asks before it starts: an optional note tells the agent what to
+// look out for. While the note is open, its own buttons stand in for this one.
+function draftButton(r){
+  if(noting.has(r.id)) return "";
+  const off = busy.has(r.id) ? " disabled" : "";
+  return `<button class="create" data-draft-open="${esc(r.id)}"${off}>Draft Skill</button>`;
+}
+
+function noteBlock(r){
+  if(!noting.has(r.id) || !["accepted", "failed", "declined"].includes(r.state)) return "";
+  const id = esc(r.id), off = busy.has(r.id) ? " disabled" : "";
+  return `<div class="note">
+    <label for="note-${id}">What should the agent look out for?</label>
+    <p class="hint">Optional. It goes to the agent along with the recorded run. Leave it empty and the draft is written from the run alone.</p>
+    <textarea id="note-${id}" data-note="${id}" placeholder="e.g. checking every command against DEPLOY.md is the point; the slide styling is not">${esc(notes[r.id] || "")}</textarea>
+    <div class="bar"><button class="create" data-draft-send="${id}"${off}>Start drafting</button>
+    <button data-draft-cancel="${id}"${off}>Cancel</button></div></div>`;
+}
+
+async function startDraft(id){
+  busy.add(id); render();
+  try {
+    const note = (notes[id] || "").trim();
+    const r = await (await fetch("/api/create", {method:"POST", body: JSON.stringify({id, note})})).json();
+    if(!r.ok){ alert(r.error || "failed"); return; }
+    // The note stays in `notes`, so a retry after a failed run starts from it.
+    noting.delete(id);
+  } finally { busy.delete(id); await load(); }
 }
 
 function renderNav(){
@@ -1088,7 +1138,21 @@ async function fetchSummary(id){
   finally { summarising.delete(id); if(view === "candidates") render(); }
 }
 
+// While a draft runs, the page polls every 5 seconds and redraws the whole
+// list, which took the cursor out of whatever box was being typed in — a note
+// for the next draft, an answer, a revision. Put it back where it was.
 function render(){
+  const t = document.activeElement;
+  const typing = t && t.tagName === "TEXTAREA" ? {
+    at: [...t.attributes].filter(a => a.name.startsWith("data-"))
+      .map(a => `[${a.name}="${CSS.escape(a.value)}"]`).join(""),
+    start: t.selectionStart, end: t.selectionEnd, top: t.scrollTop} : null;
+  paint();
+  const back = typing && typing.at && document.querySelector("textarea" + typing.at);
+  if(back){ back.focus(); back.setSelectionRange(typing.start, typing.end); back.scrollTop = typing.top; }
+}
+
+function paint(){
   document.getElementById("where").textContent = `ready at ${S.threshold}×`;
   renderNav();
   const list = document.getElementById("list");
@@ -1107,6 +1171,7 @@ function render(){
       ${r.days_left === null ? `<span class="clock"></span>` : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
         title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless it reaches ${S.threshold}× first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
       <span class="seen count ${r.occurrences >= S.threshold ? "reached" : ""}" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
+      ${noteBlock(r)}
       <div class="body">${candidateBody(r)}</div></div>`;
   const declined = S.rows.filter(r => r.state === "dismissed");
   const promoted = S.rows.filter(r => !["undecided", "collecting", "dismissed"].includes(r.state) && !inDrafts(r));
@@ -1123,6 +1188,16 @@ function render(){
     ${declined.length ? `<div class="section"><h2>Dismissed</h2><span>Candidates you dismissed. Reinstate one to bring it back.</span></div>
     ${declined.map(card).join("")}` : ""}`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
+  list.querySelectorAll("[data-draft-open]").forEach(b => b.onclick = () => {
+    noting.add(b.dataset.draftOpen); render();
+    const box = document.querySelector(`[data-note="${CSS.escape(b.dataset.draftOpen)}"]`);
+    if(box) box.focus();
+  });
+  list.querySelectorAll("[data-note]").forEach(t => t.oninput = () => { notes[t.dataset.note] = t.value; });
+  list.querySelectorAll("[data-draft-cancel]").forEach(b => b.onclick = () => {
+    noting.delete(b.dataset.draftCancel); delete notes[b.dataset.draftCancel]; render();
+  });
+  list.querySelectorAll("[data-draft-send]").forEach(b => b.onclick = () => startDraft(b.dataset.draftSend));
   list.querySelectorAll("[data-row]").forEach(h => h.onclick = ev => {
     if(ev.target.closest("a, button")) return;
     const id = h.dataset.row;
