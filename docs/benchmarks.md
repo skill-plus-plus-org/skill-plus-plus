@@ -1383,9 +1383,32 @@ Timing caution: the reserve makes `num_ctx` differ on every call, and 44 of 45
 calls reloaded the model (6.4s each, 311s of the run's 1,013s). Pin the context
 before timing thinking runs.
 
+### Thinking on, with the reply tail
+
 The two levers fail in opposite directions — the reply tail makes gemma4 more
-discerning, thinking makes it more willing — so the combination is the next
-measurement, not either one alone. Nothing here changes a default: the
+discerning, thinking makes it more willing — so the combination was measured.
+On `263d65ce` alone it is right: step 9 caught, cut in the right place, and all
+seven later turns of that writing session ("give me 10 title drafts", "a few
+changes for the .md files") kept at "no". On the whole corpus it is not:
+
+| gap | real | thinking | reply 400 + thinking | reply 400 |
+|---|---|---|---|---|
+| `241955c7` step 6 | ✓ | yes | yes | yes |
+| `263d65ce` step 9 | ✓ | yes | yes | — |
+| `698c7529` step 4, "Two things. Check every command…" | ✗ | yes | yes | — |
+| `698c7529` step 5, "Looks good. What's next? go" | ✗ | yes | yes | — |
+| `2095a8af` step 35, "Before you commit — check the docstring" | ✗ | yes | yes | — |
+| `95b6bde7` step 1, "No Confluence then — use the adk-docs MCP…" | ✗ | — | yes | — |
+| sessions | | 19/21 | 19/21 | **20/21** |
+
+With thinking on, the same three false cuts appear whether the tail is shown or
+not, and the tail adds a fourth (harmless to the score: a cut after the first
+step leaves an episode too small to bank, and gemma3n cuts there too). The bet
+that the tail would keep the review prompt at "no" is refuted. Thinking is the
+only thing that ever finds `263d65ce` step 9, and on this corpus it always
+pays for it with the review-prompt session.
+
+**The best configuration measured stays `--reply-before 400`, thinking off.** Nothing here changes a default: the
 production judge is still gemma3n with no reply shown, and gemma3n has not been
 measured with the reply tail.
 
