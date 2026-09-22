@@ -19,6 +19,7 @@ import io
 import json
 import math
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -53,7 +54,7 @@ _SAFE_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 # Bookkeeping beside a draft, never part of the skill. `agent.log` is the drafting
 # agent's transcript: it names local paths and it is not a file anyone who
 # installs the skill should receive.
-_NOT_SKILL_FILES = ("status.json", "downloaded.json", "agent.log")
+_NOT_SKILL_FILES = ("status.json", "downloaded.json", "installed.json", "agent.log")
 
 _jobs: dict[str, threading.Thread] = {}
 # Which server process started a run. A run marked running by a server that is
@@ -595,15 +596,31 @@ def _downloaded_at(config: Config, entry_id: str, skill_md: Path) -> str:
     return record.get("at", "") if record.get("sha256") == _skill_digest(skill_md) else ""
 
 
+def _install_fields(config: Config, entry, skill_md: Path) -> dict:
+    """What the card shows about installing: where it went, whether the draft
+    changed since (a revision to pass on), and the project it would go to."""
+    from .capture import project_of
+    record = _install_record(config, entry.id)
+    home = project_of(entry.projects[0]) if entry.projects else ""
+    return {"installed": record.get("path", "") if entry.skill_path else "",
+            "installed_target": record.get("target", ""),
+            "install_stale": bool(record) and record.get("files", {}).get("SKILL.md")
+                             not in (None, _skill_digest(skill_md)),
+            "project_name": Path(home).name if home else ""}
+
+
 def list_drafts(config: Config) -> list[dict]:
     """Every finished draft, with the SKILL.md text to review."""
     from datetime import datetime, timezone
     drafts = []
     for entry in Ledger(config).all():
         state = row_state(config, entry)
-        if state["state"] not in ("drafted", "revising"):
+        if state["state"] not in ("drafted", "revising", "installed"):
             continue
-        skill_md = Path(state["path"])
+        skill_md = (_drafted_skill(config, entry) if state["state"] == "installed"
+                    else Path(state["path"]))
+        if skill_md is None:
+            continue                 # installed by hand, with no draft here
         text = skill_md.read_text(encoding="utf-8")
         front = parse_frontmatter(text)
         questions, shown = split_open_questions(text)
@@ -624,9 +641,36 @@ def list_drafts(config: Config) -> list[dict]:
             "drafted_at": datetime.fromtimestamp(
                 skill_md.stat().st_mtime, timezone.utc).isoformat(),
             "projects": _projects(entry),
+            **_install_fields(config, entry, skill_md),
         })
     drafts.sort(key=lambda d: d["drafted_at"], reverse=True)
     return drafts
+
+
+def _drafted_skill(config: Config, entry) -> Path | None:
+    """The draft's SKILL.md, wherever its row stands (installed included)."""
+    found = sorted(p for p in _draft_dir(config, entry.id).rglob("SKILL.md")
+                   if ".revisions" not in p.parts)
+    return found[0] if found else None
+
+
+def _shippable(config: Config, entry_id: str):
+    """(entry, SKILL.md) for a draft that may leave the page, or (None, why).
+
+    One gate for the download and the install: a finished draft, and no open
+    question left. The id is looked up, never joined into a path.
+    """
+    entry = Ledger(config).get(entry_id)
+    if not entry:
+        return None, "no such entry"
+    if row_state(config, entry)["state"] not in ("drafted", "installed"):
+        return None, "there is no finished draft"
+    skill_md = _drafted_skill(config, entry)
+    if skill_md is None:
+        return None, "there is no finished draft"
+    if split_open_questions(skill_md.read_text(encoding="utf-8"))[0]:
+        return None, "answer the open questions first"
+    return (entry, skill_md), ""
 
 
 def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
@@ -636,12 +680,10 @@ def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
     Only a ledger entry with a finished draft is served; the id is looked up,
     never joined into a path from the request.
     """
-    entry = Ledger(config).get(entry_id)
-    if not entry or row_state(config, entry)["state"] != "drafted":
+    got, _ = _shippable(config, entry_id)
+    if not got:
         return None
-    skill_md = Path(row_state(config, entry)["path"])
-    if split_open_questions(skill_md.read_text(encoding="utf-8"))[0]:
-        return None                  # open questions first; see split_open_questions
+    entry, skill_md = got
     root = _draft_dir(config, entry.id)
     name = _skill_name(entry, skill_md)
     buffer = io.BytesIO()
@@ -649,6 +691,115 @@ def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
         for path in _draft_files(config, entry.id):
             archive.write(path, f"{name}/{path.relative_to(root)}")
     return f"{name}.zip", buffer.getvalue()
+
+
+def _install_record(config: Config, entry_id: str) -> dict:
+    try:
+        return json.loads((_draft_dir(config, entry_id) / "installed.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def install_skill(config: Config, entry_id: str, target: str,
+                  personal_dir: Path | None = None) -> dict:
+    """Copy a finished draft into a skills folder and mark it installed.
+
+    `project` is `<repo>/.claude/skills/<name>/`, the repo the candidate belongs
+    to: committed there, it reaches everyone who works in the repo. `personal`
+    is `~/.claude/skills/` (or the folder `skillpp web --skills-dir` names).
+    The folder is built from the ledger only, never from the request. A folder
+    of the same name that this draft did not install is left alone; our own is
+    replaced, which is how a revision reaches an installed skill.
+    """
+    from datetime import datetime, timezone
+    from .capture import project_of
+    if target not in ("project", "personal"):
+        return {"ok": False, "error": "install where? project or personal"}
+    got, why = _shippable(config, entry_id)
+    if not got:
+        return {"ok": False, "error": why}
+    entry, skill_md = got
+    if target == "project":
+        home = project_of(entry.projects[0]) if entry.projects else ""
+        if not home:
+            return {"ok": False, "error": "this candidate was recorded without a project "
+                                          "folder; install it just for you"}
+        base = Path(home) / ".claude" / "skills"
+    else:
+        base = Path(personal_dir or Path.home() / ".claude" / "skills").expanduser()
+    dest = base / _skill_name(entry, skill_md)
+
+    previous = _install_record(config, entry.id)
+    if previous and Path(previous["path"]) != dest:
+        return {"ok": False, "error": f"already installed in {previous['path']}; uninstall it first"}
+    if dest.exists() and not previous:
+        return {"ok": False, "error": f"{dest} already exists and was not installed from "
+                                      f"this draft; it is left alone"}
+    if previous:
+        changed = _changed_since_install(previous)
+        if changed:
+            return {"ok": False, "error": f"{changed[0]} was changed after it was installed; "
+                                          f"keep your edits or remove the folder by hand"}
+        _remove_installed(previous)
+
+    root = _draft_dir(config, entry.id)
+    files = {}
+    for path in _draft_files(config, entry.id):
+        rel = path.relative_to(root)
+        (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, dest / rel)
+        files[str(rel)] = _skill_digest(dest / rel)
+    (root / "installed.json").write_text(json.dumps({
+        "path": str(dest), "target": target, "files": files,
+        "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}, indent=1))
+    ledger = Ledger(config)
+    entry.skill_path = str(dest / "SKILL.md")
+    ledger.save(entry)
+    return {"ok": True, "path": str(dest)}
+
+
+def _changed_since_install(record: dict) -> list[str]:
+    dest = Path(record["path"])
+    return [rel for rel, digest in record.get("files", {}).items()
+            if (dest / rel).exists() and _skill_digest(dest / rel) != digest]
+
+
+def _remove_installed(record: dict) -> None:
+    """Remove the files an install wrote, and the folders it leaves empty.
+    Anything else in the folder was put there by someone else and stays."""
+    dest = Path(record["path"])
+    for rel in record.get("files", {}):
+        try:
+            (dest / rel).unlink()
+        except FileNotFoundError:
+            pass
+    # The skills folder too, if the install left it empty; nothing above it.
+    for folder in sorted({(dest / rel).parent for rel in record.get("files", {})} | {dest, dest.parent},
+                         key=lambda p: len(p.parts), reverse=True):
+        try:
+            folder.rmdir()
+        except OSError:
+            pass                   # not empty: someone else's files are in it
+
+
+def uninstall_skill(config: Config, entry_id: str) -> dict:
+    """Take out what `install_skill` put in, if nobody has changed it since."""
+    entry = Ledger(config).get(entry_id)
+    if not entry:
+        return {"ok": False, "error": "no such entry"}
+    record = _install_record(config, entry.id)
+    if not record:
+        return {"ok": False, "error": "it was not installed from this page"}
+    changed = _changed_since_install(record)
+    if changed:
+        return {"ok": False, "error": f"{changed[0]} was changed after it was installed; "
+                                      f"remove it by hand"}
+    _remove_installed(record)
+    (_draft_dir(config, entry.id) / "installed.json").unlink()
+    ledger = Ledger(config)
+    entry.skill_path = ""
+    ledger.save(entry)
+    return {"ok": True, "path": record["path"]}
 
 
 def _decide(config: Config, entry_id: str, command: str) -> dict:
@@ -806,8 +957,11 @@ def answer_questions(config: Config, entry_id: str, answers: list) -> dict:
     return revise(config, entry_id, instruction, limit=MAX_ANSWERS + 1000)
 
 
-def make_handler(config: Config):
+def make_handler(config: Config, skills_dir: Path | None = None):
     actions = {
+        "/api/install": lambda p: install_skill(config, str(p.get("id", "")),
+                                                str(p.get("target", "")), skills_dir),
+        "/api/uninstall": lambda p: uninstall_skill(config, str(p.get("id", ""))),
         "/api/accept": lambda p: accept(config, str(p.get("id", ""))),
         "/api/summary": lambda p: summarise(config, str(p.get("id", ""))),
         "/api/transcript": lambda p: transcript(config, str(p.get("session", ""))),
@@ -917,7 +1071,7 @@ def make_handler(config: Config):
 def serve(config: Config, skills_dir: Path | None = None, port: int = 8765,
           open_browser: bool = True) -> ThreadingHTTPServer:
     """Serve on loopback only. Never bind anywhere else: there is no auth."""
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(config))
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(config, skills_dir))
     if open_browser:
         threading.Thread(target=webbrowser.open, daemon=True,
                          args=[f"http://127.0.0.1:{httpd.server_port}/"]).start()
@@ -988,6 +1142,10 @@ PAGE = r"""<!doctype html>
  .draft.downloaded{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.07),var(--panel) 40%)}
  .badge.review{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .badge.downloaded{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
+ .badge.installed{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
+ .draft.installed{border-left:3px solid var(--ok)}
+ .where{font:12px var(--mono);color:var(--ok);white-space:nowrap;max-width:220px;
+   overflow:hidden;text-overflow:ellipsis}
  .badge.declined{color:var(--no);border-color:var(--noline);background:var(--nobg)}
  .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
  .clock:empty{display:none}
@@ -1110,7 +1268,7 @@ PAGE = r"""<!doctype html>
  .blocked{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;color:var(--muted);
    border:1px solid var(--line);white-space:nowrap;cursor:not-allowed}
  a.download{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;text-decoration:none;
-   color:var(--ok);border:1px solid var(--okline);background:var(--okbg);white-space:nowrap}
+   color:var(--dim);border:1px solid var(--line);white-space:nowrap}
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
 </style></head><body>
 <header><span style="display:flex;align-items:center;gap:18px"><b>skillpp</b>
@@ -1120,7 +1278,10 @@ PAGE = r"""<!doctype html>
 <script>
 let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
 // A candidate with a draft is reviewed in the Drafts tab, not listed here.
-const inDrafts = r => ["drafted", "revising"].includes(r.state);
+// A draft's row lives in the Drafts tab, installed ones too; a skill installed
+// by hand, with no draft here, stays on the Candidates tab.
+const inDrafts = r => ["drafted", "revising"].includes(r.state)
+  || (r.state === "installed" && (ALL || S).drafts.some(d => d.id === r.id));
 let view = "candidates", open = new Set(), writing = new Set(), drafts = {}, answers = {};
 let openRows = new Set(), summarising = new Set(), summaryError = {};
 let noting = new Set(), notes = {};
@@ -1355,16 +1516,27 @@ function reviseBlock(d){
 }
 
 function renderDrafts(list){
-  const card = d => `<div class="draft ${d.downloaded_at ? "downloaded" : "review"} ${open.has(d.id)?"open":""} ${isNew(d)?"fresh":""}">
+  // Install is the way a skill reaches its project: into the repo's
+  // .claude/skills/, where committing it shares it. Download stays for
+  // anywhere else.
+  const installActs = d => d.installed
+    ? `<span class="where" title="${esc(d.installed)}">${d.installed_target === "project" ? "in " + esc(d.project_name) : "for you"}</span>`
+      + (d.install_stale ? `<button class="create" data-install="${esc(d.id)}" data-target="${esc(d.installed_target)}" title="The draft changed since it was installed">Update</button>` : "")
+      + `<button data-uninstall="${esc(d.id)}" data-where="${esc(d.installed)}">Uninstall</button>`
+    : (d.project_name ? `<button class="create" data-install="${esc(d.id)}" data-target="project" title="Into the repo's .claude/skills/. Commit it to share it with everyone in the repo.">Install in ${esc(d.project_name)}</button>` : "")
+      + `<button data-install="${esc(d.id)}" data-target="personal" title="Into ~/.claude/skills/, only for you">${d.project_name ? "Just for me" : "Install for me"}</button>`
+      + `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">Download</a>`;
+  const kind = d => d.installed ? "installed" : d.downloaded_at ? "downloaded" : "review";
+  const card = d => `<div class="draft ${kind(d)} ${open.has(d.id)?"open":""} ${isNew(d)?"fresh":""}">
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
         ${isNew(d) ? `<span class="new" title="Written since you last opened it">New</span>` : ""}
         <span class="ago" title="${esc(when(d.drafted_at))}">${d.revising ? "revising" : "drafted " + ago(d.drafted_at)}</span>
-        <span class="badge ${d.downloaded_at ? "downloaded" : "review"}">${d.downloaded_at ? "Downloaded" : "To review"}</span>
+        <span class="badge ${kind(d)}">${{installed: "Installed", downloaded: "Downloaded", review: "To review"}[kind(d)]}</span>
         <span class="acts">${d.questions.length
           ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
-          : `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">${d.downloaded_at ? "Download again" : "Download skill"}</a>`}</span>
+          : installActs(d)}</span>
       </div>
       <p class="desc">${esc(d.description)}</p>
       <div class="body">
@@ -1373,13 +1545,29 @@ function renderDrafts(list){
         <div class="md">${md(d.body)}</div>
         ${reviseBlock(d)}
       </div></div>`;
-  const toReview = S.drafts.filter(d => !d.downloaded_at), downloaded = S.drafts.filter(d => d.downloaded_at);
-  list.innerHTML = S.drafts.length ? `
-    <div class="section"><h2>To review</h2><span>Drafts you have not downloaded yet.</span></div>
-    ${toReview.length ? toReview.map(card).join("") : `<p class="empty">Everything has been downloaded.</p>`}
-    <div class="section"><h2>Downloaded</h2><span>Drafts you downloaded. Revising one moves it back to review.</span></div>
-    ${downloaded.length ? downloaded.map(card).join("") : `<p class="empty">Nothing downloaded yet.</p>`}`
+  const toReview = S.drafts.filter(d => kind(d) === "review");
+  const installed = S.drafts.filter(d => kind(d) === "installed");
+  const downloaded = S.drafts.filter(d => kind(d) === "downloaded");
+  const part = (title, note, items, none) => `<div class="section"><h2>${title}</h2><span>${note}</span></div>
+    ${items.length ? items.map(card).join("") : `<p class="empty">${none}</p>`}`;
+  list.innerHTML = S.drafts.length
+    ? part("To review", "Drafts not installed or downloaded yet.", toReview, "Nothing waiting.")
+      + part("Installed", "In a skills folder, where your agent loads them. A revision can be passed on with Update.", installed, "Nothing installed yet.")
+      + (downloaded.length ? part("Downloaded", "Downloaded but not installed from here.", downloaded, "") : "")
     : `<p class="empty">No drafts yet. Promote a candidate, then Draft Skill.</p>`;
+  list.querySelectorAll("[data-install]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const r = await (await post("/api/install", {id: b.dataset.install, target: b.dataset.target})).json();
+    if (!r.ok) { alert(r.error || "install failed"); b.disabled = false; return; }
+    await load();
+  });
+  list.querySelectorAll("[data-uninstall]").forEach(b => b.onclick = async () => {
+    if (!confirm(`Remove the skill installed in\n${b.dataset.where}?\n\nOnly the files installed from this page are removed.`)) return;
+    b.disabled = true;
+    const r = await (await post("/api/uninstall", {id: b.dataset.uninstall})).json();
+    if (!r.ok) { alert(r.error || "uninstall failed"); b.disabled = false; return; }
+    await load();
+  });
   list.querySelectorAll("a.download").forEach(a => a.addEventListener("click", () => setTimeout(load, 1000)));
   list.querySelectorAll("[data-revise-open]").forEach(b => b.onclick = () => {
     writing.add(b.dataset.reviseOpen); render();

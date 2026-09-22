@@ -51,6 +51,10 @@ The first public release.
   is named in the draft; that day's settings become inputs; a result the run
   only stated becomes a check to perform; questions go into Open questions;
   the agent no longer splits candidates.
+- Install from the review page: a finished draft goes into its project's
+  `.claude/skills/` (commit it to share it) or into your own skills folder,
+  replaces its earlier install after a revision, and uninstalls only the files
+  it wrote. A folder it did not install is left alone.
 - The review page has a project menu: it shows one project's candidates and
   drafts at a time, and remembers the choice.
 - The review page shows when each draft was written, lists the newest first,

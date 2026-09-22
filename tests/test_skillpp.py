@@ -3905,6 +3905,111 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
                                         text=True, check=True).stdout)
         self.assertEqual(out, ["a,b,n,old", "a,old", "n", 0])
 
+    def _in_repo(self, eid):
+        """A finished draft whose candidate belongs to a scratch repo."""
+        repo = self.root / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        self._drafted(eid, extra={"references/notes.md": "n"})
+        entry = self.ledger.get(eid)
+        entry.projects = [str(repo)]
+        self.ledger.save(entry)
+        return repo
+
+    def test_install_puts_the_skill_in_its_projects_skills_folder(self):
+        from skillpp.web import collect_state, install_skill
+        repo = self._in_repo("x")
+        result = install_skill(self.config, "x", "project")
+        skill = repo / ".claude" / "skills" / "add-eval-case"
+        self.assertTrue(result["ok"], result)
+        self.assertTrue((skill / "SKILL.md").exists())
+        self.assertTrue((skill / "references" / "notes.md").exists())
+        self.assertFalse((skill / "installed.json").exists(), "bookkeeping is not the skill")
+        draft = collect_state(self.config)["drafts"][0]
+        self.assertEqual((draft["installed"], draft["installed_target"]), (str(skill), "project"))
+        self.assertEqual(self.ledger.get("x").skill_path, str(skill / "SKILL.md"))
+
+    def test_install_just_for_me_uses_the_personal_folder(self):
+        from skillpp.web import install_skill
+        self._in_repo("x")
+        personal = self.root / "home-skills"
+        self.assertTrue(install_skill(self.config, "x", "personal", personal)["ok"])
+        self.assertTrue((personal / "add-eval-case" / "SKILL.md").exists())
+
+    def test_a_draft_with_open_questions_is_not_installed(self):
+        from skillpp.web import install_skill
+        repo = self._in_repo("x")
+        skill = self.config.root / "drafts" / "x" / "SKILL.md"
+        skill.write_text(skill.read_text() + "\n## Open questions\n\n- Which topics?\n")
+        result = install_skill(self.config, "x", "project")
+        self.assertFalse(result["ok"])
+        self.assertFalse((repo / ".claude").exists())
+
+    def test_a_folder_it_did_not_install_is_left_alone(self):
+        from skillpp.web import install_skill
+        repo = self._in_repo("x")
+        theirs = repo / ".claude" / "skills" / "add-eval-case"
+        theirs.mkdir(parents=True)
+        (theirs / "SKILL.md").write_text("someone else's")
+        self.assertFalse(install_skill(self.config, "x", "project")["ok"])
+        self.assertEqual((theirs / "SKILL.md").read_text(), "someone else's")
+
+    def test_a_revision_reaches_the_installed_skill_through_update(self):
+        from skillpp.web import collect_state, install_skill
+        repo = self._in_repo("x")
+        install_skill(self.config, "x", "project")
+        draft = self.config.root / "drafts" / "x" / "SKILL.md"
+        draft.write_text(draft.read_text() + "\n## Traps\n")
+        self.assertTrue(collect_state(self.config)["drafts"][0]["install_stale"])
+        self.assertTrue(install_skill(self.config, "x", "project")["ok"])
+        installed = repo / ".claude" / "skills" / "add-eval-case" / "SKILL.md"
+        self.assertIn("## Traps", installed.read_text())
+        self.assertFalse(collect_state(self.config)["drafts"][0]["install_stale"])
+
+    def test_uninstall_removes_only_what_it_installed(self):
+        from skillpp.web import install_skill, uninstall_skill
+        repo = self._in_repo("x")
+        install_skill(self.config, "x", "project")
+        skill = repo / ".claude" / "skills" / "add-eval-case"
+        (skill / "mine.md").write_text("added by hand")
+        self.assertTrue(uninstall_skill(self.config, "x")["ok"])
+        self.assertFalse((skill / "SKILL.md").exists())
+        self.assertFalse((skill / "references").exists())
+        self.assertEqual((skill / "mine.md").read_text(), "added by hand")
+        self.assertEqual(self.ledger.get("x").skill_path, "")
+
+    def test_uninstall_leaves_no_empty_skills_folder_behind(self):
+        from skillpp.web import install_skill, uninstall_skill
+        repo = self._in_repo("x")
+        install_skill(self.config, "x", "project")
+        uninstall_skill(self.config, "x")
+        self.assertFalse((repo / ".claude" / "skills").exists())
+
+    def test_uninstall_leaves_a_skill_edited_after_install(self):
+        from skillpp.web import install_skill, uninstall_skill
+        repo = self._in_repo("x")
+        install_skill(self.config, "x", "project")
+        installed = repo / ".claude" / "skills" / "add-eval-case" / "SKILL.md"
+        installed.write_text(installed.read_text() + "\nmy own step\n")
+        self.assertFalse(uninstall_skill(self.config, "x")["ok"])
+        self.assertIn("my own step", installed.read_text())
+
+    def test_without_a_project_folder_it_installs_only_for_you(self):
+        from skillpp.web import collect_state, install_skill
+        self._drafted("x")
+        self.assertEqual(collect_state(self.config)["drafts"][0]["project_name"], "")
+        self.assertFalse(install_skill(self.config, "x", "project")["ok"])
+
+    def test_an_install_request_cannot_choose_the_folder(self):
+        """The folder comes from the ledger; a path in the request is ignored,
+        and an unknown target is refused."""
+        from skillpp.web import install_skill
+        repo = self._in_repo("x")
+        elsewhere = self.root / "elsewhere"
+        self.assertFalse(install_skill(self.config, "x", str(elsewhere))["ok"])
+        self.assertFalse(elsewhere.exists())
+        self.assertTrue(install_skill(self.config, "x", "project")["ok"])
+        self.assertTrue((repo / ".claude" / "skills" / "add-eval-case").exists())
+
     def test_loading_the_page_runs_nothing(self):
         import subprocess
         self._save("a")
