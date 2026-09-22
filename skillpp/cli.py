@@ -604,11 +604,14 @@ def cmd_merge(args: argparse.Namespace) -> int:
     finally:
         save_cache(config, cache)
 
+    from .capture import projects_of
     pairs = []
     for i, a in enumerate(entries):
         for b in entries[i + 1:]:
             if a.status == STATUS_PROMOTED and b.status == STATUS_PROMOTED:
                 continue          # two skills: not ours to reconcile
+            if not projects_of(a) & projects_of(b):
+                continue          # candidates belong to one project each
             if has_conversation(a.turns) != has_conversation(b.turns):
                 continue          # conversation and steps are not on one scale
             score = cosine(vectors[a.id], vectors[b.id])

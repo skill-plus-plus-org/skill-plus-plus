@@ -38,6 +38,9 @@ The first public release.
 - More git commands that discard uncommitted work count as destructive.
 - The test suite needs no model and runs in about ten seconds.
 - The local judge is `gemma4:e4b`, with thinking off.
+- Candidates belong to one project, the git repo the work was done in: the same
+  procedure in another repo is another candidate, and `merge` never joins two
+  projects.
 - Public test sessions: 22 recorded from a fixed catalogue, code and knowledge
   work, with a detection report per check and a merging report by how alike
   the runs are. The baseline is in `tests/fixtures/sessions/expected.json`.

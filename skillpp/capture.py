@@ -17,6 +17,7 @@ always exits 0. Capture is never worth breaking someone's work over.
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import os
 import re
@@ -115,6 +116,30 @@ def log_error(config: Config, message: str) -> None:
 def _session_file(config: Config, session_id: str) -> Path:
     safe = "".join(c for c in session_id if c.isalnum() or c in "-_")[:64] or "unknown"
     return config.sessions_dir / f"{safe}.json"
+
+
+@functools.lru_cache(maxsize=512)
+def project_of(cwd: str) -> str:
+    """The project a working directory belongs to: its git repo's root.
+
+    Candidates and skills are bound to one project, and a session started in a
+    subfolder of a repo is still that repo's work. Without a repo above it, the
+    folder itself is the project; with no folder at all, there is none ("").
+    Only stat calls, no git: this runs for every entry a fold compares.
+    """
+    if not cwd:
+        return ""
+    path = Path(cwd).expanduser()
+    for folder in (path, *path.parents):
+        if (folder / ".git").exists():
+            return str(folder)
+    return str(path)
+
+
+def projects_of(entry) -> set[str]:
+    """Every project an entry was seen in. One, except for entries banked
+    before candidates were bound to a project, which may hold several."""
+    return {project_of(cwd) for cwd in entry.projects} or {""}
 
 
 def _load_session(config: Config, session_id: str) -> dict:
@@ -994,12 +1019,17 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
     intents = _intents_for(session, steps)
     turns = _turns(steps, cwd)
     # Same procedure or not, decided by an embedding against every entry of any
-    # status (`matching.find_same`). Raises if the model is unreachable; the
-    # caller has already checked it is up, so that is a mid-fold outage.
+    # status in this project (`matching.find_same`). Only this project's: a
+    # candidate, and the skill made from it, belong to the repo the work was
+    # done in, so the same steps in another repo are another candidate.
+    # Raises if the model is unreachable; the caller has already checked it is
+    # up, so that is a mid-fold outage.
     existing = None
     if match:
         from .matching import find_same
-        hit = find_same(substantive, list(ledger.all()), config, turns=turns)
+        here = project_of(cwd)
+        pool = [e for e in ledger.all() if here in projects_of(e)]
+        hit = find_same(substantive, pool, config, turns=turns)
         existing = hit[0] if hit else None
 
     deps_mcp = sorted({s["tool"] for s in substantive if s["tool"].startswith("mcp__")})

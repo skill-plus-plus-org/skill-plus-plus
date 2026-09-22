@@ -27,6 +27,11 @@ From the catalogue:
 - `recurrence.py` reports merged pairs by how alike the runs are: identical,
   same goal, or different subject.
 
+The scorers fold every session with no working directory, so all of them count
+as one project and runs recorded in different folders can merge. In real use a
+candidate is bound to its project (the git repo the work was done in): the
+recording folders `C-F1`, `C-F2` and `C-F3` would be three projects there.
+
 `draft_cases.json` holds what a drafted skill must contain for four of these
 sessions. `tests/benchmarks/draft_check.py` prepares each draft and checks it.
 The drafting itself is a frontier-model call, so you run it.

@@ -3054,6 +3054,82 @@ class TestMatching(TempRoot):
         self.assertEqual(self.calls, [])
 
 
+class TestCandidatesBelongToOneProject(TempRoot):
+    """A candidate, and the skill made from it, belong to the repo the work was
+    done in. The same steps in another repo are another candidate: matching
+    used to compare every entry of every project, and a hit simply added the
+    new folder to the old candidate."""
+
+    WORK = [bash("npm run build"), bash("./deploy.sh staging")]
+
+    def _repo(self, name):
+        repo = self.root / name
+        (repo / ".git").mkdir(parents=True)
+        return repo
+
+    def _fold(self, sid, cwd):
+        return fold_session(self.config, {"session_id": sid, "cwd": str(cwd), "prompts": [],
+                                          "steps": judged([dict(st) for st in self.WORK])})
+
+    def test_a_project_is_the_repo_root_above_the_folder(self):
+        from skillpp.capture import project_of
+        repo = self._repo("app")
+        (repo / "src" / "deep").mkdir(parents=True)
+        self.assertEqual(project_of(str(repo / "src" / "deep")), str(repo))
+        loose = self.root / "notes"
+        loose.mkdir()
+        self.assertEqual(project_of(str(loose)), str(loose))
+        self.assertEqual(project_of(""), "")
+
+    def test_the_same_procedure_in_two_repos_is_two_candidates(self):
+        a, b = self._repo("a"), self._repo("b")
+        first, second = self._fold("s1", a), self._fold("s2", b)
+        self.assertEqual((first["status"], second["status"]), ("created", "created"))
+        self.assertEqual(sorted(len(e.projects) for e in Ledger(self.config).all()), [1, 1])
+
+    def test_the_same_procedure_in_one_repo_merges_even_from_a_subfolder(self):
+        repo = self._repo("app")
+        (repo / "web").mkdir()
+        self._fold("s1", repo)
+        second = self._fold("s2", repo / "web")
+        self.assertEqual(second["status"], "merged")
+        self.assertEqual(second["occurrences"], 2)
+
+    def test_an_entry_from_before_the_rule_still_matches_in_each_of_its_projects(self):
+        a, b = self._repo("a"), self._repo("b")
+        first = self._fold("s1", a)
+        led = Ledger(self.config)
+        entry = led.get(first["id"])
+        entry.projects.append(str(b))         # merged across repos by the old rule
+        led.save(entry)
+        self.assertEqual(self._fold("s2", b)["status"], "merged")
+
+    def test_live_capture_records_the_folder_the_session_ran_in(self):
+        """The hooks carry the folder; a candidate banked from them names it.
+        (Sessions folded with no folder, as the scorers do, have none.)"""
+        from skillpp.capture import _load_session
+        repo = self._repo("app")
+        handle_prompt(self.config, {"session_id": "live", "cwd": str(repo), "prompt": "deploy"})
+        for st in self.WORK:
+            handle_tool(self.config, {"session_id": "live", "cwd": str(repo),
+                                      "tool_name": "Bash", "tool_input": st["input"]})
+        session = _load_session(self.config, "live")
+        for step in session["steps"]:
+            if not is_prompt(step):
+                step["end"] = False
+        result = fold_session(self.config, session)
+        self.assertEqual(Ledger(self.config).get(result["id"]).projects, [str(repo)])
+
+    def test_merge_never_joins_candidates_from_two_projects(self):
+        from skillpp.cli import main
+        a, b = self._repo("a"), self._repo("b")
+        self._fold("s1", a)
+        self._fold("s2", b)
+        with mock.patch("sys.stdout"):
+            main(["--root", str(self.config.root), "merge", "--apply"])
+        self.assertEqual(len(list(Ledger(self.config).all())), 2)
+
+
 class TestCaptureMatchesByEmbedding(TempRoot):
     """What changed when capture stopped using a signature."""
 
