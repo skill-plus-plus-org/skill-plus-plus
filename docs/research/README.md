@@ -22,7 +22,10 @@ result, and the numbers on them will differ.
   misses cut one task in two at a review request. Only 2 of the 45 gaps were
   real boundaries, so a judge answering "no" everywhere also scores 19 of 21:
   the set cannot tell a better judge from a lucky one.
-- **A stronger judge, measured and not adopted.** `gemma4:e4b`, shown the last
+- **The default judge is `gemma4:e4b` since 2026-09-22**, with thinking off;
+  the numbers above were measured on `gemma3n:e4b`, the previous default. The
+  public sessions are the first set scored on gemma4 from the start.
+- **The reply tail, measured and not adopted.** `gemma4:e4b`, shown the last
   400 characters of the agent's reply before the gap, scored 20 of 21 with no
   false cuts. With thinking on, it caught both real boundaries but cut three
   single tasks, at about 15 seconds a gap instead of 1.4.

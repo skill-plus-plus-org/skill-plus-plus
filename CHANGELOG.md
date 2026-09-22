@@ -11,7 +11,7 @@ The first public release.
 ### What it does
 
 - Captures Claude Code sessions through four hooks, scrubbed on write.
-- Cuts each finished session into tasks with a local model (`gemma3n:e4b`),
+- Cuts each finished session into tasks with a local model (`gemma4:e4b`),
   asked once per prompt gap, in a detached worker after the session ends.
 - Recognises repeated work with embeddings (`nomic-embed-text`), preferring a
   missed merge to a wrong one.

@@ -1,0 +1,17 @@
+{
+  "family_sizes": {
+    "add-function-with-tests": 3,
+    "write-checklist": 1,
+    "write-linkedin-post": 3,
+    "write-makefile": 1
+  },
+  "notes": {
+    "family_sizes": "Runs labelled per family among the banked episodes; the third add-function-with-tests run is the first task of 5d99e183.",
+    "baseline": "2026-09-22, gemma4:e4b judge with thinking off, nomic-embed-text at the default floors: 7/9 sessions (C's announced cut missed; D a known gap), 1/2 repeated procedures unified, 0 wrong merges.",
+    "judge_prompts": "Every judge prompt at the defaults over this set."
+  },
+  "judge_prompts": {
+    "count": 9,
+    "sha256": "fabc56bc48598506f16902088a13f0b718e1fa9a4e2bd711fc5a795a64afb9cf"
+  }
+}

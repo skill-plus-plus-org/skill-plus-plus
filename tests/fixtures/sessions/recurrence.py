@@ -59,7 +59,13 @@ def fold_all(config: Config) -> list[dict]:
                                        "steps": copy.deepcopy(doc["steps"])})
         episodes = [e for e in (result.get("episodes") or [result])
                     if e.get("status") in BANKED]
-        families = doc["truth"].get("families", [])
+        families = list(doc["truth"].get("families", []))
+        # A known gap banks what a correct run would not. Its extra episodes get
+        # a label of their own, so they can never score as a correct merge and
+        # show up as a wrong one if they join another family's entry.
+        if doc.get("expected_fail") and len(episodes) > len(families):
+            families += [f"unlabelled:{doc['tag']}#{n}"
+                         for n in range(len(families) + 1, len(episodes) + 1)]
         if len(families) != len(episodes):
             raise SystemExit(
                 f"{doc['tag']}: {len(episodes)} banked episode(s) but "

@@ -853,7 +853,7 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
     # nothing is indistinguishable from a session that held no work.
     # No tool call at all is a conversation, not an unjudged session: there is
     # no step a verdict could sit on. Reading it as offline held nine real chat
-    # sessions forever under "gemma3n:e4b did not answer" while the model was up.
+    # sessions forever under "<model> did not answer" while the model was up.
     if not [s for s in session.get("steps", []) if not is_prompt(s)]:
         return {"status": "too-thin", "steps": 0, "episodes": [], "flagged": 0}
     if not was_judged(session.get("steps", [])) and not force:

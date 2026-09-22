@@ -47,7 +47,7 @@ flowchart LR
   the larger one is loaded:
 
   ```bash
-  ollama pull gemma3n:e4b        # cuts sessions into tasks, names candidates
+  ollama pull gemma4:e4b         # cuts sessions into tasks, names candidates
   ollama pull nomic-embed-text   # decides whether two tasks are the same procedure
   ```
 
@@ -121,7 +121,7 @@ All settings are environment variables.
 | `SKILLPP_RECURRENCE` | `3` | times a task must repeat before it can be promoted |
 | `SKILLPP_TTL_DAYS` | `14` | how long `skillpp expire` keeps a candidate still collecting |
 | `SKILLPP_OLLAMA` | `http://127.0.0.1:11434` | the Ollama server |
-| `SKILLPP_LOCAL_MODEL` | `gemma3n:e4b` | the model that cuts sessions and names candidates |
+| `SKILLPP_LOCAL_MODEL` | `gemma4:e4b` | the model that cuts sessions and names candidates |
 | `SKILLPP_EMBED_MODEL` | `nomic-embed-text` | the model that matches repeats |
 | `SKILLPP_MATCH_FLOOR` | `0.93` | similarity at which two runs' commands count as the same procedure |
 | `SKILLPP_MATCH_FLOOR_TURNS` | `0.85` | the same, for runs compared by their conversation |

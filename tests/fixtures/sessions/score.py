@@ -36,6 +36,10 @@ REPO = HERE.parents[2]
 # belong to that set alone.
 SESSIONS = Path(os.environ.get("SKILLPP_FIXTURES") or HERE).expanduser()
 sys.path.insert(0, str(REPO))
+# Folding names each banked candidate with the local LLM. Nothing scored here
+# reads the name, and it loaded a second model beside the embedder
+# (recurrence.py imports this module too).
+os.environ.setdefault("SKILLPP_NAME", "0")
 
 from skillpp.capture import fold_session  # noqa: E402
 from skillpp.config import Config  # noqa: E402

@@ -124,7 +124,7 @@ def judged_copy(doc: dict, config: Config, *, verbose: bool = False,
             mark = ("ok " if verdict == record["label"] else
                     "-- " if verdict is None else "XX ")
             kind = "BOUNDARY" if record["label"] else "        "
-            print(f"   {mark} {kind} step {work[index]:>3}  gemma3n "
+            print(f"   {mark} {kind} step {work[index]:>3}  stored "
                   f"{_yn(record['stored'])}  now {_yn(verdict)}"
                   f"  {record['said'][:60]!r}")
         if verdict is None:
@@ -215,7 +215,7 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("tag", nargs="?", help="score one session")
     ap.add_argument("-v", "--verbose", action="store_true",
-                    help="print every gap: its true label, gemma3n's stored "
+                    help="print every gap: its true label, the stored "
                          "verdict and this run's")
     ap.add_argument("--dump", help="write every gap's verdict and cost as JSON")
     ap.add_argument("--prior", type=_steps, default=None,

@@ -29,7 +29,7 @@ from typing import Callable
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 
 DEFAULT_HOST = "http://127.0.0.1:11434"
-DEFAULT_MODEL = "gemma3n:e4b"
+DEFAULT_MODEL = "gemma4:e4b"
 
 # Ollama defaults num_ctx to 4096 and silently drops what will not fit, so a
 # long episode would be judged on a fragment of itself without saying so. Size
