@@ -336,7 +336,7 @@ def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
     enough to trip it ends in a marker — and on the judged path it emptied three
     ledgers outright: the judge found no ending, the whole session became one
     markerless episode, and the rule threw it away. Removing it took the judge
-    from 3 fixed / 3 broken to 3 fixed / 0 broken. See `docs/benchmarks.md`.
+    from 3 fixed / 3 broken to 3 fixed / 0 broken. See `docs/research/benchmarks.md`.
     """
     if not was_judged(steps):
         # Offline. Not a degraded mode — nothing here is guessed at.

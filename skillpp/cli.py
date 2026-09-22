@@ -122,6 +122,37 @@ def _agent_workspace(entry_id: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=f"skillpp-{entry_id[:8]}-"))
 
 
+def _agent_home(entry_id: str) -> Path:
+    """Where the drafting agent runs: a directory holding the two things its
+    prompt relies on, `/skillpp-draft` and `python3 bin/skillpp`.
+
+    It used to run from this checkout, where both happen to exist. An installed
+    package has neither beside it, so a `pipx` install could draft nothing.
+    `bin/skillpp` here runs the skillpp that started the agent, whichever way it
+    was installed. Kept apart from the draft workspace, because everything
+    beside a written SKILL.md is collected into the draft.
+    """
+    import shutil
+    import tempfile
+    from .install import COMMANDS
+    home = Path(tempfile.mkdtemp(prefix=f"skillpp-agent-{entry_id[:8]}-"))
+    commands = home / ".claude" / "commands"
+    commands.mkdir(parents=True)
+    shutil.copy2(COMMANDS / "skillpp-draft.md", commands / "skillpp-draft.md")
+    shim = home / "bin" / "skillpp"
+    shim.parent.mkdir()
+    package_parent = Path(__file__).resolve().parent.parent
+    shim.write_text(
+        "#!/usr/bin/env python3\n"
+        '"""The skillpp that started this agent (see `cli._agent_home`)."""\n'
+        "import sys\n"
+        f"sys.path.insert(0, {str(package_parent)!r})\n"
+        "from skillpp.cli import main\n"
+        "raise SystemExit(main())\n", encoding="utf-8")
+    shim.chmod(0o755)
+    return home
+
+
 def _collect(work: Path, out_dir: Path) -> list[Path]:
     """Move what the agent wrote into the draft directory."""
     import shutil
@@ -225,10 +256,11 @@ def cmd_draft(args: argparse.Namespace) -> int:
 
     out_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
+    # The allowed-tools pattern names `python3 bin/skillpp`, and the prompt is
+    # `/skillpp-draft`: both resolve from the agent's home, installed or not.
+    home = None if args.cwd else _agent_home(entry.id)
+    where = args.cwd or home
     try:
-        # Default to the package root: the allowed-tools pattern names
-        # `python3 bin/skillpp`, which only resolves from there.
-        where = args.cwd or Path(__file__).resolve().parent.parent
         # Captured rather than streamed so the decline sentinel can be read out
         # of it; echoed below so nothing is hidden.
         # The agent runs `python3 bin/skillpp show <id>` with no --root, so
@@ -262,6 +294,9 @@ def cmd_draft(args: argparse.Namespace) -> int:
         print(f"\nThe agent did not finish within {args.timeout}s.",
               file=sys.stderr)
         return 1
+    finally:
+        if home:
+            shutil.rmtree(home, ignore_errors=True)
 
     renamed = Ledger(config).get(entry.id)
     if renamed and (renamed.title != entry.title or renamed.description):
@@ -381,8 +416,10 @@ def cmd_revise(args: argparse.Namespace) -> int:
     (history / f"SKILL.{stamp}.md").write_bytes(before)
     env = dict(os.environ, SKILLPP_INTERNAL="1", SKILLPP_ROOT=str(config.root),
                SKILLPP_DRAFT_DIR=str(work))
+    # The prompt says `python3 bin/skillpp show`; see `_agent_home`.
+    home = None if args.cwd else _agent_home(entry.id)
     try:
-        proc = subprocess.run(argv, cwd=args.cwd or Path(__file__).resolve().parent.parent,
+        proc = subprocess.run(argv, cwd=args.cwd or home,
                               timeout=args.timeout, capture_output=True, text=True,
                               env=env, stdin=subprocess.DEVNULL)
         said = (proc.stdout or "") + (proc.stderr or "")
@@ -399,6 +436,10 @@ def cmd_revise(args: argparse.Namespace) -> int:
                          f"timed out after {args.timeout}s")
         print(f"\nThe agent did not finish within {args.timeout}s.", file=sys.stderr)
         return 1
+    finally:
+        if home:
+            import shutil
+            shutil.rmtree(home, ignore_errors=True)
 
     if proc.returncode != 0:
         print(f"\nThe agent failed (exit {proc.returncode}).", file=sys.stderr)
@@ -563,11 +604,14 @@ def cmd_merge(args: argparse.Namespace) -> int:
     finally:
         save_cache(config, cache)
 
+    from .capture import projects_of
     pairs = []
     for i, a in enumerate(entries):
         for b in entries[i + 1:]:
             if a.status == STATUS_PROMOTED and b.status == STATUS_PROMOTED:
                 continue          # two skills: not ours to reconcile
+            if not projects_of(a) & projects_of(b):
+                continue          # candidates belong to one project each
             if has_conversation(a.turns) != has_conversation(b.turns):
                 continue          # conversation and steps are not on one scale
             score = cosine(vectors[a.id], vectors[b.id])
@@ -700,34 +744,6 @@ def cmd_fold_pending(args: argparse.Namespace) -> int:
         print(f"  {r['session'][:8]}  {what}")
     if not results:
         print("No pending sessions.")
-    return 0
-
-
-def cmd_keep(args: argparse.Namespace) -> int:
-    """Save the work so far as a candidate, without ending the session."""
-    from .capture import keep_current
-
-    config = Config(args.root)
-    config.ensure_dirs()
-    result = keep_current(config, args.session_id)
-    status = result.get("status")
-    if status == "no-session":
-        print("No session buffer to keep. Hooks record one as you work, so run "
-              "this from inside a Claude Code session.", file=sys.stderr)
-        return 1
-    if status == "nothing-yet":
-        print("Nothing recorded yet in this session.", file=sys.stderr)
-        return 1
-    episodes = result.get("episodes") or [result]
-    kept = [e for e in episodes if e.get("status") in ("created", "merged")]
-    if not kept:
-        print("Nothing substantial enough to keep — a workflow needs at least "
-              f"{config.min_episode_steps} steps.")
-        return 1
-    print(f"kept {len(kept)} candidate(s):")
-    for e in kept:
-        print(f"  {e.get('id')}  seen {e.get('occurrences', 1)}x")
-    print("Name and draft one with: skillpp draft <id> --apply")
     return 0
 
 
@@ -1104,6 +1120,70 @@ def _available_models(config: Config) -> tuple[list[str], str]:
     return [str(m.get("name", "")) for m in data.get("models", [])], ""
 
 
+def _has_model(models: list[str], want: str) -> bool:
+    """Does Ollama hold *want*? `nomic-embed-text` is listed as `…:latest`."""
+    return any(name == want or name.startswith(f"{want}:") for name in models)
+
+
+# What `install` tells a reader before a download, not what it relies on: the
+# pull reports its real size as it goes.
+_MODEL_SIZES = {"gemma4:e4b": "about 10 GB", "nomic-embed-text": "about 0.3 GB"}
+
+
+def _pull_model(config: Config, name: str) -> str:
+    """Download *name* through the running Ollama. Returns an error, or ""."""
+    import urllib.error
+    import urllib.request
+    request = urllib.request.Request(
+        f"{config.ollama_url}/api/pull",
+        data=json.dumps({"model": name, "stream": True}).encode("utf-8"),
+        headers={"Content-Type": "application/json"})
+    shown = -1
+    try:
+        with urllib.request.urlopen(request, timeout=120) as resp:
+            for raw in resp:
+                event = json.loads(raw.decode("utf-8") or "{}")
+                if event.get("error"):
+                    return str(event["error"])
+                total, done = event.get("total"), event.get("completed")
+                if total and done is not None:
+                    pct = int(done * 100 / total)
+                    if pct != shown:
+                        shown = pct
+                        print(f"\r  {name}: {pct:3d}%", end="", flush=True)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return str(exc)
+    print(f"\r  {name}: done   ")
+    return ""
+
+
+def _install_models(config: Config, apply: bool) -> None:
+    """The two local models detection needs: list them, and pull the missing
+    ones on `--apply`. Ollama itself is an app, installed by its own
+    installer, so a missing Ollama is explained, not fixed."""
+    models, err = _available_models(config)
+    wanted = (config.local_model, config.embed_model)
+    print(f"\nmodels (Ollama at {config.ollama_url}):")
+    if err:
+        print("  Ollama is not running. Install it from https://ollama.com "
+              "(or `brew install ollama`), start it,\n  then run this again to "
+              "download the models. The hooks work meanwhile; sessions wait "
+              "until it answers.")
+        return
+    missing = [w for w in wanted if not _has_model(models, w)]
+    for want in wanted:
+        state = ("present" if want not in missing else
+                 f"missing, {_MODEL_SIZES.get(want, 'a download')}"
+                 + ("" if apply else "; --apply downloads it"))
+        print(f"  {want:<18} {state}")
+    if apply:
+        for want in missing:
+            err = _pull_model(config, want)
+            if err:
+                print(f"\n  could not pull {want}: {err}\n"
+                      f"  try `ollama pull {want}` yourself", file=sys.stderr)
+
+
 def _waiting_sessions(config: Config) -> dict:
     """Session files grouped by what is happening to them."""
     from .capture import (_FOLD_LOCK_SECONDS, _is_pending, _lock_alive,
@@ -1169,7 +1249,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print(f"models    ollama   reachable at {config.ollama_url}")
         for want in (config.local_model, config.embed_model):
-            here = any(name == want or name.startswith(f"{want}:") for name in models)
+            here = _has_model(models, want)
             print(f"          {'':8} {want} {'✓' if here else '✗ not pulled'}")
 
     s = _waiting_sessions(config)
@@ -1424,8 +1504,8 @@ def cmd_bundle(args: argparse.Namespace) -> int:
 
     commands = []
     if args.with_commands:
-        commands_dir = Path(__file__).resolve().parent.parent / "commands"
-        commands = sorted(commands_dir.glob("*.md"))
+        from .install import COMMANDS, INTERACTIVE_COMMANDS
+        commands = [COMMANDS / name for name in INTERACTIVE_COMMANDS]
 
     result = build_plugin_bundle(
         [s.path for s in found], out, args.plugin_name, args.description,
@@ -1495,8 +1575,8 @@ def _usable_interpreter(python: str | None) -> str:
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    from .install import (apply_settings, hook_command, install_command_file,
-                          plan_removal, plan_settings)
+    from .install import (apply_settings, hook_command, install_command_files,
+                          plan_removal, plan_settings, remove_command_files)
 
     target = _settings_target(args)
     if target is None:
@@ -1527,18 +1607,25 @@ def cmd_install(args: argparse.Namespace) -> int:
     for change in changes:
         print(f"  - {change}")
 
+    models = not args.remove and not args.no_models
     if not args.apply:
         print("\nDry run. Nothing was written.")
         if not args.remove:
             print("Re-run with --apply to install, or copy the hooks block below "
                   "into your settings manually:\n")
             print(json.dumps({"hooks": merged.get("hooks", {})}, indent=2))
+        if models:
+            _install_models(Config(args.root), apply=False)
         return 0
 
     settled = ("no change", "nothing to remove", "skillpp is not wired")
     if all(change.endswith("no change") or change.startswith(settled[1:])
            for change in changes):
         print("\nAlready in that state. Nothing written.")
+        # The hooks can be in place while the models are not: a first
+        # install that ran with Ollama stopped.
+        if models:
+            _install_models(Config(args.root), apply=True)
         return 0
 
     if not args.remove:
@@ -1549,13 +1636,18 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     backup = apply_settings(settings_path, merged)
     print(f"\nwrote {settings_path}" + (f" (backup: {backup})" if backup else ""))
-    if args.remove:
-        return 0
     try:
-        dest = install_command_file(commands_dir)
-        print(f"wrote {dest}")
+        if args.remove:
+            for path in remove_command_files(commands_dir):
+                print(f"removed {path}")
+            return 0
+        for path in install_command_files(commands_dir):
+            print(f"wrote {path}")
     except OSError as exc:
-        print(f"could not install slash command: {exc}", file=sys.stderr)
+        print(f"could not update the slash commands: {exc}", file=sys.stderr)
+    # Last: a 10 GB download should not hold up the hooks.
+    if models:
+        _install_models(Config(args.root), apply=True)
     return 0
 
 
@@ -1625,11 +1717,6 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default: SKILLPP_MATCH_FLOOR)")
     p.set_defaults(func=cmd_merge)
 
-    p = sub.add_parser("keep",
-                       help="save the work so far as a candidate, without "
-                            "ending the session")
-    p.add_argument("--session-id", help="which session; defaults to the newest")
-    p.set_defaults(func=cmd_keep)
 
     p = sub.add_parser("fold-session",
                        help="bank one session that has ended; spawned by the "
@@ -1698,7 +1785,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_review)
 
-    p = sub.add_parser("dictate", help="describe a workflow instead of performing it")
+    p = sub.add_parser("dictate", help="(work in progress) describe a workflow instead of performing it")
     p.add_argument("--text", help="the description (reads stdin if omitted)")
     p.add_argument("--title")
     p.add_argument("--json", action="store_true")
@@ -1793,6 +1880,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="wire DIR/.claude/settings.json — this repo only "
                         "(default: the current directory)")
     p.add_argument("--settings", help="wire this settings file instead")
+    p.add_argument("--no-models", action="store_true",
+                   help="leave the Ollama models alone (by default --apply pulls missing ones)")
     p.add_argument("--remove", action="store_true",
                    help="take skillpp's hooks back out, leaving any others")
     p.add_argument("--python",

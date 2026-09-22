@@ -14,7 +14,7 @@ the fixtures and the tests all read a plain boolean afterwards.
 **It used to ask, once per tool call, whether the whole request was finished.**
 Measured across the eleven live sessions that answered 3 endings in 357 steps,
 declined a completed `git commit` it accepted in a neighbouring session, and
-missed `241955c7` entirely. `docs/benchmarks.md` lists what was ruled out —
+missed `241955c7` entirely. `docs/research/benchmarks.md` lists what was ruled out —
 four rewordings of the definition, the tool output, the completion report, two
 other phrasings, both polarities, three context sizes. The polarity test settled
 it: 0/24 endings asking "is the request done" against 17/24 asking "is more work
@@ -33,7 +33,7 @@ neither yes nor no — all return `None`, and `segment` treats `None` as "not an
 ending". A boundary detector that stops a developer's session to think is worse
 than one that misses a boundary.
 
-Measured on `gemma3n:e4b`, warm, on this prompt:
+Measured on `gemma3n:e4b`, the default until 2026-09, warm, on this prompt:
 
 * the one-word instruction is what buys the latency: 4.42s against **0.49s**,
   because generation length dominates, not prompt processing. The instruction in
@@ -45,13 +45,14 @@ Measured on `gemma3n:e4b`, warm, on this prompt:
   loading. `gemma3n:e4b` has no thinking capability at all and `think=True`
   returns HTTP 400. The flag stays because it is free and because it matters
   enormously on a model that *can* think: `local.ask` records 113.8s against
-  0.5s on `qwen3.5:9b` for the same one-word question.
+  0.5s on `qwen3.5:9b` for the same one-word question. The default is now
+  `gemma4:e4b`, which can think, so the flag is load-bearing.
 
 Framings tried and rejected, on a 13-case probe:
 
 * the step alone, no goal and no span — 4/13, and every one of its correct
   answers was a "no". It answered "no" to everything, which is exactly what
-  `docs/benchmarks.md` recorded the first time this was attempted.
+  `docs/research/benchmarks.md` recorded the first time this was attempted.
 * the same, plus the goal and the steps behind it — also 4/13, same shape. The
   context alone changes nothing.
 * adding what an *ending is* — 11/13. This is the whole difference.
@@ -141,9 +142,11 @@ REPLY_BEFORE_CHARS = 0
 REPLY_AFTER_CHARS = 0
 STEP_OUTPUT_CHARS = 0
 
-# Whether the judge may reason before answering. Off: it was always asked for
-# one word, and `gemma3n` cannot think at all. Affordable to measure now that
-# the judge runs detached at session end rather than inside a hook.
+# Whether the judge may reason before answering. Off: it is asked for one word.
+# `gemma4:e4b` can think, and with thinking on it caught both real boundaries
+# on the private set but cut three single tasks, at about ten times the cost
+# per gap (docs/research/benchmarks.md). Affordable to measure now that the
+# judge runs detached at session end rather than inside a hook.
 #
 # Thinking needs room of its own. `local._num_ctx` reserves 512 tokens past the
 # prompt, and a model that writes more than that before answering has its
@@ -206,7 +209,7 @@ def render_step(step: dict) -> str:
     # is done while reading twenty such sentences. The phrasing that makes a
     # summary readable is the phrasing that reads as completion.
     #
-    # See `docs/benchmarks.md`. The summary stays on the step for readers and
+    # See `docs/research/benchmarks.md`. The summary stays on the step for readers and
     # later stages; it just does not feed this prompt.
     tool = str(step.get("tool") or "")
     payload = {k: v for k, v in (step.get("input") or {}).items()
@@ -466,7 +469,7 @@ SUMMARY_CHARS = 300
 
 # Whether the judge's context renders steps as their summaries instead of raw
 # commands. Off: measured 1 fixed / 6 broken against 3 fixed / 5 broken, every
-# session gaining episodes. See `docs/benchmarks.md`. The benchmarks flip it.
+# session gaining episodes. See `docs/research/benchmarks.md`. The benchmarks flip it.
 JUDGE_READS_SUMMARY = False
 
 

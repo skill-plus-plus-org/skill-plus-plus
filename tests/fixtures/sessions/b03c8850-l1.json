@@ -1,0 +1,81 @@
+{
+  "tag": "b03c8850",
+  "name": "l1",
+  "session": "L1",
+  "kind": "code",
+  "surface": "cli",
+  "checks": [
+    "detect.look-only"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T13:17:00.814Z",
+  "procedure": "read textkit/slugify.py and explain it, changing nothing",
+  "truth": {
+    "episodes": 0,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [],
+    "subjects": [],
+    "boundary_after": [],
+    "roles": [
+      "explore",
+      "aside",
+      "aside"
+    ]
+  },
+  "why": "Recorded from catalogue.json (L1, code, cli), truth fixed before recording. Only reading: nothing to bank.",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 1,
+    "prompts": 3,
+    "failed": 0
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Read textkit/slugify.py and explain in three sentences how it works. Don't change or run anything."
+      },
+      "failed": false,
+      "reply": "Lowercase input, iterate chars. Allowed a–z/0–9 append direct; space or hyphen collapse to single `-` (skipped at start and when prior was hyphen). Trailing `-` stripped before return; other chars (punctuation, unicode) dropped silent."
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/L1/textkit/slugify.py"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 \"\"\"Turn a title into a URL slug.\"\"\" 2 3 ALLOWED = \"abcdefghijklmnopqrstuvwxyz0123456789\" 4 5 6 def slugify(text): 7 \"\"\"Lowercase the text, keep letters and digits, join words with hyphens.\"\"\" 8 result = \"\" 9 previous_was_hyphen = False 10 for char in text.lower(): 11 if char in ALLOWED: 12 result = result + char 13 previous_was_hyphen = False 14 elif char == \" \" or char == \"-\": 15 if not previou",
+      "closing_note": "Same. Empty `\"\"`. Punctuation not in `ALLOWED`, not space/hyphen → skipped. `result` never grow. Return `\"\"`.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "What would it return for an empty string?"
+      },
+      "failed": false,
+      "reply": "Empty string. Loop no iter, `result` stay `\"\"`, `endswith(\"-\")` false, return `\"\"`."
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "And for a string of only punctuation?"
+      },
+      "failed": false,
+      "reply": "Same. Empty `\"\"`. Punctuation not in `ALLOWED`, not space/hyphen → skipped. `result` never grow. Return `\"\"`."
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 0,
+    "answered": 0,
+    "replayed": "2026-09-22"
+  }
+}

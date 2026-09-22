@@ -19,6 +19,7 @@ import io
 import json
 import math
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -53,7 +54,7 @@ _SAFE_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 # Bookkeeping beside a draft, never part of the skill. `agent.log` is the drafting
 # agent's transcript: it names local paths and it is not a file anyone who
 # installs the skill should receive.
-_NOT_SKILL_FILES = ("status.json", "downloaded.json", "agent.log")
+_NOT_SKILL_FILES = ("status.json", "downloaded.json", "installed.json", "agent.log")
 
 _jobs: dict[str, threading.Thread] = {}
 # Which server process started a run. A run marked running by a server that is
@@ -395,6 +396,27 @@ def summarise(config: Config, entry_id: str) -> dict:
     return {"ok": True, "summary": text}
 
 
+def _projects(entry) -> list[str]:
+    """The projects an entry belongs to: one, or several for an entry banked
+    before candidates were bound to a project (`capture.projects_of`)."""
+    from .capture import projects_of
+    return sorted(projects_of(entry))
+
+
+def project_list(rows: list[dict], drafts: list[dict]) -> list[dict]:
+    """Every project on the page, for the switcher: its folder name, its path,
+    and how many candidates and drafts it holds. "No project" last."""
+    counts: dict[str, dict] = {}
+    for kind, items in (("candidates", rows), ("drafts", drafts)):
+        for item in items:
+            for key in item["projects"]:
+                cell = counts.setdefault(key, {"candidates": 0, "drafts": 0})
+                cell[kind] += 1
+    return [{"key": key, "name": Path(key).name if key else "No project", "path": key, **cell}
+            for key, cell in sorted(counts.items(),
+                                    key=lambda kv: (kv[0] == "", Path(kv[0]).name.lower(), kv[0]))]
+
+
 def collect_state(config: Config) -> dict:
     """The rows the page lists. Reads files only: no model, no agent.
 
@@ -415,6 +437,7 @@ def collect_state(config: Config) -> dict:
                      "seen": seen_runs(entry),
                      "outline": step_outline(entry.steps),
                      "groups": step_groups(entry),
+                     "projects": _projects(entry),
                      "summary": _cached_summary(summaries, entry)})
     # Expired last of all. Otherwise most-recognized first; at the same count,
     # the one closest to expiring first, then rows that never expire.
@@ -423,8 +446,9 @@ def collect_state(config: Config) -> dict:
                              r["days_left"] is None,
                              r["days_left"] if r["days_left"] is not None else 0,
                              (r["title"] or "").lower()))
+    drafts = list_drafts(config)
     return {"threshold": threshold, "ttl": config.candidate_ttl_days,
-            "rows": rows, "drafts": list_drafts(config)}
+            "rows": rows, "drafts": drafts, "projects": project_list(rows, drafts)}
 
 
 def seen_runs(entry) -> list[dict]:
@@ -516,7 +540,7 @@ def split_open_questions(text: str) -> tuple[list[str], str]:
     """The draft's `## Open questions` and the SKILL.md without that section.
 
     The drafting agent cannot ask, so it writes what it could not tell from the
-    runs there (`commands/skillpp-draft.md`, step 5). Those are gaps in the
+    runs there (`skillpp/commands/skillpp-draft.md`, *Ask through open questions*). Those are gaps in the
     skill, not part of it: the page shows them as answer fields, hides the
     section from the rendered draft, and refuses the download while any remain.
     The section ends at the next heading or horizontal rule.
@@ -572,14 +596,31 @@ def _downloaded_at(config: Config, entry_id: str, skill_md: Path) -> str:
     return record.get("at", "") if record.get("sha256") == _skill_digest(skill_md) else ""
 
 
+def _install_fields(config: Config, entry, skill_md: Path) -> dict:
+    """What the card shows about installing: where it went, whether the draft
+    changed since (a revision to pass on), and the project it would go to."""
+    from .capture import project_of
+    record = _install_record(config, entry.id)
+    home = project_of(entry.projects[0]) if entry.projects else ""
+    return {"installed": record.get("path", "") if entry.skill_path else "",
+            "installed_target": record.get("target", ""),
+            "install_stale": bool(record) and record.get("files", {}).get("SKILL.md")
+                             not in (None, _skill_digest(skill_md)),
+            "project_name": Path(home).name if home else ""}
+
+
 def list_drafts(config: Config) -> list[dict]:
     """Every finished draft, with the SKILL.md text to review."""
+    from datetime import datetime, timezone
     drafts = []
     for entry in Ledger(config).all():
         state = row_state(config, entry)
-        if state["state"] not in ("drafted", "revising"):
+        if state["state"] not in ("drafted", "revising", "installed"):
             continue
-        skill_md = Path(state["path"])
+        skill_md = (_drafted_skill(config, entry) if state["state"] == "installed"
+                    else Path(state["path"]))
+        if skill_md is None:
+            continue                 # installed by hand, with no draft here
         text = skill_md.read_text(encoding="utf-8")
         front = parse_frontmatter(text)
         questions, shown = split_open_questions(text)
@@ -594,9 +635,42 @@ def list_drafts(config: Config) -> list[dict]:
             "revising": state["state"] == "revising",
             "message": state.get("message", ""),
             "downloaded_at": _downloaded_at(config, entry.id, skill_md),
+            # When SKILL.md was last written, by the draft or a revision. Drafts
+            # are listed newest first: the one just asked for is the one looked
+            # for, and a name alone did not tell drafts apart.
+            "drafted_at": datetime.fromtimestamp(
+                skill_md.stat().st_mtime, timezone.utc).isoformat(),
+            "projects": _projects(entry),
+            **_install_fields(config, entry, skill_md),
         })
-    drafts.sort(key=lambda d: d["name"].lower())
+    drafts.sort(key=lambda d: d["drafted_at"], reverse=True)
     return drafts
+
+
+def _drafted_skill(config: Config, entry) -> Path | None:
+    """The draft's SKILL.md, wherever its row stands (installed included)."""
+    found = sorted(p for p in _draft_dir(config, entry.id).rglob("SKILL.md")
+                   if ".revisions" not in p.parts)
+    return found[0] if found else None
+
+
+def _shippable(config: Config, entry_id: str):
+    """(entry, SKILL.md) for a draft that may leave the page, or (None, why).
+
+    One gate for the download and the install: a finished draft, and no open
+    question left. The id is looked up, never joined into a path.
+    """
+    entry = Ledger(config).get(entry_id)
+    if not entry:
+        return None, "no such entry"
+    if row_state(config, entry)["state"] not in ("drafted", "installed"):
+        return None, "there is no finished draft"
+    skill_md = _drafted_skill(config, entry)
+    if skill_md is None:
+        return None, "there is no finished draft"
+    if split_open_questions(skill_md.read_text(encoding="utf-8"))[0]:
+        return None, "answer the open questions first"
+    return (entry, skill_md), ""
 
 
 def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
@@ -606,12 +680,10 @@ def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
     Only a ledger entry with a finished draft is served; the id is looked up,
     never joined into a path from the request.
     """
-    entry = Ledger(config).get(entry_id)
-    if not entry or row_state(config, entry)["state"] != "drafted":
+    got, _ = _shippable(config, entry_id)
+    if not got:
         return None
-    skill_md = Path(row_state(config, entry)["path"])
-    if split_open_questions(skill_md.read_text(encoding="utf-8"))[0]:
-        return None                  # open questions first; see split_open_questions
+    entry, skill_md = got
     root = _draft_dir(config, entry.id)
     name = _skill_name(entry, skill_md)
     buffer = io.BytesIO()
@@ -619,6 +691,115 @@ def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
         for path in _draft_files(config, entry.id):
             archive.write(path, f"{name}/{path.relative_to(root)}")
     return f"{name}.zip", buffer.getvalue()
+
+
+def _install_record(config: Config, entry_id: str) -> dict:
+    try:
+        return json.loads((_draft_dir(config, entry_id) / "installed.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def install_skill(config: Config, entry_id: str, target: str,
+                  personal_dir: Path | None = None) -> dict:
+    """Copy a finished draft into a skills folder and mark it installed.
+
+    `project` is `<repo>/.claude/skills/<name>/`, the repo the candidate belongs
+    to: committed there, it reaches everyone who works in the repo. `personal`
+    is `~/.claude/skills/` (or the folder `skillpp web --skills-dir` names).
+    The folder is built from the ledger only, never from the request. A folder
+    of the same name that this draft did not install is left alone; our own is
+    replaced, which is how a revision reaches an installed skill.
+    """
+    from datetime import datetime, timezone
+    from .capture import project_of
+    if target not in ("project", "personal"):
+        return {"ok": False, "error": "install where? project or personal"}
+    got, why = _shippable(config, entry_id)
+    if not got:
+        return {"ok": False, "error": why}
+    entry, skill_md = got
+    if target == "project":
+        home = project_of(entry.projects[0]) if entry.projects else ""
+        if not home:
+            return {"ok": False, "error": "this candidate was recorded without a project "
+                                          "folder; install it just for you"}
+        base = Path(home) / ".claude" / "skills"
+    else:
+        base = Path(personal_dir or Path.home() / ".claude" / "skills").expanduser()
+    dest = base / _skill_name(entry, skill_md)
+
+    previous = _install_record(config, entry.id)
+    if previous and Path(previous["path"]) != dest:
+        return {"ok": False, "error": f"already installed in {previous['path']}; uninstall it first"}
+    if dest.exists() and not previous:
+        return {"ok": False, "error": f"{dest} already exists and was not installed from "
+                                      f"this draft; it is left alone"}
+    if previous:
+        changed = _changed_since_install(previous)
+        if changed:
+            return {"ok": False, "error": f"{changed[0]} was changed after it was installed; "
+                                          f"keep your edits or remove the folder by hand"}
+        _remove_installed(previous)
+
+    root = _draft_dir(config, entry.id)
+    files = {}
+    for path in _draft_files(config, entry.id):
+        rel = path.relative_to(root)
+        (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, dest / rel)
+        files[str(rel)] = _skill_digest(dest / rel)
+    (root / "installed.json").write_text(json.dumps({
+        "path": str(dest), "target": target, "files": files,
+        "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}, indent=1))
+    ledger = Ledger(config)
+    entry.skill_path = str(dest / "SKILL.md")
+    ledger.save(entry)
+    return {"ok": True, "path": str(dest)}
+
+
+def _changed_since_install(record: dict) -> list[str]:
+    dest = Path(record["path"])
+    return [rel for rel, digest in record.get("files", {}).items()
+            if (dest / rel).exists() and _skill_digest(dest / rel) != digest]
+
+
+def _remove_installed(record: dict) -> None:
+    """Remove the files an install wrote, and the folders it leaves empty.
+    Anything else in the folder was put there by someone else and stays."""
+    dest = Path(record["path"])
+    for rel in record.get("files", {}):
+        try:
+            (dest / rel).unlink()
+        except FileNotFoundError:
+            pass
+    # The skills folder too, if the install left it empty; nothing above it.
+    for folder in sorted({(dest / rel).parent for rel in record.get("files", {})} | {dest, dest.parent},
+                         key=lambda p: len(p.parts), reverse=True):
+        try:
+            folder.rmdir()
+        except OSError:
+            pass                   # not empty: someone else's files are in it
+
+
+def uninstall_skill(config: Config, entry_id: str) -> dict:
+    """Take out what `install_skill` put in, if nobody has changed it since."""
+    entry = Ledger(config).get(entry_id)
+    if not entry:
+        return {"ok": False, "error": "no such entry"}
+    record = _install_record(config, entry.id)
+    if not record:
+        return {"ok": False, "error": "it was not installed from this page"}
+    changed = _changed_since_install(record)
+    if changed:
+        return {"ok": False, "error": f"{changed[0]} was changed after it was installed; "
+                                      f"remove it by hand"}
+    _remove_installed(record)
+    (_draft_dir(config, entry.id) / "installed.json").unlink()
+    ledger = Ledger(config)
+    entry.skill_path = ""
+    ledger.save(entry)
+    return {"ok": True, "path": record["path"]}
 
 
 def _decide(config: Config, entry_id: str, command: str) -> dict:
@@ -776,8 +957,11 @@ def answer_questions(config: Config, entry_id: str, answers: list) -> dict:
     return revise(config, entry_id, instruction, limit=MAX_ANSWERS + 1000)
 
 
-def make_handler(config: Config):
+def make_handler(config: Config, skills_dir: Path | None = None):
     actions = {
+        "/api/install": lambda p: install_skill(config, str(p.get("id", "")),
+                                                str(p.get("target", "")), skills_dir),
+        "/api/uninstall": lambda p: uninstall_skill(config, str(p.get("id", ""))),
         "/api/accept": lambda p: accept(config, str(p.get("id", ""))),
         "/api/summary": lambda p: summarise(config, str(p.get("id", ""))),
         "/api/transcript": lambda p: transcript(config, str(p.get("session", ""))),
@@ -803,7 +987,44 @@ def make_handler(config: Config):
             self.end_headers()
             self.wfile.write(raw)
 
+        def _refused(self, post: bool = False) -> bool:
+            """Turn away a request that another web page made, and say so.
+
+            Loopback keeps other machines out, not other pages in the same
+            browser. Any site the developer has open could POST here, and a
+            POST starts `claude -p` with Write and Edit — so:
+
+            - `Host` must name this server. A page on a domain that resolves
+              to 127.0.0.1 (DNS rebinding) is same-origin as far as the
+              browser can tell, and only its `Host` gives it away.
+            - A POST must be JSON. Browsers send `text/plain` and form bodies
+              cross-site without asking; a JSON body makes them ask first,
+              and nothing here answers that preflight.
+            - A POST's `Origin`, when the browser sends one, must be this page.
+
+            Tools that send neither header, like `curl` or the tests, pass.
+            """
+            port = self.server.server_address[1]
+            ours = {f"127.0.0.1:{port}", f"localhost:{port}"}
+            host = self.headers.get("Host")
+            if host is not None and host not in ours:
+                self._send(403, json.dumps({"error": "unknown host"}))
+                return True
+            if not post:
+                return False
+            origin = self.headers.get("Origin")
+            if origin is not None and origin not in {f"http://{h}" for h in ours}:
+                self._send(403, json.dumps({"error": "cross-origin request"}))
+                return True
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip()
+            if ctype != "application/json":
+                self._send(415, json.dumps({"error": "send application/json"}))
+                return True
+            return False
+
         def do_GET(self):
+            if self._refused():
+                return
             url = urlparse(self.path)
             if url.path in ("/", "/index.html"):
                 return self._send(200, PAGE, "text/html; charset=utf-8")
@@ -832,6 +1053,8 @@ def make_handler(config: Config):
             self._send(404, json.dumps({"error": "not found"}))
 
         def do_POST(self):
+            if self._refused(post=True):
+                return
             length = int(self.headers.get("Content-Length") or 0)
             try:
                 payload = json.loads(self.rfile.read(length) or b"{}")
@@ -848,7 +1071,7 @@ def make_handler(config: Config):
 def serve(config: Config, skills_dir: Path | None = None, port: int = 8765,
           open_browser: bool = True) -> ThreadingHTTPServer:
     """Serve on loopback only. Never bind anywhere else: there is no auth."""
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(config))
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(config, skills_dir))
     if open_browser:
         threading.Thread(target=webbrowser.open, daemon=True,
                          args=[f"http://127.0.0.1:{httpd.server_port}/"]).start()
@@ -876,6 +1099,8 @@ PAGE = r"""<!doctype html>
    padding:14px 24px;border-bottom:1px solid var(--line);background:var(--panel);
    font-size:12px;color:var(--dim)}
  header b{font:600 14px var(--mono);color:var(--fg)}
+ header select{font:12px var(--mono);color:var(--fg);background:var(--bg);
+   border:1px solid var(--line);border-radius:6px;padding:4px 8px;max-width:260px}
  main{max-width:1000px;margin:0 auto;padding:24px 16px 48px}
  .row{display:flex;align-items:center;gap:16px;padding:14px 16px;margin-bottom:8px;
    background:var(--panel);border:1px solid var(--line);border-radius:8px}
@@ -903,6 +1128,10 @@ PAGE = r"""<!doctype html>
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
  .cand.ready{border-left:3px solid #fbbf24;background:linear-gradient(90deg,rgba(251,191,36,.07),var(--panel) 40%)}
  .cand.accepted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
+ .new{font:600 10.5px var(--mono);color:var(--go);white-space:nowrap}
+ .new::before{content:"\25CF";margin-right:4px}
+ nav .new{margin-left:6px}
+ .draft.fresh{border-color:var(--goline)}
  .badge{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;
    border-radius:4px;white-space:nowrap;border:1px solid}
  .badge.ready{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.1)}
@@ -913,6 +1142,10 @@ PAGE = r"""<!doctype html>
  .draft.downloaded{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.07),var(--panel) 40%)}
  .badge.review{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .badge.downloaded{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
+ .badge.installed{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
+ .draft.installed{border-left:3px solid var(--ok)}
+ .where{font:12px var(--mono);color:var(--ok);white-space:nowrap;max-width:220px;
+   overflow:hidden;text-overflow:ellipsis}
  .badge.declined{color:var(--no);border-color:var(--noline);background:var(--nobg)}
  .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
  .clock:empty{display:none}
@@ -985,6 +1218,7 @@ PAGE = r"""<!doctype html>
  .chev{color:var(--muted);font:12px var(--mono);width:12px;transition:transform .15s}
  .draft.open .chev{transform:rotate(90deg)}
  .draft .desc{padding:0 16px 12px 44px;color:var(--dim);font-size:12.5px;margin:0}
+ .draft .ago{color:var(--muted);font-size:12px;white-space:nowrap}
  .draft .body{display:none;border-top:1px solid var(--line);padding:14px 16px}
  .draft.open .body{display:block}
  .md{color:#cbd2e1;font-size:13.5px;line-height:1.6;max-width:760px}
@@ -1034,20 +1268,28 @@ PAGE = r"""<!doctype html>
  .blocked{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;color:var(--muted);
    border:1px solid var(--line);white-space:nowrap;cursor:not-allowed}
  a.download{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;text-decoration:none;
-   color:var(--ok);border:1px solid var(--okline);background:var(--okbg);white-space:nowrap}
+   color:var(--dim);border:1px solid var(--line);white-space:nowrap}
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
 </style></head><body>
 <header><span style="display:flex;align-items:center;gap:18px"><b>skillpp</b>
+<select id="project" aria-label="Project" hidden></select>
 <nav id="nav"></nav></span><span id="where"></span></header>
 <main id="list"></main>
 <script>
 let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
 // A candidate with a draft is reviewed in the Drafts tab, not listed here.
-const inDrafts = r => ["drafted", "revising"].includes(r.state);
+// A draft's row lives in the Drafts tab, installed ones too; a skill installed
+// by hand, with no draft here, stays on the Candidates tab.
+const inDrafts = r => ["drafted", "revising"].includes(r.state)
+  || (r.state === "installed" && (ALL || S).drafts.some(d => d.id === r.id));
 let view = "candidates", open = new Set(), writing = new Set(), drafts = {}, answers = {};
 let openRows = new Set(), summarising = new Set(), summaryError = {};
 let noting = new Set(), notes = {};
 let openRuns = new Set(), convos = {}, convoError = {}, openReqs = new Set();
+// Every POST says it is JSON: the server refuses anything else, because a
+// body without that header is one another site could send cross-site.
+const post = (path, body) => fetch(path, {method: "POST",
+  headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -1093,17 +1335,72 @@ async function startDraft(id){
   busy.add(id); render();
   try {
     const note = (notes[id] || "").trim();
-    const r = await (await fetch("/api/create", {method:"POST", body: JSON.stringify({id, note})})).json();
+    const r = await (await post("/api/create", {id, note})).json();
     if(!r.ok){ alert(r.error || "failed"); return; }
     // The note stays in `notes`, so a retry after a failed run starts from it.
     noting.delete(id);
   } finally { busy.delete(id); await load(); }
 }
 
+// Which project the page shows, remembered in this browser: `null` is every
+// project, "" the entries that have none. A candidate belongs to one project
+// (`capture.project_of`); older ones may list several and show under each.
+const PROJECT_KEY = "skillpp.project";
+let ALL = null, project = null;
+try { const v = localStorage.getItem(PROJECT_KEY); if (v !== null) project = JSON.parse(v); } catch (e) {}
+const inProject = x => project === null || (x.projects || [""]).includes(project);
+function applyProject(){
+  S = {...ALL, rows: ALL.rows.filter(inProject), drafts: ALL.drafts.filter(inProject)};
+}
+function renderProjects(){
+  const sel = document.getElementById("project");
+  const list = ALL.projects || [];
+  if (project !== null && !list.some(p => p.key === project)) project = null;   // gone since
+  sel.hidden = list.length < 2;          // one project: nothing to choose
+  sel.innerHTML = `<option value="*">All projects</option>` + list.map(p =>
+    `<option value="${esc(p.key)}" title="${esc(p.path || "sessions recorded without a folder")}">${esc(p.name)} (${p.candidates})</option>`).join("");
+  sel.value = project === null ? "*" : project;
+  sel.onchange = () => {
+    project = sel.value === "*" ? null : sel.value;
+    try { localStorage.setItem(PROJECT_KEY, JSON.stringify(project)); } catch (e) {}
+    applyProject(); render();
+  };
+}
+
+// Which drafts this viewer has looked at, per version: a finished revision is
+// news again. Kept in the browser, because it is one viewer's attention and
+// nothing the ledger needs. On a first visit what already exists is not news.
+const SEEN_KEY = "skillpp.seen-drafts";
+let seen = null;
+const stamp = iso => Date.parse(iso) || 0;
+function saveSeen(){ try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch(e){} }
+function syncSeen(){
+  if(seen) return;
+  try { seen = JSON.parse(localStorage.getItem(SEEN_KEY)); } catch(e){ seen = null; }
+  if(seen && seen.cards) return;
+  seen = {cards: {}, tab: 0};
+  (ALL || S).drafts.forEach(d => { seen.cards[d.id] = d.drafted_at; seen.tab = Math.max(seen.tab, stamp(d.drafted_at)); });
+  saveSeen();
+}
+const isNew = d => !d.revising && seen && seen.cards[d.id] !== d.drafted_at;
+const newSinceTab = () => S.drafts.filter(d => isNew(d) && stamp(d.drafted_at) > seen.tab).length;
+function markTabSeen(){
+  const top = Math.max(seen.tab, ...S.drafts.map(d => stamp(d.drafted_at)));
+  if(top !== seen.tab){ seen.tab = top; saveSeen(); }
+}
+function markCardSeen(id){
+  const d = S.drafts.find(x => x.id === id);
+  if(d && seen.cards[id] !== d.drafted_at){ seen.cards[id] = d.drafted_at; saveSeen(); }
+}
+
 function renderNav(){
   const nav = document.getElementById("nav");
   nav.innerHTML = [["candidates","Candidates",S.rows.filter(r => !inDrafts(r)).length],["drafts","Drafts",S.drafts.length]]
-    .map(([k,l,n]) => `<button data-view="${k}" aria-selected="${view===k}">${l} (${n})</button>`).join("");
+    .map(([k,l,n]) => {
+      const fresh = k === "drafts" ? newSinceTab() : 0;
+      return `<button data-view="${k}" aria-selected="${view===k}">${l} (${n})${fresh
+        ? `<span class="new" title="${fresh} new draft${fresh===1?"":"s"} since you last looked">${fresh} new</span>` : ""}</button>`;
+    }).join("");
   nav.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { view = b.dataset.view; render(); });
 }
 
@@ -1219,14 +1516,27 @@ function reviseBlock(d){
 }
 
 function renderDrafts(list){
-  const card = d => `<div class="draft ${d.downloaded_at ? "downloaded" : "review"} ${open.has(d.id)?"open":""}">
+  // Install is the way a skill reaches its project: into the repo's
+  // .claude/skills/, where committing it shares it. Download stays for
+  // anywhere else.
+  const installActs = d => d.installed
+    ? `<span class="where" title="${esc(d.installed)}">${d.installed_target === "project" ? "in " + esc(d.project_name) : "for you"}</span>`
+      + (d.install_stale ? `<button class="create" data-install="${esc(d.id)}" data-target="${esc(d.installed_target)}" title="The draft changed since it was installed">Update</button>` : "")
+      + `<button data-uninstall="${esc(d.id)}" data-where="${esc(d.installed)}">Uninstall</button>`
+    : (d.project_name ? `<button class="create" data-install="${esc(d.id)}" data-target="project" title="Into the repo's .claude/skills/. Commit it to share it with everyone in the repo.">Install in ${esc(d.project_name)}</button>` : "")
+      + `<button data-install="${esc(d.id)}" data-target="personal" title="Into ~/.claude/skills/, only for you">${d.project_name ? "Just for me" : "Install for me"}</button>`
+      + `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">Download</a>`;
+  const kind = d => d.installed ? "installed" : d.downloaded_at ? "downloaded" : "review";
+  const card = d => `<div class="draft ${kind(d)} ${open.has(d.id)?"open":""} ${isNew(d)?"fresh":""}">
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
-        <span class="badge ${d.downloaded_at ? "downloaded" : "review"}">${d.downloaded_at ? "Downloaded" : "To review"}</span>
+        ${isNew(d) ? `<span class="new" title="Written since you last opened it">New</span>` : ""}
+        <span class="ago" title="${esc(when(d.drafted_at))}">${d.revising ? "revising" : "drafted " + ago(d.drafted_at)}</span>
+        <span class="badge ${kind(d)}">${{installed: "Installed", downloaded: "Downloaded", review: "To review"}[kind(d)]}</span>
         <span class="acts">${d.questions.length
           ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
-          : `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">${d.downloaded_at ? "Download again" : "Download skill"}</a>`}</span>
+          : installActs(d)}</span>
       </div>
       <p class="desc">${esc(d.description)}</p>
       <div class="body">
@@ -1235,13 +1545,29 @@ function renderDrafts(list){
         <div class="md">${md(d.body)}</div>
         ${reviseBlock(d)}
       </div></div>`;
-  const toReview = S.drafts.filter(d => !d.downloaded_at), downloaded = S.drafts.filter(d => d.downloaded_at);
-  list.innerHTML = S.drafts.length ? `
-    <div class="section"><h2>To review</h2><span>Drafts you have not downloaded yet.</span></div>
-    ${toReview.length ? toReview.map(card).join("") : `<p class="empty">Everything has been downloaded.</p>`}
-    <div class="section"><h2>Downloaded</h2><span>Drafts you downloaded. Revising one moves it back to review.</span></div>
-    ${downloaded.length ? downloaded.map(card).join("") : `<p class="empty">Nothing downloaded yet.</p>`}`
+  const toReview = S.drafts.filter(d => kind(d) === "review");
+  const installed = S.drafts.filter(d => kind(d) === "installed");
+  const downloaded = S.drafts.filter(d => kind(d) === "downloaded");
+  const part = (title, note, items, none) => `<div class="section"><h2>${title}</h2><span>${note}</span></div>
+    ${items.length ? items.map(card).join("") : `<p class="empty">${none}</p>`}`;
+  list.innerHTML = S.drafts.length
+    ? part("To review", "Drafts not installed or downloaded yet.", toReview, "Nothing waiting.")
+      + part("Installed", "In a skills folder, where your agent loads them. A revision can be passed on with Update.", installed, "Nothing installed yet.")
+      + (downloaded.length ? part("Downloaded", "Downloaded but not installed from here.", downloaded, "") : "")
     : `<p class="empty">No drafts yet. Promote a candidate, then Draft Skill.</p>`;
+  list.querySelectorAll("[data-install]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const r = await (await post("/api/install", {id: b.dataset.install, target: b.dataset.target})).json();
+    if (!r.ok) { alert(r.error || "install failed"); b.disabled = false; return; }
+    await load();
+  });
+  list.querySelectorAll("[data-uninstall]").forEach(b => b.onclick = async () => {
+    if (!confirm(`Remove the skill installed in\n${b.dataset.where}?\n\nOnly the files installed from this page are removed.`)) return;
+    b.disabled = true;
+    const r = await (await post("/api/uninstall", {id: b.dataset.uninstall})).json();
+    if (!r.ok) { alert(r.error || "uninstall failed"); b.disabled = false; return; }
+    await load();
+  });
   list.querySelectorAll("a.download").forEach(a => a.addEventListener("click", () => setTimeout(load, 1000)));
   list.querySelectorAll("[data-revise-open]").forEach(b => b.onclick = () => {
     writing.add(b.dataset.reviseOpen); render();
@@ -1261,7 +1587,7 @@ function renderDrafts(list){
       .filter(a => a.answer);
     if(!payload.length){ alert("Answer at least one question."); return; }
     b.disabled = true;
-    const r = await (await fetch("/api/answer", {method:"POST", body: JSON.stringify({id, answers: payload})})).json();
+    const r = await (await post("/api/answer", {id, answers: payload})).json();
     if(!r.ok){ alert(r.error || "failed"); b.disabled = false; return; }
     delete answers[id]; await load();
   });
@@ -1269,7 +1595,7 @@ function renderDrafts(list){
     const id = b.dataset.reviseSend, instruction = (drafts[id] || "").trim();
     if(!instruction) return;
     b.disabled = true;
-    const r = await (await fetch("/api/revise", {method:"POST", body: JSON.stringify({id, instruction})})).json();
+    const r = await (await post("/api/revise", {id, instruction})).json();
     if(!r.ok){ alert(r.error || "failed"); b.disabled = false; return; }
     writing.delete(id); delete drafts[id]; await load();
   });
@@ -1278,6 +1604,9 @@ function renderDrafts(list){
     const id = h.dataset.toggle;
     open.has(id) ? open.delete(id) : open.add(id);
     h.parentElement.classList.toggle("open");
+    markCardSeen(id);
+    h.parentElement.classList.remove("fresh");
+    h.querySelector(".new")?.remove();
   });
 }
 
@@ -1322,6 +1651,17 @@ function requestItem(r, g, i){
 // Where the work actually happened. The session id is the link: clicking it
 // reads Claude Code's own transcript and shows the conversation, because the
 // candidate only keeps the turns of the run that created it.
+// "drafted 5 min ago": enough to find the draft just asked for.
+function ago(iso){
+  const s = (Date.now() - new Date(iso)) / 1000;
+  if(isNaN(s)) return "";
+  if(s < 60) return "just now";
+  if(s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if(s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  const days = Math.floor(s / 86400);
+  return days === 1 ? "yesterday" : `${days} days ago`;
+}
+
 function when(iso){
   if(!iso) return "";
   const d = new Date(iso);
@@ -1354,8 +1694,7 @@ function renderConvo(c){
 async function fetchConvo(session){
   if(convos[session] || convoError[session]) return;
   try {
-    const res = await (await fetch("/api/transcript", {method:"POST",
-                                                       body: JSON.stringify({session})})).json();
+    const res = await (await post("/api/transcript", {session})).json();
     if(res.ok){ convos[session] = res; } else { convoError[session] = res.error || "failed"; }
   } catch(e){ convoError[session] = String(e); }
   if(view === "candidates") render();
@@ -1366,7 +1705,7 @@ async function fetchSummary(id){
   if(!r || r.summary || summarising.has(id) || summaryError[id]) return;
   summarising.add(id);
   try {
-    const res = await (await fetch("/api/summary", {method:"POST", body: JSON.stringify({id})})).json();
+    const res = await (await post("/api/summary", {id})).json();
     const row = S.rows.find(x => x.id === id);
     if(res.ok){ if(row) row.summary = res.summary; } else { summaryError[id] = res.error || "failed"; }
   } catch(e){ summaryError[id] = String(e); }
@@ -1377,6 +1716,8 @@ async function fetchSummary(id){
 // list, which took the cursor out of whatever box was being typed in — a note
 // for the next draft, an answer, a revision. Put it back where it was.
 function render(){
+  syncSeen();
+  if(view === "drafts") markTabSeen();
   const t = document.activeElement;
   const typing = t && t.tagName === "TEXTAREA" ? {
     at: [...t.attributes].filter(a => a.name.startsWith("data-"))
@@ -1450,23 +1791,26 @@ function paint(){
     render();
   });
   list.querySelectorAll("[data-goto]").forEach(a => a.onclick = () => {
-    view = "drafts"; open.add(a.dataset.goto); render();
+    view = "drafts"; open.add(a.dataset.goto); markCardSeen(a.dataset.goto); render();
   });
 }
 
 async function act(what, id){
   busy.add(id); render();
   try {
-    const r = await (await fetch("/api/" + what, {method:"POST", body: JSON.stringify({id})})).json();
+    const r = await (await post("/api/" + what, {id})).json();
     if(!r.ok) alert(r.error || "failed");
   } finally { busy.delete(id); await load(); }
 }
 
 async function load(){
-  S = await (await fetch("/api/state")).json();
+  ALL = await (await fetch("/api/state")).json();
+  applyProject();
+  renderProjects();
   render();
   clearTimeout(timer);
-  if(S.rows.some(r => r.state === "creating" || r.state === "revising")) timer = setTimeout(load, 5000);
+  // Every project's rows: a draft running in another project still finishes.
+  if(ALL.rows.some(r => r.state === "creating" || r.state === "revising")) timer = setTimeout(load, 5000);
 }
 load();
 </script>

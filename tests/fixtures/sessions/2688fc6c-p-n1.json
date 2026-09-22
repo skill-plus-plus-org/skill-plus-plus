@@ -1,0 +1,154 @@
+{
+  "tag": "2688fc6c",
+  "name": "p-n1",
+  "session": "P-N1",
+  "kind": "procedure",
+  "surface": "desktop",
+  "checks": [
+    "merge.near-miss"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T13:43:07.609Z",
+  "procedure": "write user-facing release notes from CHANGELOG.md, leaving internal changes out, check them against it",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "release-notes-from-changelog"
+    ],
+    "subjects": [
+      null
+    ],
+    "boundary_after": [],
+    "roles": [
+      "implement",
+      "verify",
+      "polish",
+      "polish"
+    ]
+  },
+  "why": "Recorded from catalogue.json (P-N1, procedure, desktop), truth fixed before recording. ",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 6,
+    "prompts": 4,
+    "failed": 0
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Read CHANGELOG.md and write release notes for version 1.4.0 for end users into release-notes.md: what's new and what's fixed, nothing internal."
+      },
+      "failed": false,
+      "reply": "Wrote [release-notes.md](release-notes.md). Two sections: What's new (widget, unit setting) and What's fixed (unit refresh, date-line forecast). Internal cache/test-dep changes omitted."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/P-N1/",
+        "description": "List working directory"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "CHANGELOG.md",
+      "assistant_note": "The user wants release notes, so I should check CHANGELOG.md first to see what's there.",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-N1/CHANGELOG.md"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 # Changelog 2 3 All notable changes to Skycast are documented in this file. The format is 4 based on Keep a Changelog. 5 6 ## [1.4.0] - 2026-09-22 7 8 ### Added 9 - Home-screen widget with today's high, low and chance of rain. 10 - A setting to choose between Celsius and Fahrenheit independently of the 11 phone's region. 12 13 ### Fixed 14 - The wrong temperature unit was shown after switching r",
+      "end": false
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-N1/release-notes.md",
+        "content": "# Skycast 1.4.0\n\n## What's new\n- Home-screen widget showing today's high, low, and chance of rain.\n- New setting to pick Celsius or Fahrenheit independently of your phone's region.\n\n## What's fixed\n- Temperature unit now updates right away after switching regions — no restart needed.\n- Forecasts near the date line no longer show the previous day.\n"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "File created successfully at: ${HOME}/skillpp-recordings/P-N1/release-notes.md (file state is current in your context — no need to Read it back)",
+      "closing_note": "Wrote [release-notes.md](release-notes.md). Two sections: What's new (widget, unit setting) and What's fixed (unit refresh, date-line forecast). Internal cache/test-dep changes omitted.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Check that every line comes from the changelog and that the internal changes were left out."
+      },
+      "failed": false,
+      "reply": "Check vs changelog:\n\n- L4 widget high/low/rain → changelog L9 ✓\n- L5 C/F setting independent of region → changelog L10-11 ✓\n- L8 unit refresh after region switch → changelog L14-15 ✓\n- L9 date-line previous day → changelog L16 ✓\n\nOmitted (internal, correct):\n- Forecast cache moved to own module (L19)\n- Test deps bumped (L20)\n\nAll lines sourced. Internal changes excluded."
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-N1/release-notes.md"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "1 # Skycast 1.4.0 2 3 ## What's new 4 - Home-screen widget showing today's high, low, and chance of rain. 5 - New setting to pick Celsius or Fahrenheit independently of your phone's region. 6 7 ## What's fixed 8 - Temperature unit now updates right away after switching regions — no restart needed. 9 - Forecasts near the date line no longer show the previous day. 10",
+      "assistant_note": "Let me check each line against the changelog to confirm accuracy.",
+      "closing_note": "Check vs changelog: - L4 widget high/low/rain → changelog L9 ✓ - L5 C/F setting independent of region → changelog L10-11 ✓ - L8 unit refresh after region switch → changelog L14-15 ✓ - L9 date-line previous day → changelog L16 ✓ Omitted (internal, correct): - Forecast cache moved to own module (L19) - Test deps bumped (L20) All lines sourced. Internal changes excluded.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Group them under \"New\" and \"Fixed\", one short sentence each."
+      },
+      "failed": false,
+      "reply": "Done. Two headings, one sentence each."
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-N1/release-notes.md",
+        "content": "# Skycast 1.4.0\n\n## New\n- Home-screen widget shows today's high, low, and chance of rain.\n- New setting picks Celsius or Fahrenheit independently of your phone's region.\n\n## Fixed\n- Temperature unit updates right away after switching regions.\n- Forecasts near the date line no longer show the previous day.\n"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/P-N1/release-notes.md has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "closing_note": "Done. Two headings, one sentence each.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "`Add a one-line intro that names the version.`"
+      },
+      "failed": false,
+      "reply": "Intro added under title."
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-N1/release-notes.md",
+        "old_string": "# Skycast 1.4.0\n\n## New",
+        "new_string": "# Skycast 1.4.0\n\nSkycast 1.4.0 brings a home-screen widget, a unit-choice setting, and two forecast fixes.\n\n## New"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/P-N1/release-notes.md has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "closing_note": "Intro added under title.",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 0,
+    "answered": 3,
+    "replayed": "2026-09-22"
+  }
+}

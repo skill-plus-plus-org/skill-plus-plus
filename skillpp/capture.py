@@ -1,6 +1,6 @@
 """Hook handlers — the capture layer.
 
-Wired to Claude Code hooks (README 8):
+Wired to Claude Code hooks (docs/design.md §8):
 
 * ``UserPromptSubmit`` records stated intent — the half of the picture a raw
   command log can never recover.
@@ -17,6 +17,7 @@ always exits 0. Capture is never worth breaking someone's work over.
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import os
 import re
@@ -115,6 +116,30 @@ def log_error(config: Config, message: str) -> None:
 def _session_file(config: Config, session_id: str) -> Path:
     safe = "".join(c for c in session_id if c.isalnum() or c in "-_")[:64] or "unknown"
     return config.sessions_dir / f"{safe}.json"
+
+
+@functools.lru_cache(maxsize=512)
+def project_of(cwd: str) -> str:
+    """The project a working directory belongs to: its git repo's root.
+
+    Candidates and skills are bound to one project, and a session started in a
+    subfolder of a repo is still that repo's work. Without a repo above it, the
+    folder itself is the project; with no folder at all, there is none ("").
+    Only stat calls, no git: this runs for every entry a fold compares.
+    """
+    if not cwd:
+        return ""
+    path = Path(cwd).expanduser()
+    for folder in (path, *path.parents):
+        if (folder / ".git").exists():
+            return str(folder)
+    return str(path)
+
+
+def projects_of(entry) -> set[str]:
+    """Every project an entry was seen in. One, except for entries banked
+    before candidates were bound to a project, which may hold several."""
+    return {project_of(cwd) for cwd in entry.projects} or {""}
 
 
 def _load_session(config: Config, session_id: str) -> dict:
@@ -440,7 +465,7 @@ def handle_tool(config: Config, payload: dict) -> None:
     if not isinstance(raw_input, dict):
         raw_input = {"value": raw_input}
 
-    # A Skill invocation is how tiering learns what is actually used (README 6).
+    # A Skill invocation is how tiering learns what is actually used (docs/design.md §6).
     if tool == "Skill":
         from .lifecycle import record_use
         record_use(config, str(raw_input.get("skill", "")))
@@ -853,13 +878,18 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
     # nothing is indistinguishable from a session that held no work.
     # No tool call at all is a conversation, not an unjudged session: there is
     # no step a verdict could sit on. Reading it as offline held nine real chat
-    # sessions forever under "gemma3n:e4b did not answer" while the model was up.
+    # sessions forever under "<model> did not answer" while the model was up.
     if not [s for s in session.get("steps", []) if not is_prompt(s)]:
         return {"status": "too-thin", "steps": 0, "episodes": [], "flagged": 0}
     if not was_judged(session.get("steps", [])) and not force:
         return {"status": "offline", "steps": len(session.get("steps", [])),
                 "episodes": [], "flagged": 0,
-                "reason": f"no verdicts: {config.local_model} did not answer"}
+                # Held either way, but a developer who switched judging off
+                # should not be told the model is down.
+                "reason": (f"no verdicts: {config.local_model} did not answer"
+                           if config.judge_boundaries else
+                           "no verdicts: judging is off (SKILLPP_JUDGE=0); "
+                           "sessions wait until it is back on")}
 
     episodes = segment(session.get("steps", []), config.min_episode_steps)
 
@@ -989,12 +1019,17 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
     intents = _intents_for(session, steps)
     turns = _turns(steps, cwd)
     # Same procedure or not, decided by an embedding against every entry of any
-    # status (`matching.find_same`). Raises if the model is unreachable; the
-    # caller has already checked it is up, so that is a mid-fold outage.
+    # status in this project (`matching.find_same`). Only this project's: a
+    # candidate, and the skill made from it, belong to the repo the work was
+    # done in, so the same steps in another repo are another candidate.
+    # Raises if the model is unreachable; the caller has already checked it is
+    # up, so that is a mid-fold outage.
     existing = None
     if match:
         from .matching import find_same
-        hit = find_same(substantive, list(ledger.all()), config, turns=turns)
+        here = project_of(cwd)
+        pool = [e for e in ledger.all() if here in projects_of(e)]
+        hit = find_same(substantive, pool, config, turns=turns)
         existing = hit[0] if hit else None
 
     deps_mcp = sorted({s["tool"] for s in substantive if s["tool"].startswith("mcp__")})
@@ -1024,7 +1059,7 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
                 existing.intents.append(intent)
         del existing.intents[8:]
         # Keep a few variants so divergence and conditional-step detection
-        # have something to compare (README 4).
+        # have something to compare (docs/design.md §4).
         if len(existing.variants) < 4:
             existing.variants.append(substantive)
         existing.deps_mcp = sorted(set(existing.deps_mcp) | set(deps_mcp))
@@ -1317,7 +1352,7 @@ def _shell_chunks(command: str) -> list[str]:
 
 
 def _cli_dependencies(steps: list[dict]) -> set[str]:
-    """Programs the workflow shells out to — declared deps (README 5)."""
+    """Programs the workflow shells out to — declared deps (docs/design.md §5)."""
     from .lifecycle import COREUTILS, PROGRAM_RE, SHELL_BUILTINS
     # Shell grammar, not programs. A real skill declared `requires_cli: ["\\",
     # "do", "done", "for", "grep"]` — it was telling the reader to install `do`
@@ -1467,68 +1502,3 @@ def _name_from_model(config: Config, entry: Entry) -> None:
         entry.title, entry.title_source = name, "model"
     if sentence:
         store_summary(config, entry, sentence)
-
-
-def keep_current(config: Config, session_id: str | None = None) -> dict:
-    """Fold the in-flight session now, instead of waiting for it to end.
-
-    `SessionEnd` is otherwise the only thing that folds, so without this there
-    is no way to say "that thing I just did is worth keeping" without closing
-    the session. That matters more than it looks: recurrence is the automatic
-    route to a candidate and it has never fired on real work, which leaves an
-    explicit save as the only path from work to skill.
-
-    Guards are bypassed — an explicit save is not noise — and the buffer is
-    cleared afterwards so the rest of the session accumulates fresh rather than
-    being folded twice.
-    """
-    if session_id:
-        path = _session_file(config, session_id)
-        if not path.exists():
-            return {"status": "no-session"}
-    else:
-        newest = sorted(config.sessions_dir.glob("*.json"),
-                        key=lambda p: p.stat().st_mtime, reverse=True)
-        if not newest:
-            return {"status": "no-session"}
-        path = newest[0]
-        session_id = path.stem
-
-    session = _load_session(config, session_id)
-    # `handle_prompt` writes a UserPrompt sentinel into the step stream, so the
-    # raw list is never empty once anything has been said. Count the work.
-    from .segment import is_prompt
-    if not [s for s in session.get("steps", []) if not is_prompt(s)]:
-        return {"status": "nothing-yet"}
-    _attach_reply(session, session.get("transcript"))
-    # Boundaries are normally found at `SessionEnd`; this folds mid-session, so
-    # ask now for whatever gaps the buffer already holds — unless a held fold
-    # already fixed them (see `handle_session_end`).
-    if config.judge_boundaries and "folded" not in session:
-        try:
-            from .boundary import judge_session
-            judge_session(config, session)
-        except Exception as exc:  # noqa: BLE001 - never raise at a developer
-            log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
-    # Still unjudged means no model answered. An explicit keep is a person
-    # saying "save this", so it banks the work as one task rather than nothing —
-    # the offline rule exists to stop a *detector* guessing, not to overrule
-    # someone who has read the work and asked for it. Same reasoning as `force`.
-    if not was_judged(session.get("steps", [])):
-        for step in session.get("steps", []):
-            if not is_prompt(step):
-                step["end"] = False
-
-    # The same lock the worker and the sweep take: this folds and unlinks
-    # mid-session, so without it an explicit keep can race a fold of the very
-    # same session and bank its episodes twice.
-    with _locked(_lock_file(config, session_id), _FOLD_LOCK_SECONDS,
-                 "keep") as got:
-        if not got:
-            return {"status": "folding", "session": session_id}
-        result = fold_session(config, session, force=True, source="kept")
-        try:
-            path.unlink()
-        except OSError:
-            pass
-    return result

@@ -1,0 +1,222 @@
+{
+  "tag": "e11588ee",
+  "name": "c-f1",
+  "session": "C-F1",
+  "kind": "code",
+  "surface": "cli",
+  "checks": [
+    "merge.fixed",
+    "detect.one"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T12:23:27.995Z",
+  "procedure": "explore how to add a feature to textkit, implement it, add tests and run the suite, commit",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "add-feature-with-tests"
+    ],
+    "subjects": [
+      "wordfreq --top"
+    ],
+    "boundary_after": [],
+    "roles": [
+      "explore",
+      "implement",
+      "test",
+      "commit"
+    ],
+    "level": "identical"
+  },
+  "why": "Recorded from catalogue.json (C-F1, code, cli), truth fixed before recording. One task over several follow-ups: no prompt after the first starts a new task.",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 12,
+    "prompts": 4,
+    "failed": 1
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Look at textkit/wordfreq.py and its tests, and suggest how to add a --top option that sets how many words are printed. Don't change anything yet."
+      },
+      "failed": false,
+      "reply": "## Suggestion\n\n**`top_words(text, top=5)`** — add param, default 5. Replace `ranked[:5]` with `ranked[:top]`. Keeps backward-compat, existing `test_at_most_five` still passes.\n\n**`main`** — add:\n```python\nparser.add_argument(\"--top\", type=int, default=5,\n                    help=\"how many words to print (default: 5)\")\n```\nThen `top_words(text, args.top)`.\n\n**Validation** — `argparse` `type=int` rejects non-int. Guard `< 1`:\n```python\nif args.top < 1:\n    parser.error(\"--top must be >= 1\")\n```\nOr custom `type=` callable. `parser.error` simpler, matches argparse convention.\n\n**Tests to add** in `TestTopWords`:\n- `top_words(\"a a b b c\", top=2)` → `[(\"a\",2),(\"b\",2)]`\n- `top_words(\"a b\", top=10)` → 2 items (top > unique)\n- `top_words(\"a b\", top=0)` → `[]` (if you allow 0; else drop this and rely on main-level guard)\n\n**Test to add** in `TestMain`:\n- `main([path, \"--top\", \"1\"])` → prints only top row.\n- Optional: `main([path, \"--top\", \"0\"])` → returns non-zero via `parser.error` (raises `SystemExit(2)`).\n\n**Files touched**: `textkit/wordfreq.py`, `tests/test_wordfreq.py`. No changes to `words()` or CLI positional.\n\nTrade-off: allowing `top=0` in `top_words` is cleaner API but weird UX. Recommend blocking `<1` at CLI only, leaving `top_words` permissive."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/C-F1/textkit/ && ls ${HOME}/skillpp-recordings/C-F1/",
+        "description": "List textkit and repo root"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "__init__.py __pycache__ slugify.py titlecase.py wordfreq.py README.md tests textkit",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-F1/textkit/wordfreq.py"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 \"\"\"Print the most common words in a text file.\"\"\" 2 3 import argparse 4 5 LETTERS = \"abcdefghijklmnopqrstuvwxyz'\" 6 7 8 def words(text): 9 \"\"\"Split text into lowercase words, dropping punctuation and digits.\"\"\" 10 cleaned = \"\" 11 for char in text.lower(): 12 if char in LETTERS: 13 cleaned = cleaned + char 14 else: 15 cleaned = cleaned + \" \" 16 result = [] 17 for word in cleaned.split(\" \"): 18 wo",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/C-F1/tests/",
+        "description": "List tests dir"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "__init__.py test_slugify.py test_titlecase.py test_wordfreq.py",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-F1/tests/test_wordfreq.py"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 import io 2 import os 3 import tempfile 4 import unittest 5 from contextlib import redirect_stdout 6 7 from textkit.wordfreq import main, top_words, words 8 9 10 class TestWords(unittest.TestCase): 11 def test_lowercases_and_drops_punctuation(self): 12 self.assertEqual(words(\"Hello, hello! World.\"), [\"hello\", \"hello\", \"world\"]) 13 14 def test_keeps_apostrophes_inside_words(self): 15 self.assertE",
+      "closing_note": "## Suggestion **`top_words(text, top=5)`** — add param, default 5. Replace `ranked[:5]` with `ranked[:top]`. Keeps backward-compat, existing `test_at_most_five` still passes. **`main`** — add: ```python parser.add_argument(\"--top\", type=int, default=5, help=\"how many words to print (default: 5)\") ``` Then `top_words(text, args.top)`. **Validation** — `argparse` `type=int` rejects non-int. Guard `<",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Sounds good, implement it."
+      },
+      "failed": false,
+      "reply": "All 10 pass. `--top` wired, validation rejects `<1`, `top_words` backward-compat via default. Zero-arg reject test noise on stderr expected — argparse error path."
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-F1/textkit/wordfreq.py",
+        "old_string": "def top_words(text):\n    \"\"\"The five most common words, most common first, ties alphabetical.\"\"\"\n    counts = {}\n    for word in words(text):\n        if word in counts:\n            counts[word] = counts[word] + 1\n        else:\n            counts[word] = 1\n    ranked = []\n    for word in counts:\n        ranked.append((-counts[word], word))\n    ranked.sort()\n    result = []\n    for negative_count, word in ranked[:5]:\n        result.append((word, -negative_count))\n    return result\n\n\ndef main(argv=None):\n    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument(\"path\", help=\"the text file to read\")\n    args = parser.parse_args(argv)\n    with open(args.path, encoding=\"utf-8\") as handle:\n        text = handle.read()\n    for word, count in top_words(text):\n        print(f\"{count:>5}  {word}\")\n    return 0",
+        "new_string": "def top_words(text, top=5):\n    \"\"\"The most common words, most common first, ties alphabetical.\"\"\"\n    counts = {}\n    for word in words(text):\n        if word in counts:\n            counts[word] = counts[word] + 1\n        else:\n            counts[word] = 1\n    ranked = []\n    for word in counts:\n        ranked.append((-counts[word], word))\n    ranked.sort()\n    result = []\n    for negative_count, word in ranked[:top]:\n        result.append((word, -negative_count))\n    return result\n\n\ndef main(argv=None):\n    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument(\"path\", help=\"the text file to read\")\n    parser.add_argument(\n        \"--top\", type=int, default=5, help=\"how many words to print (default: 5)\"\n    )\n    args = parser.parse_args(argv)\n    if args.top < 1:\n        parser.error(\"--top must be >= 1\")\n    with open(args.path, encoding=\"utf-8\") as handle:\n        text = handle.read()\n    for word, count in top_words(text, args.top):\n        print(f\"{count:>5}  {word}\")\n    return 0"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-F1/textkit/wordfreq.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-F1/tests/test_wordfreq.py",
+        "old_string": "    def test_at_most_five(self):\n        self.assertEqual(len(top_words(\"a b c d e f g\")), 5)\n\n\nclass TestMain(unittest.TestCase):\n    def test_prints_counts(self):\n        with tempfile.TemporaryDirectory() as tmp:\n            path = os.path.join(tmp, \"t.txt\")\n            with open(path, \"w\", encoding=\"utf-8\") as handle:\n                handle.write(\"sun sun rain\")\n            out = io.StringIO()\n            with redirect_stdout(out):\n                self.assertEqual(main([path]), 0)\n        self.assertEqual(out.getvalue().split(), [\"2\", \"sun\", \"1\", \"rain\"])",
+        "new_string": "    def test_at_most_five(self):\n        self.assertEqual(len(top_words(\"a b c d e f g\")), 5)\n\n    def test_top_limits_results(self):\n        self.assertEqual(top_words(\"a a b b c\", top=2), [(\"a\", 2), (\"b\", 2)])\n\n    def test_top_larger_than_unique(self):\n        self.assertEqual(top_words(\"a b\", top=10), [(\"a\", 1), (\"b\", 1)])\n\n\nclass TestMain(unittest.TestCase):\n    def test_prints_counts(self):\n        with tempfile.TemporaryDirectory() as tmp:\n            path = os.path.join(tmp, \"t.txt\")\n            with open(path, \"w\", encoding=\"utf-8\") as handle:\n                handle.write(\"sun sun rain\")\n            out = io.StringIO()\n            with redirect_stdout(out):\n                self.assertEqual(main([path]), 0)\n        self.assertEqual(out.getvalue().split(), [\"2\", \"sun\", \"1\", \"rain\"])\n\n    def test_top_option_limits_output(self):\n        with tempfile.TemporaryDirectory() as tmp:\n            path = os.path.join(tmp, \"t.txt\")\n            with open(path, \"w\", encoding=\"utf-8\") as handle:\n                handle.write(\"sun sun rain\")\n            out = io.StringIO()\n            with redirect_stdout(out):\n                self.assertEqual(main([path, \"--top\", \"1\"]), 0)\n        self.assertEqual(out.getvalue().split(), [\"2\", \"sun\"])\n\n    def test_top_option_rejects_zero(self):\n        with tempfile.TemporaryDirectory() as tmp:\n            path = os.path.join(tmp, \"t.txt\")\n            with open(path, \"w\", encoding=\"utf-8\") as handle:\n                handle.write(\"sun\")\n            with self.assertRaises(SystemExit):\n                main([path, \"--top\", \"0\"])"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-F1/tests/test_wordfreq.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python -m unittest tests.test_wordfreq -v 2>&1",
+        "description": "Run wordfreq tests"
+      },
+      "failed": true,
+      "serves": 2,
+      "tool_returned": "Exit code 127 (eval):1: command not found: python",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -m unittest tests.test_wordfreq -v 2>&1",
+        "description": "Run wordfreq tests with python3"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "test_prints_counts (tests.test_wordfreq.TestMain.test_prints_counts) ... ok test_top_option_limits_output (tests.test_wordfreq.TestMain.test_top_option_limits_output) ... ok test_top_option_rejects_zero (tests.test_wordfreq.TestMain.test_top_option_rejects_zero) ... usage: python3.14 -m unittest [-h] [--top TOP] path python3.14 -m unittest: error: --top must be >= 1 ok test_at_most_five (tests.tes",
+      "closing_note": "All 10 pass. `--top` wired, validation rejects `<1`, `top_words` backward-compat via default. Zero-arg reject test noise on stderr expected — argparse error path.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Add a test for --top and run the whole test suite."
+      },
+      "failed": false,
+      "reply": "18/18 pass. New `test_top_option_three` covers typical `--top 3` case with ranked output."
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-F1/tests/test_wordfreq.py",
+        "old_string": "    def test_top_option_rejects_zero(self):",
+        "new_string": "    def test_top_option_three(self):\n        with tempfile.TemporaryDirectory() as tmp:\n            path = os.path.join(tmp, \"t.txt\")\n            with open(path, \"w\", encoding=\"utf-8\") as handle:\n                handle.write(\"a a a b b c d e\")\n            out = io.StringIO()\n            with redirect_stdout(out):\n                self.assertEqual(main([path, \"--top\", \"3\"]), 0)\n        self.assertEqual(out.getvalue().split(), [\"3\", \"a\", \"2\", \"b\", \"1\", \"c\"])\n\n    def test_top_option_rejects_zero(self):"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-F1/tests/test_wordfreq.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -m unittest discover -v 2>&1",
+        "description": "Run full test suite"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "test_collapses_spaces (tests.test_slugify.TestSlugify.test_collapses_spaces) ... ok test_drops_punctuation (tests.test_slugify.TestSlugify.test_drops_punctuation) ... ok test_keeps_digits (tests.test_slugify.TestSlugify.test_keeps_digits) ... ok test_lowercases_and_joins_with_hyphens (tests.test_slugify.TestSlugify.test_lowercases_and_joins_with_hyphens) ... ok test_capitalizes_each_word (tests.te",
+      "closing_note": "18/18 pass. New `test_top_option_three` covers typical `--top 3` case with ranked output.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Commit it with a short message."
+      },
+      "failed": false,
+      "reply": "Committed `c1df61a`. Skipped `__pycache__` noise. FYI: `.gitignore` for `__pycache__/` would keep this clean — say word if want."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git status && echo \"---\" && git diff --stat && echo \"---\" && git log --oneline -5",
+        "description": "Check git state"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "On branch master Changes not staged for commit: (use \"git add <file>...\" to update what will be committed) (use \"git restore <file>...\" to discard changes in working directory) modified: tests/test_wordfreq.py modified: textkit/__pycache__/__init__.cpython-314.pyc modified: textkit/__pycache__/slugify.cpython-314.pyc modified: textkit/__pycache__/titlecase.cpython-314.pyc modified: textkit/__pycac",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git add textkit/wordfreq.py tests/test_wordfreq.py && git commit -m \"$(cat <<'EOF'\nAdd --top option to wordfreq\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <[REDACTED:email]>\nEOF\n)\" && git status",
+        "description": "Stage source files and commit"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "[master c1df61a] Add --top option to wordfreq 2 files changed, 43 insertions(+), 4 deletions(-) On branch master Changes not staged for commit: (use \"git add <file>...\" to update what will be committed) (use \"git restore <file>...\" to discard changes in working directory) modified: textkit/__pycache__/__init__.cpython-314.pyc modified: textkit/__pycache__/slugify.cpython-314.pyc modified: textkit/",
+      "closing_note": "Committed `c1df61a`. Skipped `__pycache__` noise. FYI: `.gitignore` for `__pycache__/` would keep this clean — say word if want.",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 0,
+    "answered": 3,
+    "replayed": "2026-09-22"
+  }
+}

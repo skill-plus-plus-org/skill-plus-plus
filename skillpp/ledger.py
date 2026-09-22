@@ -5,7 +5,7 @@ lossless JSON payload in a trailing HTML comment so the engine has a single
 authoritative source of truth. Frontmatter is *regenerated* from the payload on
 every write, so the two can never drift.
 
-Entries hold summaries, never raw traces (README 3.2).
+Entries hold summaries, never raw traces (docs/design.md §3.2).
 """
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ class Entry:
     # the mark there is nothing to measure from.
     parked_at_occurrences: int = 0
     # Banked without being compared to anything, because no embedding model
-    # answered — only an explicit `skillpp keep` or dictation does that, since a
+    # answered — only dictation does that, since a
     # captured session with no model is held instead. `skillpp merge` checks
     # these first.
     unmatched: bool = False
@@ -304,7 +304,7 @@ class Ledger:
         """Delete unapproved candidates past their TTL.
 
         Promoted entries are never touched — expiry applies to the ledger, not
-        to the skill library (README 6).
+        to the skill library (docs/design.md §6).
         """
         now = now or datetime.now(timezone.utc)
         cutoff = now - timedelta(days=self.config.candidate_ttl_days)

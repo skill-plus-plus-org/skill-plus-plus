@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skillpp"
+dynamic = ["version"]
+description = "Spot the work you keep repeating with Claude Code, and turn it into skills you review."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# Standard library only, at runtime and in the tests.
+dependencies = []
+keywords = ["claude-code", "agent-skills", "skills", "ollama", "developer-tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development",
+]
+
+[project.scripts]
+skillpp = "skillpp.cli:main"
+
+[project.urls]
+Repository = "https://github.com/himanshu096/skill-plus-plus"
+Issues = "https://github.com/himanshu096/skill-plus-plus/issues"
+
+[tool.setuptools]
+packages = ["skillpp"]
+
+[tool.setuptools.package-data]
+# The prompts the local model is asked, and the slash commands `install` copies
+# and `draft` hands to its agent. Without them an installed copy cannot run.
+skillpp = ["prompts/*.md", "commands/*.md"]
+
+[tool.setuptools.dynamic]
+version = { attr = "skillpp.__version__" }

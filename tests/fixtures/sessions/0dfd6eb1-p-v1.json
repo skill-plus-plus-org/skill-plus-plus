@@ -1,0 +1,163 @@
+{
+  "tag": "0dfd6eb1",
+  "name": "p-v1",
+  "session": "P-V1",
+  "kind": "procedure",
+  "surface": "cli",
+  "checks": [
+    "merge.varied",
+    "detect.one",
+    "detect.review"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T13:27:39.210Z",
+  "procedure": "outline a talk from a doc, recheck it with the developer, build the .pptx only after approval, check it",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "talk-deck-from-docs"
+    ],
+    "subjects": [
+      "README"
+    ],
+    "boundary_after": [],
+    "roles": [
+      "explore",
+      "review",
+      "correct",
+      "build",
+      "verify"
+    ],
+    "level": "same-goal"
+  },
+  "why": "Recorded from catalogue.json (P-V1, procedure, cli), truth fixed before recording. One task over several follow-ups: no prompt after the first starts a new task. Review and correction prompts continue the task, they do not start one.",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 6,
+    "prompts": 5,
+    "failed": 0
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "I need to give a 10-minute talk to new users about skillpp. The material is in README.md. Propose the content for the slides — a title and 3 to 4 bullets per slide — but don't build anything yet."
+      },
+      "failed": false,
+      "reply": "Proposed deck. 8 slides, ~75s each.\n\n**Slide 1 — Skill++: Skills From Work You Already Did**\n- Turn repeated Claude Code work into reviewable skills\n- Local detection, frontier model only on demand\n- Nothing installed without your say-so\n- 10 min: problem → pipeline → install → review → privacy → limits\n\n**Slide 2 — Problem**\n- Agent skills make procedures reliable, but few people write them\n- By the third time you do a thing, it's already worth a skill — and you've moved on\n- Writing `SKILL.md` from scratch is the tax\n- Skillpp watches, notices repeats, drafts from what you actually did\n\n**Slide 3 — Pipeline (one diagram, five stages)**\n- **Capture**: 4 Claude Code hooks, secrets/tokens/emails scrubbed on write\n- **Cut**: local model splits ended session into tasks at each user prompt\n- **Match**: embeddings compare against ledger; 3 hits → candidate\n- **Draft**: your agent (`claude -p`) writes SKILL.md + open questions\n\n**Slide 4 — Requirements**\n- macOS/Linux, Python 3.10+ (stdlib only)\n- Claude Code on PATH, logged in\n- Ollama + `gemma4:e4b` (cutter/namer) + `nomic-embed-text` (matcher)\n- ~8 GB free RAM while cutter loaded\n\n**Slide 5 — Install & First Run**\n- `pipx install git+https://github.com/himanshu096/skill-plus-plus`\n- `skillpp install --project ~/code/repo --apply` (or `--user` for all projects)\n- `skillpp doctor` → all green\n- Restart Claude Code, work normal, then `skillpp web`\n\n**Slide 6 — Review Page (`127.0.0.1:8765`)**\n- **Candidates**: most-seen first, promote or dismiss at 3\n- **Draft Skill**: hands first run to your agent, optional note for later-run lessons\n- **Drafts**: rendered SKILL.md + open questions; download when answered\n- **Revise**: send agent an instruction, updates draft in place\n- Shortcut: `/skillpp-keep` in a session, or `SKILLPP_RECURRENCE=1` to skip the 3-repeat wait\n\n**Slide 7 — Privacy**\n- Everything stays in `~/.claude/skillpp/`, local models too\n- Scrubbed: keys, tokens, connection strings, emails\n- **Not** scrubbed: names, phone numbers, file contents — treat like shell history\n- Leaves machine only on **Draft Skill** / **Revise** (your agent, your model)\n\n**Slide 8 — Known Limits & Where To Go**\n- Task split across chats → two half-tasks (no cross-chat linking)\n- Two tasks with no prompt between → look like one\n- Draft reads one run (the first) — use the note field for what later runs taught you\n- Strict matching by design: false merge > false split\n- Docs: `docs/usage.md`, `docs/privacy.md`, `docs/architecture.md`\n\nWant me swap order, cut to 6 slides, or add demo slide?"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/P-V1/",
+        "description": "List working dir"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "README.md",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-V1/README.md"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 # Skill Plus Plus 2 3 **Turn the work you keep repeating with Claude Code into skills you review.** 4 5 Agent skills make an agent reliable at a procedure, but almost nobody writes 6 them: by the time a procedure is worth a skill, you have already done it three 7 times and moved on. skillpp watches your Claude Code sessions, notices when you 8 repeat the same kind of work, and when you say so, h",
+      "closing_note": "Only unbacked line was \"10 min\" agenda on slide 1 — already dropped in the 6-slide cut. Re-verified every bullet below against README. All backed. ## Final outline **Slide 1 — Skill++: Skills From Work You Already Did** - Turn repeated Claude Code work into reviewable skills - Detection local (Ollama); frontier model only on **Draft Skill** - Nothing installed without your say-so **Slide 2 — Probl",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Two things. Check every command and number on the slides against README.md and tell me which ones aren't backed by it. And cut it to at most 6 slides."
+      },
+      "failed": false,
+      "reply": "## Fact-check vs README\n\nAll commands/numbers back-checked. Everything present in README:\n- 4 hooks ✓ (§Capture)\n- 3 repeats ✓ (\"Seen three times\")\n- `gemma4:e4b`, `nomic-embed-text` ✓\n- ~8 GB RAM ✓ (\"about 8 GB\")\n- `pipx install git+https://github.com/himanshu096/skill-plus-plus` ✓\n- `--project`, `--user`, `--apply`, `skillpp doctor`, `skillpp web` ✓\n- `127.0.0.1:8765` ✓\n- `/skillpp-keep`, `SKILLPP_RECURRENCE=1` ✓\n- `~/.claude/skillpp/` ✓\n- Scrub list (keys/tokens/connection strings/emails) ✓\n- Not-scrubbed list (names, phone, file contents) ✓\n- All 5 limits ✓ (verbatim in \"Known limits\")\n- `claude -p` default ✓\n\n**Not from README:** \"10 min\" agenda line — from your prompt, not README. No fabrications otherwise.\n\n**One thing I glossed but README states exactly:** tool inputs stored \"up to 2,000 characters each\" — worth adding to privacy slide for precision.\n\n## 6-slide cut\n\n**Slide 1 — Skill++: Skills From Work You Already Did**\n- Turn repeated Claude Code work into reviewable skills\n- Detection local (Ollama); frontier model only on **Draft Skill**\n- Nothing installed without your say-so\n\n**Slide 2 — Problem**\n- Agent skills make procedures reliable — but few people write them\n- By 3rd time doing a thing, worth a skill; you've moved on\n- Writing `SKILL.md` from scratch is the tax\n- Skillpp watches, spots repeats, drafts from what you actually did\n\n**Slide 3 — Pipeline**\n- **Capture**: 4 hooks record prompts/tools/replies; scrub keys, tokens, connection strings, emails on write\n- **Cut**: session ends → local `gemma4:e4b` splits into tasks at each user prompt\n- **Match**: `nomic-embed-text` compares to ledger; 3 hits → candidate\n- **Draft**: your agent (`claude -p`) writes SKILL.md + open questions for you\n\n**Slide 4 — Install**\n- macOS/Linux, Python 3.10+ (stdlib only), Claude Code on PATH & logged in\n- `ollama pull gemma4:e4b && ollama pull nomic-embed-text` (~8 GB RAM while loaded)\n- `pipx install git+https://github.com/himanshu096/skill-plus-plus`\n- `skillpp install --project ~/code/my-repo --apply` (or `--user`), then `skillpp doctor`\n\n**Slide 5 — Daily Use: `skillpp web`**\n- Local page at `127.0.0.1:8765`\n- **Candidates**: most-seen first; promote or dismiss at 3; **Draft Skill** on promoted\n- **Drafts**: rendered SKILL.md + open questions; download when answered; **Revise** to iterate\n- Skip the wait: `/skillpp-keep` banks now, or `SKILLPP_RECURRENCE=1` lowers threshold to 1\n\n**Slide 6 — Privacy & Known Limits**\n- Stays in `~/.claude/skillpp/`; tool inputs capped 2,000 chars each; leaves machine only on **Draft Skill**/**Revise**\n- **Not** scrubbed: names, phone numbers, file contents — treat like shell history\n- Limits: cross-chat task = 2 half-tasks; no-prompt-between = 1 task; draft reads only 1st run (use note field); matching strict by design\n- Deeper: `docs/usage.md`, `docs/privacy.md`, `docs/architecture.md`"
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Fix the ones that aren't backed, then show me the final outline."
+      },
+      "failed": false,
+      "reply": "Only unbacked line was \"10 min\" agenda on slide 1 — already dropped in the 6-slide cut. Re-verified every bullet below against README. All backed.\n\n## Final outline\n\n**Slide 1 — Skill++: Skills From Work You Already Did**\n- Turn repeated Claude Code work into reviewable skills\n- Detection local (Ollama); frontier model only on **Draft Skill**\n- Nothing installed without your say-so\n\n**Slide 2 — Problem**\n- Agent skills make procedures reliable — but few people write them\n- By 3rd time doing a thing, worth a skill; you've moved on\n- Writing `SKILL.md` from scratch is the tax\n- Skillpp watches, spots repeats, drafts from what you actually did\n\n**Slide 3 — Pipeline**\n- **Capture**: 4 hooks record prompts/tools/replies; scrub keys, tokens, connection strings, emails on write\n- **Cut**: session ends → local `gemma4:e4b` splits into tasks at each user prompt\n- **Match**: `nomic-embed-text` compares to ledger; 3 hits → candidate\n- **Draft**: your agent (`claude -p`) writes SKILL.md + open questions for you\n\n**Slide 4 — Install**\n- macOS/Linux, Python 3.10+ (stdlib only), Claude Code on PATH & logged in\n- `ollama pull gemma4:e4b && ollama pull nomic-embed-text` (~8 GB RAM while loaded)\n- `pipx install git+https://github.com/himanshu096/skill-plus-plus`\n- `skillpp install --project ~/code/my-repo --apply` (or `--user`), then `skillpp doctor`\n\n**Slide 5 — Daily Use: `skillpp web`**\n- Local page at `127.0.0.1:8765`\n- **Candidates**: most-seen first; promote or dismiss at 3; **Draft Skill** on promoted\n- **Drafts**: rendered SKILL.md + open questions; download when answered; **Revise** to iterate\n- Skip the wait: `/skillpp-keep` banks now, or `SKILLPP_RECURRENCE=1` lowers threshold to 1\n\n**Slide 6 — Privacy & Known Limits**\n- Stays in `~/.claude/skillpp/`; tool inputs capped 2,000 chars each; leaves machine only on **Draft Skill**/**Revise**\n- **Not** scrubbed: names, phone numbers, file contents — treat like shell history\n- Limits: cross-chat task = 2 half-tasks; no-prompt-between = 1 task; draft reads only 1st run (use note field); matching strict by design\n- Deeper: `docs/usage.md`, `docs/privacy.md`, `docs/architecture.md`"
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Looks good. Build it as slides.pptx."
+      },
+      "failed": false,
+      "reply": "Built. `slides.pptx` (6 slides, 16:9, 34 KB) at `${HOME}/skillpp-recordings/P-V1/slides.pptx`. Generator at `build_slides.py` — edit + rerun to tweak."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "which uv python3 && python3 -c \"import pptx; print(pptx.__version__)\" 2>&1 | tail -5",
+        "description": "Check uv, python3, python-pptx"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "/opt/homebrew/bin/uv /opt/homebrew/bin/python3 1.0.2",
+      "end": false
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-V1/build_slides.py",
+        "content": "from pptx import Presentation\nfrom pptx.util import Inches, Pt\nfrom pptx.enum.text import PP_ALIGN\nfrom pptx.dml.color import RGBColor\n\nSLIDES = [\n    {\n        \"title\": \"Skill++: Skills From Work You Already Did\",\n        \"bullets\": [\n            \"Turn repeated Claude Code work into reviewable skills\",\n            \"Detection local (Ollama); frontier model only on Draft Skill\",\n            \"Nothing installed without your say-so\",\n        ],\n    },\n    {\n        \"title\": \"Problem\",\n        \"bullets\": [\n            \"Agent skills make procedures reliable — but few people write them\",\n            \"By 3rd time doing a thing, worth a skill; you've moved on\",\n            \"Writing SKILL.md from scratch is the tax\",\n            \"Skillpp watches, spots repeats, drafts from what you actually did\",\n        ],\n    },\n    {\n        \"title\": \"Pipeline\",\n        \"bullets\": [\n            \"Capture: 4 hooks record prompts/tools/replies; scrub keys, tokens, connection strings, emails on write\",\n            \"Cut: session ends → local gemma4:e4b splits into tasks at each user prompt\",\n            \"Match: nomic-embed-text compares to ledger; 3 hits → candidate\",\n            \"Draft: your agent (claude -p) writes SKILL.md + open questions for you\",\n        ],\n    },\n    {\n        \"title\": \"Install\",\n        \"bullets\": [\n            \"macOS/Linux, Python 3.10+ (stdlib only), Claude Code on PATH & logged in\",\n            \"ollama pull gemma4:e4b && ollama pull nomic-embed-text (~8 GB RAM while loaded)\",\n            \"pipx install git+https://github.com/himanshu096/skill-plus-plus\",\n            \"skillpp install --project ~/code/my-repo --apply (or --user), then skillpp doctor\",\n        ],\n    },\n    {\n        \"title\": \"Daily Use: skillpp web\",\n        \"bullets\": [\n            \"Local page at 127.0.0.1:8765\",\n            \"Candidates: most-seen first; promote or dismiss at 3; Draft Skill on promoted\",\n            \"Drafts: rendered SKILL.md + open questions; download when answered; Revise to iterate\"… [truncated 1852 chars]"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "File created successfully at: ${HOME}/skillpp-recordings/P-V1/build_slides.py (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 build_slides.py && ls -la slides.pptx",
+        "description": "Build slides.pptx"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "wrote ${HOME}/skillpp-recordings/P-V1/slides.pptx (6 slides) -rw-r--r--@ 1 ${USER} staff 34935 Sep 22 15:29 slides.pptx",
+      "closing_note": "Built. `slides.pptx` (6 slides, 16:9, 34 KB) at `${HOME}/skillpp-recordings/P-V1/slides.pptx`. Generator at `build_slides.py` — edit + rerun to tweak.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Open the file and check it has the slides from the outline, in order."
+      },
+      "failed": false,
+      "reply": "Verified. 6 slides, exact order matches outline, all bullets present verbatim:\n\n1. Skill++: Skills From Work You Already Did — 3 bullets ✓\n2. Problem — 4 bullets ✓\n3. Pipeline — 4 bullets (Capture/Cut/Match/Draft) ✓\n4. Install — 4 bullets ✓\n5. Daily Use: skillpp web — 4 bullets ✓\n6. Privacy & Known Limits — 4 bullets ✓\n\nFile clean."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 <<'EOF'\nfrom pptx import Presentation\nprs = Presentation(\"${HOME}/skillpp-recordings/P-V1/slides.pptx\")\nfor i, slide in enumerate(prs.slides, 1):\n    print(f\"=== Slide {i} ===\")\n    for shape in slide.shapes:\n        if not shape.has_text_frame:\n            continue\n        for p in shape.text_frame.paragraphs:\n            t = p.text.strip()\n            if t:\n                print(t)\n    print()\nEOF",
+        "description": "Dump slide text"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "=== Slide 1 === Skill++: Skills From Work You Already Did • Turn repeated Claude Code work into reviewable skills • Detection local (Ollama); frontier model only on Draft Skill • Nothing installed without your say-so === Slide 2 === Problem • Agent skills make procedures reliable — but few people write them • By 3rd time doing a thing, worth a skill; you've moved on • Writing SKILL.md from scratch",
+      "closing_note": "Verified. 6 slides, exact order matches outline, all bullets present verbatim: 1. Skill++: Skills From Work You Already Did — 3 bullets ✓ 2. Problem — 4 bullets ✓ 3. Pipeline — 4 bullets (Capture/Cut/Match/Draft) ✓ 4. Install — 4 bullets ✓ 5. Daily Use: skillpp web — 4 bullets ✓ 6. Privacy & Known Limits — 4 bullets ✓ File clean.",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 0,
+    "answered": 2,
+    "replayed": "2026-09-22"
+  }
+}

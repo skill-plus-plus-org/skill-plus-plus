@@ -137,14 +137,39 @@ def setUpModule() -> None:
     # slower still — it writes a sentence where the judge writes one word.
     boundary.describe_in_session = (
         lambda config, session, step, reply="": "")
+    # And for naming, which every fold that banks a new entry asks for. It was
+    # the one call left real: with Ollama up the suite took eight minutes and
+    # kept a 7.7 GB model resident afterwards; with it down, every fold waited
+    # on a refused connection. A candidate the model never named keeps the
+    # title capture gave it, which is what these tests assert against.
+    global _REAL_NAME
+    import skillpp.capture as capture
+    _REAL_NAME = capture._name_from_model
+    capture._name_from_model = lambda config, entry: None
+    # And for `install`, which lists the Ollama models and pulls missing ones on
+    # --apply. A test must never start a 10 GB download, nor depend on what the
+    # machine running it has pulled: every model is present unless a test says
+    # otherwise, and a pull that is not stubbed fails the test.
+    global _REAL_MODELS, _REAL_PULL
+    import skillpp.cli as cli
+    _REAL_MODELS, _REAL_PULL = cli._available_models, cli._pull_model
+    cli._available_models = lambda config: ([config.local_model, config.embed_model + ":latest"], "")
+
+    def _no_pull(config, name):
+        raise AssertionError(f"a test tried to pull {name}")
+    cli._pull_model = _no_pull
 
 
 def tearDownModule() -> None:
     import skillpp.boundary as boundary
+    import skillpp.capture as capture
     import skillpp.matching as matching
     boundary.judge_session = _REAL_JUDGE
     boundary.describe_in_session = _REAL_DESCRIBE
     matching.embed = _REAL_EMBED
+    capture._name_from_model = _REAL_NAME
+    import skillpp.cli as cli
+    cli._available_models, cli._pull_model = _REAL_MODELS, _REAL_PULL
 
 
 def _marker_judge(config, session, verdict=is_marker):
@@ -499,6 +524,20 @@ class TestSignals(unittest.TestCase):
         self.assertIn("out.txt", eff["writes"])
         self.assertIn("src/a.py", eff["writes"])
 
+    def test_git_commands_that_discard_uncommitted_work_are_destructive(self):
+        """A real run restored `cases.json` to HEAD and its draft said nothing."""
+        from skillpp.signals import DESTRUCTIVE
+        discards = ["git checkout HEAD -- backend/eval/cases.json && git diff --stat",
+                    "git checkout -- .", "git checkout .", "git -C repo checkout main -- a.py",
+                    "git restore cases.json", "git restore --staged --worktree a.py",
+                    "git clean -fd", "git clean -xdf", "git stash clear", "git stash drop"]
+        keeps = ["git checkout main", "git checkout -b feat/x", "git restore --staged a.py",
+                 "git clean -n", "git status", "pg_restore -d app dump.sql"]
+        for cmd in discards:
+            self.assertTrue(DESTRUCTIVE.search(cmd), cmd)
+        for cmd in keeps:
+            self.assertFalse(DESTRUCTIVE.search(cmd), cmd)
+
 
 class TestCapture(TempRoot):
     def _session(self, commands, prompts=("do the thing",), sid="s1"):
@@ -659,6 +698,8 @@ class TestCapture(TempRoot):
         """
         import skillpp.boundary as boundary
         seen = {}
+        # Off by default now that nothing reads it; this is how it reads when on.
+        self.config.describe_steps = True
 
         def spy(config, session, step, reply=""):
             seen["reply"] = reply
@@ -1866,10 +1907,14 @@ class TestNarrationIsAttributedToTheRightStep(TempRoot):
         self.assertEqual(_narration({"transcript_path": "/no/such/file"}), ("", ""))
 
     def test_the_live_session_carries_its_investigation_report(self):
-        """`241955c7`, the session this was found on."""
-        import glob
-        doc = json.loads(Path(glob.glob(
-            "tests/fixtures/sessions/241955c7*.json")[0]).read_text())
+        """`241955c7`, the session this was found on. A private one: it runs
+        where `SKILLPP_FIXTURES` points at the set that holds it."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "sessions"))
+        import score
+        found = score.load("241955c7")
+        if not found:
+            self.skipTest("session 241955c7 is not in this set")
+        doc = found[0]
         work = [s for s in doc["steps"] if not is_prompt(s)]
         last_of_task_one = work[5]           # the Read that ends the investigation
         self.assertEqual(last_of_task_one["tool"], "Read")
@@ -2357,6 +2402,10 @@ class TestDraftCommand(TempRoot):
         def fake(argv, **kw):
             seen["argv"] = argv
             seen["kw"] = kw
+            # Looked at now: the agent's home is removed once it returns.
+            home = Path(kw["cwd"])
+            seen["home"] = sorted(str(p.relative_to(home))
+                                  for p in home.rglob("*") if p.is_file())
             # Where a real agent writes: the directory it was handed, which
             # is a workspace outside `~/.claude` — `Write` is denied under
             # there. `cmd_draft` moves the result into `drafts/<id>/`.
@@ -2392,11 +2441,32 @@ class TestDraftCommand(TempRoot):
         self.assertIn("Bash(python3 bin/skillpp *),Read,Write,Edit", argv)
 
     def test_the_agent_runs_where_the_cli_resolves(self):
-        """The allowed-tools pattern is relative, so the cwd is load-bearing."""
+        """The allowed-tools pattern is relative, so the cwd is load-bearing.
+        It used to be this checkout, which an installed package does not have:
+        the agent now runs from a home holding exactly what its prompt uses,
+        removed afterwards."""
         from skillpp.cli import cmd_draft
         seen = self._spy()
         cmd_draft(self._args(apply=True))
-        self.assertTrue((Path(seen["kw"]["cwd"]) / "bin" / "skillpp").exists())
+        self.assertEqual(seen["home"], [".claude/commands/skillpp-draft.md", "bin/skillpp"])
+        self.assertFalse(Path(seen["kw"]["cwd"]).exists())
+
+    def test_the_agents_cli_is_the_skillpp_that_started_it(self):
+        """Run from an unrelated directory with a plain `python3`, as the agent's
+        Bash runs it: this package answers, whether installed or checked out."""
+        import shutil
+        import subprocess
+        import skillpp
+        from skillpp.cli import _agent_home
+        home = _agent_home("cand1")
+        self.addCleanup(lambda: shutil.rmtree(home, ignore_errors=True))
+        out = subprocess.run(["python3", "bin/skillpp", "--version"], cwd=home,
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn(skillpp.__version__, out.stdout)
+        from skillpp.install import COMMANDS
+        self.assertEqual((home / ".claude/commands/skillpp-draft.md").read_bytes(),
+                         (COMMANDS / "skillpp-draft.md").read_bytes())
 
     def test_the_agent_is_configurable(self):
         """A command template, so no vendor and no API key are baked in."""
@@ -2984,6 +3054,82 @@ class TestMatching(TempRoot):
         self.assertEqual(self.calls, [])
 
 
+class TestCandidatesBelongToOneProject(TempRoot):
+    """A candidate, and the skill made from it, belong to the repo the work was
+    done in. The same steps in another repo are another candidate: matching
+    used to compare every entry of every project, and a hit simply added the
+    new folder to the old candidate."""
+
+    WORK = [bash("npm run build"), bash("./deploy.sh staging")]
+
+    def _repo(self, name):
+        repo = self.root / name
+        (repo / ".git").mkdir(parents=True)
+        return repo
+
+    def _fold(self, sid, cwd):
+        return fold_session(self.config, {"session_id": sid, "cwd": str(cwd), "prompts": [],
+                                          "steps": judged([dict(st) for st in self.WORK])})
+
+    def test_a_project_is_the_repo_root_above_the_folder(self):
+        from skillpp.capture import project_of
+        repo = self._repo("app")
+        (repo / "src" / "deep").mkdir(parents=True)
+        self.assertEqual(project_of(str(repo / "src" / "deep")), str(repo))
+        loose = self.root / "notes"
+        loose.mkdir()
+        self.assertEqual(project_of(str(loose)), str(loose))
+        self.assertEqual(project_of(""), "")
+
+    def test_the_same_procedure_in_two_repos_is_two_candidates(self):
+        a, b = self._repo("a"), self._repo("b")
+        first, second = self._fold("s1", a), self._fold("s2", b)
+        self.assertEqual((first["status"], second["status"]), ("created", "created"))
+        self.assertEqual(sorted(len(e.projects) for e in Ledger(self.config).all()), [1, 1])
+
+    def test_the_same_procedure_in_one_repo_merges_even_from_a_subfolder(self):
+        repo = self._repo("app")
+        (repo / "web").mkdir()
+        self._fold("s1", repo)
+        second = self._fold("s2", repo / "web")
+        self.assertEqual(second["status"], "merged")
+        self.assertEqual(second["occurrences"], 2)
+
+    def test_an_entry_from_before_the_rule_still_matches_in_each_of_its_projects(self):
+        a, b = self._repo("a"), self._repo("b")
+        first = self._fold("s1", a)
+        led = Ledger(self.config)
+        entry = led.get(first["id"])
+        entry.projects.append(str(b))         # merged across repos by the old rule
+        led.save(entry)
+        self.assertEqual(self._fold("s2", b)["status"], "merged")
+
+    def test_live_capture_records_the_folder_the_session_ran_in(self):
+        """The hooks carry the folder; a candidate banked from them names it.
+        (Sessions folded with no folder, as the scorers do, have none.)"""
+        from skillpp.capture import _load_session
+        repo = self._repo("app")
+        handle_prompt(self.config, {"session_id": "live", "cwd": str(repo), "prompt": "deploy"})
+        for st in self.WORK:
+            handle_tool(self.config, {"session_id": "live", "cwd": str(repo),
+                                      "tool_name": "Bash", "tool_input": st["input"]})
+        session = _load_session(self.config, "live")
+        for step in session["steps"]:
+            if not is_prompt(step):
+                step["end"] = False
+        result = fold_session(self.config, session)
+        self.assertEqual(Ledger(self.config).get(result["id"]).projects, [str(repo)])
+
+    def test_merge_never_joins_candidates_from_two_projects(self):
+        from skillpp.cli import main
+        a, b = self._repo("a"), self._repo("b")
+        self._fold("s1", a)
+        self._fold("s2", b)
+        with mock.patch("sys.stdout"):
+            main(["--root", str(self.config.root), "merge", "--apply"])
+        self.assertEqual(len(list(Ledger(self.config).all())), 2)
+
+
 class TestCaptureMatchesByEmbedding(TempRoot):
     """What changed when capture stopped using a signature."""
 
@@ -3010,8 +3156,8 @@ class TestCaptureMatchesByEmbedding(TempRoot):
         self.assertIn("embed", result["reason"])
         self.assertEqual(list(Ledger(self.config).all()), [])
 
-    def test_an_explicit_keep_with_no_model_banks_unmatched(self):
-        """A person said "save this"; it is kept, and marked for `skillpp merge`."""
+    def test_a_forced_fold_with_no_model_banks_unmatched(self):
+        """Forced, it is banked anyway, and marked for `skillpp merge`."""
         self._down()
         result = fold_session(self.config, self._session("s1"), force=True)
         self.assertEqual(result["status"], "created")
@@ -3356,64 +3502,6 @@ class TestDecisionLog(TempRoot):
         with self.config.decisions_file.open("a") as fh:
             fh.write("{not json\n")
         self.assertEqual(len(decisions.read(self.config)), 1)
-
-
-class TestKeep(TempRoot):
-    """Saving work without ending the session.
-
-    `SessionEnd` is otherwise the only thing that folds, so there was no way to
-    say "that thing I just did is worth keeping" while still working. That is a
-    larger gap than it sounds: recurrence is the automatic route to a candidate
-    and it has never fired on real work.
-    """
-
-    def _work(self, sid="live", cmds=(), prompt="fail over staging"):
-        from skillpp.capture import handle_prompt, handle_tool
-        handle_prompt(self.config, {"session_id": sid, "cwd": "/r",
-                                    "prompt": prompt})
-        for c in cmds:
-            handle_tool(self.config, {"session_id": sid, "cwd": "/r",
-                                      "tool_name": "Bash",
-                                      "tool_input": {"command": c}})
-
-    def test_it_banks_the_work_so_far(self):
-        from skillpp.capture import keep_current
-        self._work(cmds=("./scripts/failover.sh staging", "curl -sI https://staging"))
-        result = keep_current(self.config)
-        self.assertEqual(result.get("status"), "created")
-        self.assertEqual(len(list(Ledger(self.config).all())), 1)
-
-    def test_the_buffer_is_cleared_so_nothing_folds_twice(self):
-        from skillpp.capture import keep_current
-        self._work(cmds=("./scripts/failover.sh staging", "curl -sI https://staging"))
-        keep_current(self.config)
-        self.assertEqual(list(self.config.sessions_dir.glob("*.json")), [])
-
-    def test_what_is_kept_is_marked_as_kept(self):
-        """Provenance matters: this was asked for, not inferred."""
-        from skillpp.capture import keep_current
-        self._work(cmds=("./scripts/failover.sh staging", "curl -sI https://staging"))
-        keep_current(self.config)
-        self.assertEqual([e.source for e in Ledger(self.config).all()], ["kept"])
-
-    def test_an_explicit_keep_overrides_the_guards(self):
-        """A guard exists to stop a detector banking noise, not to overrule a
-        person who has read the work and asked for it."""
-        from skillpp.capture import keep_current
-        # Read-only throughout: at SessionEnd this is discarded as exploration.
-        self._work(cmds=("git log --oneline -5", "git diff", "cat README.md"))
-        self.assertEqual(keep_current(self.config).get("status"), "created")
-
-    def test_no_session_is_reported_not_guessed(self):
-        from skillpp.capture import keep_current
-        self.assertEqual(keep_current(self.config)["status"], "no-session")
-
-    def test_an_empty_buffer_is_not_a_candidate(self):
-        from skillpp.capture import keep_current
-        from skillpp.capture import handle_prompt
-        handle_prompt(self.config, {"session_id": "live", "cwd": "/r",
-                                    "prompt": "thinking about it"})
-        self.assertEqual(keep_current(self.config)["status"], "nothing-yet")
 
 
 class TestReconcile(TempRoot):
@@ -3771,6 +3859,157 @@ class TestWeb(TempRoot):
         self._save("i", status=STATUS_PROMOTED, skill_path=str(skill))
         self.assertEqual(self._rows()["i"]["state"], "installed")
 
+    def test_the_page_lists_each_project_with_its_counts(self):
+        """The switcher's menu: every project on the page, "No project" last."""
+        from skillpp.web import collect_state
+        a, b = self.root / "repo-a", self.root / "repo-b"
+        for repo in (a, b):
+            (repo / ".git").mkdir(parents=True)
+        self._save("x", projects=[str(a)])
+        self._save("y", projects=[str(a / "web")])          # a subfolder: still repo-a
+        self._save("z", projects=[str(b)])
+        self._save("w")                                     # recorded without a folder
+        state = collect_state(self.config)
+        self.assertEqual([(p["name"], p["candidates"]) for p in state["projects"]],
+                         [("repo-a", 2), ("repo-b", 1), ("No project", 1)])
+        rows = {r["id"]: r["projects"] for r in state["rows"]}
+        self.assertEqual(rows["y"], [str(a)])
+        self.assertEqual(rows["w"], [""])
+
+    def test_a_draft_carries_its_project(self):
+        from skillpp.web import collect_state
+        repo = self.root / "repo"
+        (repo / ".git").mkdir(parents=True)
+        self._drafted("x")
+        entry = self.ledger.get("x")
+        entry.projects = [str(repo)]
+        self.ledger.save(entry)
+        state = collect_state(self.config)
+        self.assertEqual(state["drafts"][0]["projects"], [str(repo)])
+        self.assertEqual(state["projects"][0]["drafts"], 1)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_the_page_filters_by_the_chosen_project(self):
+        """All projects, one project, and the entries with none."""
+        import json, subprocess
+        from skillpp.web import PAGE
+        script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
+        state = {"rows": [{"id": "a", "projects": ["/r/a"]}, {"id": "b", "projects": ["/r/b"]},
+                          {"id": "n", "projects": [""]}, {"id": "old", "projects": ["/r/a", "/r/b"]}],
+                 "drafts": [{"id": "a", "projects": ["/r/a"]}], "projects": []}
+        program = script + f"""
+ALL = {json.dumps(state)};
+const shown = p => {{ project = p; applyProject(); return S.rows.map(r => r.id).join(","); }};
+process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.drafts.length]));"""
+        out = json.loads(subprocess.run(["node", "-e", program], capture_output=True,
+                                        text=True, check=True).stdout)
+        self.assertEqual(out, ["a,b,n,old", "a,old", "n", 0])
+
+    def _in_repo(self, eid):
+        """A finished draft whose candidate belongs to a scratch repo."""
+        repo = self.root / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        self._drafted(eid, extra={"references/notes.md": "n"})
+        entry = self.ledger.get(eid)
+        entry.projects = [str(repo)]
+        self.ledger.save(entry)
+        return repo
+
+    def test_install_puts_the_skill_in_its_projects_skills_folder(self):
+        from skillpp.web import collect_state, install_skill
+        repo = self._in_repo("x")
+        result = install_skill(self.config, "x", "project")
+        skill = repo / ".claude" / "skills" / "add-eval-case"
+        self.assertTrue(result["ok"], result)
+        self.assertTrue((skill / "SKILL.md").exists())
+        self.assertTrue((skill / "references" / "notes.md").exists())
+        self.assertFalse((skill / "installed.json").exists(), "bookkeeping is not the skill")
+        draft = collect_state(self.config)["drafts"][0]
+        self.assertEqual((draft["installed"], draft["installed_target"]), (str(skill), "project"))
+        self.assertEqual(self.ledger.get("x").skill_path, str(skill / "SKILL.md"))
+
+    def test_install_just_for_me_uses_the_personal_folder(self):
+        from skillpp.web import install_skill
+        self._in_repo("x")
+        personal = self.root / "home-skills"
+        self.assertTrue(install_skill(self.config, "x", "personal", personal)["ok"])
+        self.assertTrue((personal / "add-eval-case" / "SKILL.md").exists())
+
+    def test_a_draft_with_open_questions_is_not_installed(self):
+        from skillpp.web import install_skill
+        repo = self._in_repo("x")
+        skill = self.config.root / "drafts" / "x" / "SKILL.md"
+        skill.write_text(skill.read_text() + "\n## Open questions\n\n- Which topics?\n")
+        result = install_skill(self.config, "x", "project")
+        self.assertFalse(result["ok"])
+        self.assertFalse((repo / ".claude").exists())
+
+    def test_a_folder_it_did_not_install_is_left_alone(self):
+        from skillpp.web import install_skill
+        repo = self._in_repo("x")
+        theirs = repo / ".claude" / "skills" / "add-eval-case"
+        theirs.mkdir(parents=True)
+        (theirs / "SKILL.md").write_text("someone else's")
+        self.assertFalse(install_skill(self.config, "x", "project")["ok"])
+        self.assertEqual((theirs / "SKILL.md").read_text(), "someone else's")
+
+    def test_a_revision_reaches_the_installed_skill_through_update(self):
+        from skillpp.web import collect_state, install_skill
+        repo = self._in_repo("x")
+        install_skill(self.config, "x", "project")
+        draft = self.config.root / "drafts" / "x" / "SKILL.md"
+        draft.write_text(draft.read_text() + "\n## Traps\n")
+        self.assertTrue(collect_state(self.config)["drafts"][0]["install_stale"])
+        self.assertTrue(install_skill(self.config, "x", "project")["ok"])
+        installed = repo / ".claude" / "skills" / "add-eval-case" / "SKILL.md"
+        self.assertIn("## Traps", installed.read_text())
+        self.assertFalse(collect_state(self.config)["drafts"][0]["install_stale"])
+
+    def test_uninstall_removes_only_what_it_installed(self):
+        from skillpp.web import install_skill, uninstall_skill
+        repo = self._in_repo("x")
+        install_skill(self.config, "x", "project")
+        skill = repo / ".claude" / "skills" / "add-eval-case"
+        (skill / "mine.md").write_text("added by hand")
+        self.assertTrue(uninstall_skill(self.config, "x")["ok"])
+        self.assertFalse((skill / "SKILL.md").exists())
+        self.assertFalse((skill / "references").exists())
+        self.assertEqual((skill / "mine.md").read_text(), "added by hand")
+        self.assertEqual(self.ledger.get("x").skill_path, "")
+
+    def test_uninstall_leaves_no_empty_skills_folder_behind(self):
+        from skillpp.web import install_skill, uninstall_skill
+        repo = self._in_repo("x")
+        install_skill(self.config, "x", "project")
+        uninstall_skill(self.config, "x")
+        self.assertFalse((repo / ".claude" / "skills").exists())
+
+    def test_uninstall_leaves_a_skill_edited_after_install(self):
+        from skillpp.web import install_skill, uninstall_skill
+        repo = self._in_repo("x")
+        install_skill(self.config, "x", "project")
+        installed = repo / ".claude" / "skills" / "add-eval-case" / "SKILL.md"
+        installed.write_text(installed.read_text() + "\nmy own step\n")
+        self.assertFalse(uninstall_skill(self.config, "x")["ok"])
+        self.assertIn("my own step", installed.read_text())
+
+    def test_without_a_project_folder_it_installs_only_for_you(self):
+        from skillpp.web import collect_state, install_skill
+        self._drafted("x")
+        self.assertEqual(collect_state(self.config)["drafts"][0]["project_name"], "")
+        self.assertFalse(install_skill(self.config, "x", "project")["ok"])
+
+    def test_an_install_request_cannot_choose_the_folder(self):
+        """The folder comes from the ledger; a path in the request is ignored,
+        and an unknown target is refused."""
+        from skillpp.web import install_skill
+        repo = self._in_repo("x")
+        elsewhere = self.root / "elsewhere"
+        self.assertFalse(install_skill(self.config, "x", str(elsewhere))["ok"])
+        self.assertFalse(elsewhere.exists())
+        self.assertTrue(install_skill(self.config, "x", "project")["ok"])
+        self.assertTrue((repo / ".claude" / "skills" / "add-eval-case").exists())
+
     def test_loading_the_page_runs_nothing(self):
         import subprocess
         self._save("a")
@@ -3805,6 +4044,18 @@ class TestWeb(TempRoot):
         self.assertIn("# Body", drafts[0]["body"])
         self.assertEqual(drafts[0]["files"], ["SKILL.md", "references/notes.md"],
                          "status.json is the page's bookkeeping, not the skill")
+
+    def test_drafts_are_listed_newest_first_with_when_they_were_written(self):
+        """Told apart by when, not only by name: the draft just asked for is
+        the one being looked for."""
+        import os
+        from skillpp.web import collect_state
+        self._drafted("old", name="zz-older")
+        self._drafted("new", name="aa-newer")
+        os.utime(self.config.root / "drafts" / "old" / "SKILL.md", (1_000_000, 1_000_000))
+        drafts = collect_state(self.config)["drafts"]
+        self.assertEqual([d["id"] for d in drafts], ["new", "old"])
+        self.assertEqual(drafts[1]["drafted_at"], "1970-01-12T13:46:40+00:00")
 
     def test_a_draft_downloads_as_a_folder_ready_for_the_skills_directory(self):
         import io, zipfile
@@ -4086,6 +4337,12 @@ class TestLiveSessions(unittest.TestCase):
         import score
         cls.score = score
         cls.docs = score.load()
+        # A set pointed at and found empty is a mistake worth failing on; no
+        # public sessions recorded yet is not.
+        if not cls.docs and not os.environ.get("SKILLPP_FIXTURES"):
+            raise unittest.SkipTest(
+                "no recorded sessions in tests/fixtures/sessions; point "
+                "SKILLPP_FIXTURES at a set to score one")
 
     def test_every_banked_episode_has_a_family(self):
         """`recurrence.py` refuses to score if labels and episodes disagree.
@@ -4093,19 +4350,20 @@ class TestLiveSessions(unittest.TestCase):
         A family label per banked episode is the ground truth for whether
         repeated work becomes one candidate. If segmentation changes how many
         episodes a session banks, the labels must be rewritten, not silently
-        misaligned.
+        misaligned. How many each family should hold belongs to the set, so it
+        lives beside the sessions, in `expected.json`.
         """
         import recurrence
+        expected = self.score.expected().get("family_sizes")
+        if not expected:
+            self.skipTest("this set has no expected.json family_sizes")
         with tempfile.TemporaryDirectory() as tmp:
             config = Config(Path(tmp) / "skillpp")
             config.ensure_dirs()
             rows = recurrence.fold_all(config)
         sizes = recurrence.evaluate(rows)["sizes"]
-        self.assertEqual(sizes.get("add-eval-case"), 7)
-        self.assertEqual(sizes.get("coverage-writeup"), 2)
-        # Five runs, two of them cut at the review prompt: a recorded gap.
-        self.assertEqual(sizes.get("create-presentation"), 9)
-        self.assertEqual(sizes.get("write-linkedin-post"), 3)
+        for family, size in expected.items():
+            self.assertEqual(sizes.get(family), size, family)
 
     def test_there_are_live_sessions_to_score(self):
         """A silently empty directory would make every test below vacuous."""
@@ -4278,16 +4536,6 @@ class TestFoldResumesAfterOutage(TempRoot):
                          [("npm test", 1, False), ("pytest -q", 1, False)])
         self.assertEqual(self.calls, [], "the judge was asked again on retry")
         self.assertFalse(_session_file(self.config, "two").exists())
-
-    def test_an_explicit_keep_banks_the_rest_unmatched(self):
-        from skillpp.capture import keep_current
-        self._capture()
-        self.down = True
-        result = keep_current(self.config, "two")
-
-        self.assertNotEqual(result["status"], "offline")
-        self.assertEqual(self._occurrences(),
-                         [("npm test", 1, False), ("pytest -q", 1, True)])
 
 
 class TestTurns(TempRoot):
@@ -4638,6 +4886,445 @@ class TestFoldPending(TempRoot):
         popen.return_value.wait.assert_not_called()
 
 
+class TestFrontmatterCharacters(unittest.TestCase):
+    """A description with a dash or an accent survives the scaffold and the
+    reader, instead of reaching the review page as `\\u2014`."""
+
+    def test_an_escaped_description_reads_as_its_characters(self):
+        text = '---\nname: x\ndescription: "Use when a \\u2014 b"\n---\n'
+        self.assertEqual(parse_frontmatter(text)["description"], "Use when a \u2014 b")
+
+    def test_the_scaffold_writes_characters_as_they_are(self):
+        entry = Entry(id="e1", title="t", steps=[{"tool": "Bash", "input": {"command": "ls"}}])
+        text = scaffold_skill(entry, name="x", description="Use when café \u2014 ok")
+        self.assertIn('description: "Use when café \u2014 ok"', text)
+        self.assertEqual(parse_frontmatter(text)["description"], "Use when café \u2014 ok")
+
+
+class TestSessionCatalogue(unittest.TestCase):
+    """The public sessions' ground truth, the kit that records them, and the
+    builder that turns a recording into a fixture against that truth."""
+
+    SESSIONS = Path(__file__).resolve().parent / "fixtures" / "sessions"
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(cls.SESSIONS))
+        import from_transcript
+        cls.ft = from_transcript
+        cls.plans = from_transcript.catalogue()
+
+    @staticmethod
+    def _stream(*parts):
+        """`"p:text"` is a prompt, anything else one work step."""
+        from skillpp.segment import PROMPT_TOOL
+        return [{"tool": PROMPT_TOOL, "input": {"text": p[2:]}} if p.startswith("p:")
+                else {"tool": "Bash", "input": {"command": p}} for p in parts]
+
+    def test_every_prompt_in_the_catalogue_is_in_the_kit_word_for_word(self):
+        kit = (self.SESSIONS / "RECORDING.md").read_text(encoding="utf-8")
+        for sid, plan in self.plans.items():
+            for n, prompt in enumerate(plan["prompts"], 1):
+                with self.subTest(session=sid, prompt=n):
+                    self.assertIn(f"`{prompt['text']}`", kit)
+
+    def test_the_catalogue_adds_up(self):
+        """Every cut starts a task, and every task but look-only has a family."""
+        for sid, plan in self.plans.items():
+            with self.subTest(sid):
+                n = len(plan["prompts"])
+                self.assertTrue(all(1 < c <= n for c in plan["cuts"]), plan["cuts"])
+                tasks = len(plan["cuts"]) + 1
+                self.assertEqual(len(plan["families"]), 0 if "detect.look-only" in plan["checks"]
+                                 else tasks)
+                self.assertEqual(len(plan["subjects"]), len(plan["families"]))
+                for c in plan["cuts"]:
+                    self.assertEqual(plan["prompts"][c - 1]["role"], "switch")
+
+    def test_a_cut_before_a_prompt_lands_after_the_last_step_before_it(self):
+        steps = self._stream("p:one", "a", "b", "p:more", "c", "p:two", "d", "e")
+        self.assertEqual(self.ft.boundary_after(steps, [3]), [3])
+
+    def test_a_cut_with_no_work_before_it_is_refused(self):
+        steps = self._stream("p:one", "p:two", "a")
+        with self.assertRaises(SystemExit):
+            self.ft.boundary_after(steps, [2])
+
+    def test_an_answer_to_the_agent_does_not_shift_the_cut(self):
+        """The developer typed a reply the catalogue did not plan: the cut
+        still falls where the planned prompt starts the new task."""
+        planned = [{"role": "explore", "text": "Look at the code first"},
+                   {"role": "switch", "text": "Now write the release notes"}]
+        steps = self._stream("p:Look at the code first", "a",
+                             "p:yes, the second option", "b",
+                             "p:Now write the release notes", "c", "d")
+        which = self.ft.align(steps, planned)
+        self.assertEqual(which, [1, "answer", 2])
+        self.assertEqual(self.ft.boundary_after(steps, [2], which), [2])
+
+    def test_a_planned_prompt_missing_from_the_recording_is_refused(self):
+        planned = [{"role": "explore", "text": "Look at the code first"},
+                   {"role": "switch", "text": "Now write the release notes"}]
+        with self.assertRaises(SystemExit):
+            self.ft.align(self._stream("p:Look at the code first", "a"), planned)
+
+    def test_a_task_under_three_steps_is_flagged(self):
+        steps = self._stream("p:one", "a", "b", "c", "p:two", "d")
+        self.assertEqual(self.ft.thin_tasks(steps, [3]), [(2, 1)])
+
+    def test_the_judge_is_scored_by_the_role_of_each_prompt(self):
+        import score
+        steps = self._stream("p:start", "a", "b", "p:fix it", "c", "p:other job", "d", "e")
+        steps[2]["end"] = True          # a cut at the correction: false
+        steps[4]["end"] = False         # no cut at the switch: missed
+        doc = {"tag": "t", "steps": steps,
+               "truth": {"roles": ["explore", "correct", "switch"], "boundary_after": [3]}}
+        self.assertEqual(score.cuts_by_role(doc), {
+            "correct": {"asked": 1, "false": 1, "cuts": 0, "missed": 0},
+            "switch": {"asked": 1, "false": 0, "cuts": 1, "missed": 1}})
+
+    def test_a_gap_shared_by_two_prompts_belongs_to_the_first(self):
+        """A switch answered in words alone, then "create it": one gap, the switch's."""
+        import score
+        steps = self._stream("p:start", "a", "b", "p:new job, propose only", "p:create it", "c", "d")
+        steps[2]["end"] = True
+        doc = {"tag": "t", "steps": steps,
+               "truth": {"roles": ["explore", "switch", "implement"], "boundary_after": [2]}}
+        self.assertEqual(score.cuts_by_role(doc),
+                         {"switch": {"asked": 1, "false": 0, "cuts": 1, "missed": 0}})
+
+    def test_merged_pairs_are_counted_by_how_alike_the_runs_are(self):
+        import recurrence
+        rows = [{"family": "f", "entry": "e1", "kind": "code", "level": "identical", "subject": "x"},
+                {"family": "f", "entry": "e1", "kind": "code", "level": "identical", "subject": "x"},
+                {"family": "f", "entry": "e2", "kind": "code", "level": None, "subject": "y"}]
+        levels = recurrence.evaluate(rows)["levels"]
+        self.assertEqual(levels[("identical", "code")], {"should": 1, "merged": 1})
+        self.assertEqual(levels[("different subject", "code")], {"should": 2, "merged": 0})
+
+    @unittest.skipIf(shutil.which("git") is None, "needs git")
+    def test_setup_gives_code_sessions_a_repo_committed_by_nobody_real(self):
+        import subprocess
+        setup = self.SESSIONS / "recording" / "setup.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            for sid in ("C-3", "P-2said"):
+                subprocess.run(["sh", str(setup), sid, tmp], check=True,
+                               capture_output=True)
+            log = subprocess.run(["git", "-C", f"{tmp}/C-3", "log", "--format=%an <%ae>"],
+                                 capture_output=True, text=True, check=True).stdout
+            self.assertEqual(log.strip(), "Recorder <recorder@example.com>")
+            self.assertEqual(sorted(os.listdir(f"{tmp}/P-2said")),
+                             ["CHANGELOG.md", "meeting-1.md"])
+
+    def test_the_seed_repo_lacks_every_feature_the_prompts_ask_for(self):
+        """A feature prompt asking for what already works would measure
+        nothing: `isalnum()` keeps `é`, so the seed must keep ASCII only."""
+        seed = str(self.SESSIONS / "recording" / "seed-repo")
+        sys.path.insert(0, seed)
+        try:
+            from textkit.slugify import slugify
+            from textkit.titlecase import titlecase
+            from textkit import wordfreq
+        finally:
+            sys.path.remove(seed)
+            for name in [m for m in sys.modules if m == "textkit" or m.startswith("textkit.")]:
+                del sys.modules[name]
+        self.assertEqual(slugify("Café au lait"), "caf-au-lait")
+        self.assertEqual(titlecase("don't stop the music"), "Don'T Stop The Music")
+        for option in ("--top", "--min-length", "--json"):
+            with self.subTest(option), self.assertRaises(SystemExit), \
+                    mock.patch("sys.stderr"):
+                wordfreq.main([option, "3", "f.txt"])
+
+
+class TestDraftCheck(unittest.TestCase):
+    """The criteria a drafted SKILL.md is held to, run on hand-written drafts,
+    so the checker is known to fail what it should before a real draft runs."""
+
+    GOOD = """---
+name: talk-deck-from-docs
+description: "Use when someone needs a short talk built from a document: outline first, approval, then the deck."
+metadata:
+  provenance: "ledger:abc123"
+---
+
+# talk-deck-from-docs
+
+## When to use
+
+Someone asks for slides drawn from a document they point at.
+
+## Procedure
+
+1. Read the source material the user names.
+2. Propose an outline of the slides; keep to the length the user asks for, e.g. 6 slides.
+3. Check every claim in the outline against the source and report what is not backed.
+4. Wait for the user to approve the outline before building anything.
+5. Build the deck as a .pptx file.
+6. Open the file and check the slides match the approved outline.
+"""
+    LOG = "# 2026-09-22T08:00:00+00:00  exit 0  60.0s\n"
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
+        import draft_check
+        cls.dc = draft_check
+        data = draft_check.load_cases()
+        cls.case, cls.hedge = data["cases"]["draft.procedure.deck"], data["hedge"]
+
+    def _failed(self, text, log=None):
+        rows = self.dc.evaluate(text, self.LOG if log is None else log, "abc123",
+                                {"tag": "5d99e183", "steps": [{"tool_returned": "[main 1a2b3c4] x"}]},
+                                self.case, self.hedge)
+        return {r["id"] for r in rows if not r["ok"]}
+
+    def test_a_good_draft_passes_every_criterion(self):
+        self.assertEqual(self._failed(self.GOOD), set())
+
+    def test_building_before_approval_fails(self):
+        swapped = self.GOOD.replace(
+            "4. Wait for the user to approve the outline before building anything.\n"
+            "5. Build the deck as a .pptx file.",
+            "4. Build the deck as a .pptx file.\n"
+            "5. Wait for the user to approve it.")
+        self.assertIn("order D4<=D5", self._failed(swapped))
+
+    def test_a_setting_from_that_day_stated_as_a_rule_fails(self):
+        rule = self.GOOD.replace("keep to the length the user asks for, e.g. 6 slides",
+                                 "always use 6 slides")
+        self.assertIn("settings", self._failed(rule))
+
+    def test_anything_from_the_recording_fails(self):
+        self.assertIn("G8", self._failed(self.GOOD + "\nSee ${HOME}/skillpp-recordings.\n"))
+        self.assertIn("G8", self._failed(self.GOOD + "\nIt was commit 1a2b3c4.\n"))
+
+    def test_pasted_shell_fails(self):
+        block = "\n```bash\ncd x\npython3 a.py\npython3 b.py\ngit commit\n```\n"
+        self.assertIn("G9", self._failed(self.GOOD + block))
+
+    def test_the_run_name_in_the_description_fails(self):
+        self.assertIn("meta", self._failed(self.GOOD.replace("from a document", "from the skillpp README")))
+
+    def test_a_declined_or_failed_run_fails(self):
+        self.assertIn("G1", self._failed(self.GOOD, log="# t  exit 1  1.0s\n"))
+        self.assertIn("G1", self._failed(self.GOOD, log=self.LOG + "SKILLPP-DECLINE: one bug\n"))
+
+    def test_the_bare_template_fails(self):
+        self.assertIn("G5", self._failed(self.GOOD + "\n<!-- skillpp:write-the-procedure -->\n"))
+
+    def test_steps_written_as_subheadings_are_read_as_steps(self):
+        steps = self.GOOD.split("## Procedure")[1]
+        as_headings = "\n".join(
+            "### " + line if line[:2].strip(".").isdigit() else line for line in steps.splitlines())
+        self.assertEqual(self._failed(self.GOOD.split("## Procedure")[0] + "## Procedure" + as_headings), set())
+
+    def test_a_wrapped_question_with_its_mark_mid_item_passes(self):
+        text = self.GOOD + ("\n## Open questions\n\n- Is six the default, or asked each time? The run\n"
+                            "  used six without asking.\n")
+        self.assertNotIn("G10", self._failed(text))
+
+    def test_a_setting_asked_about_is_not_a_rule(self):
+        text = self.GOOD + "\n## Open questions\n\n- Should it always be 6 slides?\n"
+        self.assertNotIn("settings", self._failed(text))
+
+    def test_a_negation_on_the_line_before_does_not_count_as_building(self):
+        wrapped = self.GOOD.replace(
+            "2. Propose an outline of the slides;",
+            "2. Propose an outline of the slides. Do not\n   generate the deck yet;")
+        self.assertEqual(self._failed(wrapped), set())
+
+    def test_reader_is_not_read(self):
+        spec = {"all": [r"\b(read|reads|reading|look at|inspect|explore)\b", r"\b(propose|assess)"]}
+        self.assertIsNone(self.dc.find_concept(["1. Propose it so the reader sees why."], spec, {}))
+        self.assertEqual(self.dc.find_concept(["1. Read the file and propose it."], spec, {}), 1)
+
+    def test_the_judge_reply_is_read_from_its_json(self):
+        reply = 'Here you go:\n[{"id": "D1", "answer": "yes", "quote": "x"}]\nDone.'
+        self.assertEqual(self.dc.parse_judge(reply), [{"id": "D1", "answer": "yes", "quote": "x"}])
+        self.assertEqual(self.dc.parse_judge("no json here"), [])
+
+    def test_a_judged_yes_counts_only_with_a_quote_from_the_draft(self):
+        answers = [{"id": "D4", "answer": "yes", "quote": "4. Wait for the user to approve the outline before building anything."},
+                   {"id": "D5", "answer": "yes", "quote": "Build the slides at once without asking."},
+                   {"id": "D6", "answer": "no", "quote": ""}]
+        rows = {r["id"]: r for r in self.dc.judged_rows(self.GOOD, self.case, answers)}
+        self.assertTrue(rows["D4"]["ok"])
+        self.assertFalse(rows["D5"]["ok"], "an invented quote is not evidence")
+        self.assertFalse(rows["D6"]["ok"])
+        self.assertFalse(rows["D1"]["ok"], "an unanswered question fails")
+
+    def test_a_quote_matches_despite_markdown_emphasis(self):
+        text = self.GOOD.replace("5. Build the deck as a .pptx file.", "5. **Build** the deck as a `.pptx` file.")
+        rows = self.dc.judged_rows(text, self.case,
+                                   [{"id": "D5", "answer": "yes", "quote": "5. Build the deck as a .pptx file."}])
+        self.assertTrue(next(r for r in rows if r["id"] == "D5")["ok"])
+
+    def test_an_open_question_that_is_a_statement_fails(self):
+        self.assertIn("G10", self._failed(self.GOOD + "\n## Open questions\n\n- The limit is unclear.\n"))
+
+
+class TestNothingPrivateIsTracked(unittest.TestCase):
+    """Everything tracked here is published. Real sessions once carried a
+    colleague's name, an internal hostname and an account id into the repo;
+    `scripts/leak_guard.py` checks the generic shapes of those on every run.
+    The terms specific to one person's work are checked by the same script
+    with a denylist kept outside the repo."""
+
+    def test_no_home_path_address_id_or_credential_is_tracked(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        import leak_guard
+        self.assertEqual(leak_guard.scan_tree([]), [])
+
+    def test_the_guard_sees_what_it_is_for(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        import re
+        import leak_guard
+        # Assembled here, so this file does not trip the scan it tests.
+        hits = leak_guard.scan_text("x", "\n".join([
+            "cd /" + "Users/jane/work", "mail j.doe" + "@employer.de",
+            "id " + "-".join(["12345678", "90ab", "cdef", "1234", "567890abcdef"]),
+            "sk-" + "ant-api03-abcdefghijklmnopqrstuvwxyz",
+            "the Mergecommand ran", "see Internal_Project docs"]),
+            [re.compile(r"(?<![A-Za-z0-9])internal(?![A-Za-z0-9])", re.I),
+             re.compile(r"(?<![A-Za-z0-9])command(?![A-Za-z0-9])", re.I)])
+        kinds = [hit.split(": ")[1] for hit in hits]
+        self.assertEqual(kinds, ["home path", "email", "uuid", "secret", "denylist"])
+
+    def test_a_recorded_session_cannot_keep_half_a_home_path(self):
+        """The fixture builder cut each field to 2,000 characters before
+        templating `$HOME`, so a path crossing the cut kept the home folder and
+        the first letter of the account name, and passed the check."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "sessions"))
+        import from_transcript
+        home = os.path.expanduser("~")
+        uid = "-".join(["12345678", "90ab", "cdef", "1234", "567890abcdef"])
+        row = {"text": "x" * 1990 + home + "/proj/a.py, account " + uid}
+        text = from_transcript._template(row)["text"]
+        self.assertNotIn(os.path.basename(home), text[:2000])
+        self.assertTrue(text[:2000].endswith("${HOME}/pr"))
+        self.assertNotIn(uid, text)
+
+
+class TestShippedCommands(unittest.TestCase):
+    """The slash commands ship inside the package, so an installed copy has
+    them. `install` used to copy `/skillpp-review` only, and `--remove` left
+    even that one behind."""
+
+    def test_install_copies_the_commands_a_developer_types(self):
+        from skillpp.install import install_command_files
+        with tempfile.TemporaryDirectory() as tmp:
+            written = install_command_files(Path(tmp) / "commands")
+            self.assertEqual(sorted(p.name for p in written),
+                             ["skillpp-new.md", "skillpp-review.md"])
+            self.assertTrue(all(p.read_text(encoding="utf-8").strip() for p in written))
+
+    def test_remove_keeps_a_command_the_developer_edited(self):
+        from skillpp.install import install_command_files, remove_command_files
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "commands"
+            install_command_files(target)
+            (target / "skillpp-new.md").write_text("mine now", encoding="utf-8")
+            removed = remove_command_files(target)
+            self.assertEqual(sorted(p.name for p in removed), ["skillpp-review.md"])
+            self.assertEqual((target / "skillpp-new.md").read_text(), "mine now")
+
+    def test_an_installed_package_hooks_through_its_console_script(self):
+        """A PYTHONPATH into a venv's site-packages names the Python version and
+        breaks with the next upgrade; the console script's path does not."""
+        from skillpp.install import MARKER, hook_command
+        with tempfile.TemporaryDirectory() as site:
+            installed = hook_command(package_root=Path(site),
+                                     script="/home/dev/.local/bin/skillpp")
+            self.assertEqual(installed, "/home/dev/.local/bin/skillpp hook")
+            spaced = hook_command(package_root=Path(site),
+                                  script="/Users/dev/My Tools/skillpp")
+            self.assertIn("-m skillpp hook", spaced)
+            self.assertTrue(all(MARKER in c for c in (installed, spaced)))
+
+
+class TestInstallModels(TempRoot):
+    """`install` brings the two local models too, so a new user runs one
+    command instead of learning Ollama's first. Ollama itself is an app with its
+    own installer: missing, it is explained, and the hooks go in anyway."""
+
+    def setUp(self):
+        super().setUp()
+        import skillpp.cli as cli
+        self.cli = cli
+        self.project = self.root / "proj"
+        (self.project / ".claude").mkdir(parents=True)
+        self.pulled = []
+        self._stub(models=[self.config.local_model], err="")
+        pull = lambda config, name: self.pulled.append(name) or ""
+        saved = cli._pull_model
+        cli._pull_model = pull
+        self.addCleanup(lambda: setattr(cli, "_pull_model", saved))
+
+    def _stub(self, models, err):
+        saved = self.cli._available_models
+        self.cli._available_models = lambda config: (models, err)
+        self.addCleanup(lambda: setattr(self.cli, "_available_models", saved))
+
+    def _run(self, *argv):
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out), mock.patch("sys.stderr"):
+            code = self.cli.main(["--root", str(self.config.root), "install",
+                                  "--project", str(self.project), *argv])
+        return code, out.getvalue()
+
+    def test_a_dry_run_names_the_missing_model_and_downloads_nothing(self):
+        code, out = self._run()
+        self.assertEqual(code, 0)
+        self.assertIn("nomic-embed-text", out)
+        self.assertIn("--apply downloads it", out)
+        self.assertEqual(self.pulled, [])
+
+    def test_apply_pulls_only_what_is_missing_after_the_hooks(self):
+        code, out = self._run("--apply")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.pulled, [self.config.embed_model])
+        self.assertLess(out.index("wrote"), out.index("models (Ollama"))
+
+    def test_hooks_already_in_place_still_bring_the_models(self):
+        self._run("--apply", "--no-models")
+        self.assertEqual(self.pulled, [])
+        self._run("--apply")
+        self.assertEqual(self.pulled, [self.config.embed_model])
+
+    def test_without_ollama_the_hooks_go_in_and_it_says_how_to_get_it(self):
+        self._stub(models=[], err="connection refused")
+        code, out = self._run("--apply")
+        self.assertEqual(code, 0)
+        self.assertIn("Ollama is not running", out)
+        self.assertEqual(self.pulled, [])
+        self.assertTrue((self.project / ".claude" / "settings.json").exists())
+
+    def test_removing_leaves_the_models_alone(self):
+        self._run("--apply")
+        self.pulled.clear()
+        code, out = self._run("--remove", "--apply")
+        self.assertEqual(code, 0)
+        self.assertNotIn("models (Ollama", out)
+
+    def test_a_pull_reports_progress_and_errors_from_the_stream(self):
+        import io
+        from contextlib import redirect_stdout
+        from skillpp import cli
+        real = _REAL_PULL
+        lines = [b'{"status":"pulling","total":100,"completed":50}\n',
+                 b'{"status":"success"}\n']
+        with mock.patch("urllib.request.urlopen") as urlopen, redirect_stdout(io.StringIO()) as out:
+            urlopen.return_value.__enter__.return_value = lines
+            self.assertEqual(real(self.config, "m"), "")
+        self.assertIn(" 50%", out.getvalue())
+        with mock.patch("urllib.request.urlopen") as urlopen, redirect_stdout(io.StringIO()):
+            urlopen.return_value.__enter__.return_value = [b'{"error":"pull model manifest: not found"}\n']
+            self.assertIn("not found", real(self.config, "m"))
+
+
 class TestInstallScopes(TempRoot):
     """Where the hooks go is said out loud, and they come back out cleanly.
 
@@ -4717,6 +5404,15 @@ class TestInstallScopes(TempRoot):
 
 class TestDoctor(TempRoot):
     """One command that answers "is skillpp actually running?"."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # Doctor asks Ollama which models it holds. Answered here, so the result
+        # does not depend on whether this machine runs Ollama.
+        import skillpp.cli as cli
+        real = cli._available_models
+        cli._available_models = lambda config: ([], "not reachable (stubbed)")
+        self.addCleanup(lambda: setattr(cli, "_available_models", real))
 
     def _run(self, *argv):
         import io
@@ -4881,10 +5577,11 @@ class TestJudgeInput(unittest.TestCase):
     what was measured. Each optional slot exists to be measured one at a time
     (`tests/benchmarks/judge_replay.py`); none may move production."""
 
-    # All 45 judge prompts over the live fixtures, rendered before the slots
-    # existed: every session's steps set to "not a boundary", every gap asked
-    # in order, the stub answering "no" so no span ever resets.
-    PINNED = "a919869b3998cc6e242114f38d73476995e5623b61480a79e0ba4b863725259f"
+    # Every judge prompt over a set of recorded sessions, rendered before the
+    # slots existed: each session's steps set to "not a boundary", every gap
+    # asked in order, the stub answering "no" so no span ever resets. How many
+    # there are and their digest belong to the set, so they live in its
+    # `expected.json` under "judge_prompts".
 
     def setUp(self):
         import skillpp.boundary as boundary
@@ -4896,13 +5593,13 @@ class TestJudgeInput(unittest.TestCase):
         self.addCleanup(lambda: [setattr(boundary, k, v) for k, v in saved.items()])
 
     def _prompts(self):
-        import glob
         import hashlib
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "sessions"))
+        import score
         seen = []
         self.boundary.ask = lambda model, prompt, **kw: (seen.append(prompt), "no")[1]
-        for path in sorted(glob.glob(str(Path(__file__).parent / "fixtures" /
-                                         "sessions" / "*.json"))):
-            steps = json.loads(Path(path).read_text(encoding="utf-8"))["steps"]
+        for doc in score.load():
+            steps = doc["steps"]
             for step in steps:
                 if not is_prompt(step):
                     step["end"] = False
@@ -4912,9 +5609,14 @@ class TestJudgeInput(unittest.TestCase):
         return seen, hashlib.sha256("\x00".join(seen).encode()).hexdigest()
 
     def test_the_defaults_render_every_measured_prompt_unchanged(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "sessions"))
+        import score
+        pinned = score.expected().get("judge_prompts")
+        if not pinned:
+            self.skipTest("this set has no expected.json judge_prompts")
         seen, digest = self._prompts()
-        self.assertEqual(len(seen), 45)
-        self.assertEqual(digest, self.PINNED)
+        self.assertEqual(len(seen), pinned["count"])
+        self.assertEqual(digest, pinned["sha256"])
 
     def _gap(self, **slots):
         b = self.boundary
@@ -5036,6 +5738,61 @@ class TestJudgeInput(unittest.TestCase):
         b.judge({"tool": "Bash", "input": {"command": "x"}}, model="m", host="h")
         self.assertIs(sent["think"], False)
         self.assertNotIn("reserve", sent)
+
+
+class TestWebRefusesOtherPages(TempRoot):
+    """The review page binds to loopback, which keeps other machines out but
+    not other pages in the same browser. A POST starts `claude -p` with Write
+    and Edit, and the page used to accept one from anywhere: its own calls sent
+    `text/plain`, a body any site may send cross-site without asking."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        import threading
+        from skillpp.web import serve
+        self.httpd = serve(self.config, port=0, open_browser=False)
+        self.port = self.httpd.server_address[1]
+        worker = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+
+    def _ask(self, method, path, body=None, **headers):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        self.addCleanup(conn.close)
+        conn.request(method, path, body=body, headers=headers)
+        resp = conn.getresponse()
+        return resp.status, resp.read()
+
+    def _json_post(self, **headers):
+        return self._ask("POST", "/api/accept", json.dumps({"id": "nope"}),
+                         **{"Content-Type": "application/json", **headers})
+
+    def test_its_own_page_and_local_tools_get_through(self):
+        status, body = self._json_post(Origin=f"http://127.0.0.1:{self.port}")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["error"], "no such entry")
+        self.assertEqual(self._json_post()[0], 200, "curl sends no Origin")
+        self.assertEqual(self._ask("GET", "/api/state")[0], 200)
+
+    def test_a_body_another_site_could_send_is_refused(self):
+        status, _ = self._ask("POST", "/api/accept", json.dumps({"id": "nope"}),
+                              **{"Content-Type": "text/plain;charset=UTF-8"})
+        self.assertEqual(status, 415)
+
+    def test_a_post_from_another_origin_is_refused(self):
+        self.assertEqual(self._json_post(Origin="https://example.com")[0], 403)
+        self.assertEqual(self._json_post(Origin="null")[0], 403)
+
+    def test_a_rebound_host_is_refused_even_for_reading(self):
+        status, _ = self._ask("GET", "/api/state", Host=f"attacker.example:{self.port}")
+        self.assertEqual(status, 403)
+
+    def test_the_page_sends_json(self):
+        from skillpp.web import PAGE
+        self.assertIn('headers: {"Content-Type": "application/json"}', PAGE)
+        self.assertNotIn('method:"POST", body:', PAGE)
 
 
 class TestStepGroups(unittest.TestCase):
@@ -5355,12 +6112,6 @@ class TestFoldLock(TempRoot):
             fold_session_now(self.config, "s1")
         self.assertFalse(_lock_file(self.config, "s1").exists())
 
-    def test_keep_takes_the_same_lock(self):
-        from skillpp.capture import keep_current
-        self._session()
-        self._lock()
-        self.assertEqual(keep_current(self.config, "s1")["status"], "folding")
-        self.assertEqual(list(Ledger(self.config).all()), [])
 
 
 class TestTranscriptExtract(TempRoot):

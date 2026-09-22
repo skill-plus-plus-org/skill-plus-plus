@@ -21,13 +21,22 @@ from pathlib import Path
 HOOK_EVENTS = ("UserPromptSubmit", "PostToolUse", "SessionEnd", "SessionStart")
 MARKER = "skillpp hook"
 
+# The slash commands ship inside the package, so an installed copy has them too.
+COMMANDS = Path(__file__).resolve().parent / "commands"
+# The ones a developer types. `skillpp-draft.md` is read by `skillpp draft`.
+INTERACTIVE_COMMANDS = ("skillpp-review.md", "skillpp-new.md")
 
-def hook_command(python: str | None = None, package_root: Path | None = None) -> str:
+
+def hook_command(python: str | None = None, package_root: Path | None = None,
+                 script: str | None = None) -> str:
     """The shell command Claude Code will run for each hook event.
 
-    ``PYTHONPATH`` makes ``-m skillpp`` importable from a checkout without
-    installing the package. The ledger root is deliberately *not* passed, so it
-    defaults to ``~/.claude/skillpp`` rather than landing inside the repo.
+    From a checkout, ``PYTHONPATH`` makes ``-m skillpp`` importable without
+    installing the package. Installed (``pipx install``), the console script is
+    used instead: its path survives an upgrade, while a ``PYTHONPATH`` into a
+    venv's ``site-packages`` names the Python version and breaks with it. The
+    ledger root is deliberately *not* passed, so it defaults to
+    ``~/.claude/skillpp`` rather than landing inside the repo.
 
     The interpreter is looked up on PATH rather than pinned. This used to write
     ``sys.executable`` — on the machine this was developed on, that is
@@ -37,6 +46,13 @@ def hook_command(python: str | None = None, package_root: Path | None = None) ->
     Pass *python* to pin one deliberately.
     """
     root = package_root or Path(__file__).resolve().parent.parent
+    checkout = (root / "bin" / "skillpp").is_file()
+    if not checkout and not python:
+        script = script or shutil.which("skillpp")
+        # A path with a space would need quoting, and a quoted path no longer
+        # contains MARKER; the PYTHONPATH form below still works for it.
+        if script and not any(c.isspace() for c in script):
+            return f"{script} hook"
     interpreter = f'"{python}"' if python else "python3"
     return f'PYTHONPATH="{root}" {interpreter} -m skillpp hook'
 
@@ -160,7 +176,7 @@ def build_plugin_bundle(skills: list[Path], out_dir: Path, name: str,
         <root>/commands/<name>.md          (optional)
 
     This is the portable unit: the same bundle is what a team pull request
-    ships (README §13) and what a plugin-install flow consumes. It is *not* a
+    ships (docs/design.md §13) and what a plugin-install flow consumes. It is *not* a
     way to sideload into Claude Desktop's session cache — that directory is
     provisioned per session and anything written there is transient.
     """
@@ -253,11 +269,30 @@ def build_upload_bundle(skill_md: Path, out_dir: Path) -> str:
         root_dir=str(skill_dir.parent), base_dir=skill_dir.name)
 
 
-def install_command_file(target_dir: Path, source: Path | None = None) -> Path:
-    """Copy the /skillpp-review slash command into .claude/commands/."""
-    source = source or (Path(__file__).resolve().parent.parent / "commands" /
-                        "skillpp-review.md")
+def install_command_files(target_dir: Path) -> list[Path]:
+    """Copy the slash commands a developer types into ``.claude/commands/``.
+
+    Only `/skillpp-review` used to be copied, so `/skillpp-new` had to be
+    found and copied by hand. `/skillpp-draft` is not
+    among them: nobody types it, `skillpp draft` hands it to its own agent.
+    """
     target_dir.mkdir(parents=True, exist_ok=True)
-    dest = target_dir / "skillpp-review.md"
-    shutil.copy2(source, dest)
-    return dest
+    written = []
+    for name in INTERACTIVE_COMMANDS:
+        dest = target_dir / name
+        shutil.copy2(COMMANDS / name, dest)
+        written.append(dest)
+    return written
+
+
+def remove_command_files(target_dir: Path) -> list[Path]:
+    """Delete the slash commands `install_command_files` put there — only
+    copies still identical to the shipped file, so one the developer edited
+    stays."""
+    removed = []
+    for name in INTERACTIVE_COMMANDS:
+        dest = target_dir / name
+        if dest.is_file() and dest.read_bytes() == (COMMANDS / name).read_bytes():
+            dest.unlink()
+            removed.append(dest)
+    return removed

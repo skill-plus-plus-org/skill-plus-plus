@@ -1,0 +1,945 @@
+{
+ "about": "Ground truth for the public sessions, fixed before recording. RECORDING.md is the readable kit; a test checks every prompt here appears in it verbatim. Cuts are prompt numbers (1-based): the task changes when that prompt is typed.",
+ "sessions": [
+  {
+   "id": "C-F1",
+   "kind": "code",
+   "surface": "cli",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Look at textkit/wordfreq.py and its tests, and suggest how to add a --top option that sets how many words are printed. Don't change anything yet."
+    },
+    {
+     "role": "implement",
+     "text": "Sounds good, implement it."
+    },
+    {
+     "role": "test",
+     "text": "Add a test for --top and run the whole test suite."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it with a short message."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "add-feature-with-tests"
+   ],
+   "subjects": [
+    "wordfreq --top"
+   ],
+   "checks": [
+    "merge.fixed",
+    "detect.one"
+   ],
+   "level": "identical"
+  },
+  {
+   "id": "C-F2",
+   "kind": "code",
+   "surface": "desktop",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Look at textkit/wordfreq.py and its tests, and suggest how to add a --top option that sets how many words are printed. Don't change anything yet."
+    },
+    {
+     "role": "implement",
+     "text": "Sounds good, implement it."
+    },
+    {
+     "role": "test",
+     "text": "Add a test for --top and run the whole test suite."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it with a short message."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "add-feature-with-tests"
+   ],
+   "subjects": [
+    "wordfreq --top"
+   ],
+   "checks": [
+    "merge.fixed",
+    "detect.one"
+   ],
+   "level": "identical"
+  },
+  {
+   "id": "C-F3",
+   "kind": "code",
+   "surface": "cli",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Look at textkit/wordfreq.py and its tests, and suggest how to add a --top option that sets how many words are printed. Don't change anything yet."
+    },
+    {
+     "role": "implement",
+     "text": "Sounds good, implement it."
+    },
+    {
+     "role": "test",
+     "text": "Add a test for --top and run the whole test suite."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it with a short message."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "add-feature-with-tests"
+   ],
+   "subjects": [
+    "wordfreq --top"
+   ],
+   "checks": [
+    "merge.fixed",
+    "detect.one"
+   ],
+   "level": "identical"
+  },
+  {
+   "id": "C-V1",
+   "kind": "code",
+   "surface": "desktop",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Look at textkit/wordfreq.py and suggest how to add a --min-length option that skips words shorter than N letters. Don't change anything yet."
+    },
+    {
+     "role": "implement",
+     "text": "Go ahead and implement it."
+    },
+    {
+     "role": "test",
+     "text": "Add tests for --min-length and run all the tests."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "add-feature-with-tests"
+   ],
+   "subjects": [
+    "wordfreq --min-length"
+   ],
+   "checks": [
+    "merge.varied",
+    "detect.one"
+   ],
+   "level": "same-goal"
+  },
+  {
+   "id": "C-V2",
+   "kind": "code",
+   "surface": "cli",
+   "prompts": [
+    {
+     "role": "test",
+     "text": "i want wordfreq to skip words shorter than N letters with a --min-length flag. write the test for it first"
+    },
+    {
+     "role": "implement",
+     "text": "now make it pass"
+    },
+    {
+     "role": "test",
+     "text": "run all tests"
+    },
+    {
+     "role": "commit",
+     "text": "commit"
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "add-feature-with-tests"
+   ],
+   "subjects": [
+    "wordfreq --min-length"
+   ],
+   "checks": [
+    "merge.varied",
+    "detect.one"
+   ],
+   "level": "same-goal"
+  },
+  {
+   "id": "C-V3",
+   "kind": "code",
+   "surface": "desktop",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "How would you add a --min-length option to textkit/wordfreq.py? Read the code first and propose something, no edits yet."
+    },
+    {
+     "role": "implement",
+     "text": "Do it."
+    },
+    {
+     "role": "review",
+     "text": "Two things. Check that --min-length 0 behaves exactly like before, and that the README mentions the new option."
+    },
+    {
+     "role": "correct",
+     "text": "Make the default 1 instead of 0, and rerun the tests."
+    },
+    {
+     "role": "commit",
+     "text": "Looks good, commit."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "add-feature-with-tests"
+   ],
+   "subjects": [
+    "wordfreq --min-length"
+   ],
+   "checks": [
+    "merge.varied",
+    "detect.one",
+    "detect.review"
+   ],
+   "level": "same-goal"
+  },
+  {
+   "id": "C-N1",
+   "kind": "code",
+   "surface": "cli",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Read textkit/slugify.py and tell me what you would simplify without changing its behaviour. Don't edit yet."
+    },
+    {
+     "role": "implement",
+     "text": "Do it."
+    },
+    {
+     "role": "test",
+     "text": "Run the tests to show nothing changed."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "refactor-keeping-tests-green"
+   ],
+   "subjects": [
+    "slugify"
+   ],
+   "checks": [
+    "merge.near-miss"
+   ]
+  },
+  {
+   "id": "C-2said",
+   "kind": "code",
+   "surface": "cli",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Look at textkit/wordfreq.py and suggest how to add a --json flag that prints the counts as JSON. Don't change anything yet."
+    },
+    {
+     "role": "implement",
+     "text": "Implement it."
+    },
+    {
+     "role": "test",
+     "text": "Add a test and run all the tests."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it."
+    },
+    {
+     "role": "switch",
+     "text": "Okay, now we will do something else. I want a Makefile for this project — look at how the tests are run and suggest the targets. Don't create it yet."
+    },
+    {
+     "role": "implement",
+     "text": "Sounds right, create it with a test target and a clean target that removes __pycache__."
+    },
+    {
+     "role": "test",
+     "text": "Run both targets."
+    },
+    {
+     "role": "commit",
+     "text": "Commit the Makefile."
+    }
+   ],
+   "cuts": [
+    5
+   ],
+   "families": [
+    "add-feature-with-tests",
+    "write-makefile"
+   ],
+   "subjects": [
+    "wordfreq --json",
+    null
+   ],
+   "checks": [
+    "detect.two.said",
+    "merge.from-multi"
+   ]
+  },
+  {
+   "id": "C-2unsaid",
+   "kind": "code",
+   "surface": "desktop",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Read textkit/titlecase.py and tell me what you would simplify without changing its behaviour. Don't edit yet."
+    },
+    {
+     "role": "implement",
+     "text": "Do it."
+    },
+    {
+     "role": "test",
+     "text": "Run the tests to show nothing changed."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it."
+    },
+    {
+     "role": "switch",
+     "text": "Look at textkit/slugify.py and suggest how to keep accented letters (é becomes e) instead of dropping them. Don't change anything yet."
+    },
+    {
+     "role": "implement",
+     "text": "Go ahead."
+    },
+    {
+     "role": "test",
+     "text": "Add tests for accented letters and run all the tests."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it."
+    }
+   ],
+   "cuts": [
+    5
+   ],
+   "families": [
+    "refactor-keeping-tests-green",
+    "add-feature-with-tests"
+   ],
+   "subjects": [
+    "titlecase",
+    "slugify accents"
+   ],
+   "checks": [
+    "detect.two.unsaid",
+    "merge.from-multi",
+    "merge.near-miss"
+   ]
+  },
+  {
+   "id": "C-3",
+   "kind": "code",
+   "surface": "cli",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Look at textkit/titlecase.py and suggest how to handle apostrophes, so \"don't\" stays \"Don't\" and not \"Don'T\". Don't change anything yet."
+    },
+    {
+     "role": "implement",
+     "text": "Implement it."
+    },
+    {
+     "role": "test",
+     "text": "Add a test and run all the tests."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it."
+    },
+    {
+     "role": "switch",
+     "text": "Okay, now let's do something else. I'd like a Makefile for this project — look at how the tests are run and suggest which targets it should have. Don't create it yet."
+    },
+    {
+     "role": "implement",
+     "text": "Good, create it."
+    },
+    {
+     "role": "test",
+     "text": "Run each target to check they work."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it."
+    },
+    {
+     "role": "switch",
+     "text": "Read textkit/wordfreq.py and tell me what you would simplify without changing its behaviour. Don't edit yet."
+    },
+    {
+     "role": "implement",
+     "text": "Do it."
+    },
+    {
+     "role": "test",
+     "text": "Run the tests to show nothing changed."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it."
+    }
+   ],
+   "cuts": [
+    5,
+    9
+   ],
+   "families": [
+    "add-feature-with-tests",
+    "write-makefile",
+    "refactor-keeping-tests-green"
+   ],
+   "subjects": [
+    "titlecase apostrophes",
+    null,
+    "wordfreq"
+   ],
+   "checks": [
+    "detect.three",
+    "merge.from-multi"
+   ]
+  },
+  {
+   "id": "C-same",
+   "kind": "code",
+   "surface": "desktop",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Look at textkit/slugify.py and suggest how to add a max_length argument that cuts the slug at a word boundary. Don't change anything yet."
+    },
+    {
+     "role": "implement",
+     "text": "Implement it."
+    },
+    {
+     "role": "test",
+     "text": "Add tests and run all the tests."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it."
+    },
+    {
+     "role": "switch",
+     "text": "Now the same kind of thing for titlecase: suggest how to add a small_words argument, so words like \"of\" and \"the\" stay lowercase unless they come first. Don't change anything yet."
+    },
+    {
+     "role": "implement",
+     "text": "Implement it."
+    },
+    {
+     "role": "test",
+     "text": "Add tests and run all the tests."
+    },
+    {
+     "role": "commit",
+     "text": "Commit it."
+    }
+   ],
+   "cuts": [
+    5
+   ],
+   "families": [
+    "add-feature-with-tests",
+    "add-feature-with-tests"
+   ],
+   "subjects": [
+    "slugify max_length",
+    "titlecase small_words"
+   ],
+   "checks": [
+    "detect.same-kind",
+    "merge.from-multi"
+   ]
+  },
+  {
+   "id": "L1",
+   "kind": "code",
+   "surface": "cli",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Read textkit/slugify.py and explain in three sentences how it works. Don't change or run anything."
+    },
+    {
+     "role": "aside",
+     "text": "What would it return for an empty string?"
+    },
+    {
+     "role": "aside",
+     "text": "And for a string of only punctuation?"
+    }
+   ],
+   "cuts": [],
+   "families": [],
+   "subjects": [],
+   "checks": [
+    "detect.look-only"
+   ]
+  },
+  {
+   "id": "P-F1",
+   "kind": "procedure",
+   "surface": "desktop",
+   "prompts": [
+    {
+     "role": "implement",
+     "text": "Read notes.md and write a LinkedIn post of 120 to 180 words from it into post.md: a hook in the first line, three short takeaways, and a question at the end. Only use facts from the notes."
+    },
+    {
+     "role": "verify",
+     "text": "Count the words with wc -w and fix the post if it is outside the limit."
+    },
+    {
+     "role": "review",
+     "text": "Check every claim in the post against notes.md and tell me which ones aren't backed by it."
+    },
+    {
+     "role": "correct",
+     "text": "Make the hook punchier and fix anything that wasn't backed by the notes."
+    },
+    {
+     "role": "verify",
+     "text": "Count the words again."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "post-from-source"
+   ],
+   "subjects": [
+    null
+   ],
+   "checks": [
+    "merge.fixed",
+    "detect.one",
+    "detect.review"
+   ],
+   "level": "identical"
+  },
+  {
+   "id": "P-F2",
+   "kind": "procedure",
+   "surface": "cli",
+   "prompts": [
+    {
+     "role": "implement",
+     "text": "Read notes.md and write a LinkedIn post of 120 to 180 words from it into post.md: a hook in the first line, three short takeaways, and a question at the end. Only use facts from the notes."
+    },
+    {
+     "role": "verify",
+     "text": "Count the words with wc -w and fix the post if it is outside the limit."
+    },
+    {
+     "role": "review",
+     "text": "Check every claim in the post against notes.md and tell me which ones aren't backed by it."
+    },
+    {
+     "role": "correct",
+     "text": "Make the hook punchier and fix anything that wasn't backed by the notes."
+    },
+    {
+     "role": "verify",
+     "text": "Count the words again."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "post-from-source"
+   ],
+   "subjects": [
+    null
+   ],
+   "checks": [
+    "merge.fixed",
+    "detect.one",
+    "detect.review"
+   ],
+   "level": "identical"
+  },
+  {
+   "id": "P-F3",
+   "kind": "procedure",
+   "surface": "desktop",
+   "prompts": [
+    {
+     "role": "implement",
+     "text": "Read notes.md and write a LinkedIn post of 120 to 180 words from it into post.md: a hook in the first line, three short takeaways, and a question at the end. Only use facts from the notes."
+    },
+    {
+     "role": "verify",
+     "text": "Count the words with wc -w and fix the post if it is outside the limit."
+    },
+    {
+     "role": "review",
+     "text": "Check every claim in the post against notes.md and tell me which ones aren't backed by it."
+    },
+    {
+     "role": "correct",
+     "text": "Make the hook punchier and fix anything that wasn't backed by the notes."
+    },
+    {
+     "role": "verify",
+     "text": "Count the words again."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "post-from-source"
+   ],
+   "subjects": [
+    null
+   ],
+   "checks": [
+    "merge.fixed",
+    "detect.one",
+    "detect.review"
+   ],
+   "level": "identical"
+  },
+  {
+   "id": "P-V1",
+   "kind": "procedure",
+   "surface": "cli",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "I need to give a 10-minute talk to new users about skillpp. The material is in README.md. Propose the content for the slides — a title and 3 to 4 bullets per slide — but don't build anything yet."
+    },
+    {
+     "role": "review",
+     "text": "Two things. Check every command and number on the slides against README.md and tell me which ones aren't backed by it. And cut it to at most 6 slides."
+    },
+    {
+     "role": "correct",
+     "text": "Fix the ones that aren't backed, then show me the final outline."
+    },
+    {
+     "role": "build",
+     "text": "Looks good. Build it as slides.pptx."
+    },
+    {
+     "role": "verify",
+     "text": "Open the file and check it has the slides from the outline, in order."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "talk-deck-from-docs"
+   ],
+   "subjects": [
+    "README"
+   ],
+   "checks": [
+    "merge.varied",
+    "detect.one",
+    "detect.review"
+   ],
+   "level": "same-goal"
+  },
+  {
+   "id": "P-V2",
+   "kind": "procedure",
+   "surface": "desktop",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "hey i need a short talk for teammates next week on how to install and use skillpp day to day. use docs/usage.md. give me an outline first"
+    },
+    {
+     "role": "aside",
+     "text": "quick question: for a 5 minute talk how many slides is reasonable?"
+    },
+    {
+     "role": "review",
+     "text": "ok. for me its important everything is from usage.md. can you check the outline against it"
+    },
+    {
+     "role": "correct",
+     "text": "keep it but shorten to 5 slides and add one slide on troubleshooting"
+    },
+    {
+     "role": "build",
+     "text": "ok go ahead and build it as a pptx"
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "talk-deck-from-docs"
+   ],
+   "subjects": [
+    "usage"
+   ],
+   "checks": [
+    "merge.varied",
+    "detect.one",
+    "detect.review",
+    "detect.side-question"
+   ],
+   "level": "same-goal"
+  },
+  {
+   "id": "P-V3",
+   "kind": "procedure",
+   "surface": "cli",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Prepare a 5-minute talk for engineers on how skillpp works inside, from docs/architecture.md. Start with an outline of at most 6 slides for me to approve."
+    },
+    {
+     "role": "correct",
+     "text": "Drop the slide on the module map and add one on the design invariants instead."
+    },
+    {
+     "role": "build",
+     "text": "Approved — build slides.pptx."
+    },
+    {
+     "role": "correct",
+     "text": "The title slide should say \"How skillpp works\". Fix it and check the other slides didn't change."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "talk-deck-from-docs"
+   ],
+   "subjects": [
+    "architecture"
+   ],
+   "checks": [
+    "merge.varied",
+    "detect.one",
+    "detect.review"
+   ],
+   "level": "same-goal"
+  },
+  {
+   "id": "P-N1",
+   "kind": "procedure",
+   "surface": "desktop",
+   "prompts": [
+    {
+     "role": "implement",
+     "text": "Read CHANGELOG.md and write release notes for version 1.4.0 for end users into release-notes.md: what's new and what's fixed, nothing internal."
+    },
+    {
+     "role": "verify",
+     "text": "Check that every line comes from the changelog and that the internal changes were left out."
+    },
+    {
+     "role": "polish",
+     "text": "Group them under \"New\" and \"Fixed\", one short sentence each."
+    },
+    {
+     "role": "polish",
+     "text": "Add a one-line intro that names the version."
+    }
+   ],
+   "cuts": [],
+   "families": [
+    "release-notes-from-changelog"
+   ],
+   "subjects": [
+    null
+   ],
+   "checks": [
+    "merge.near-miss"
+   ]
+  },
+  {
+   "id": "P-2said",
+   "kind": "procedure",
+   "surface": "desktop",
+   "prompts": [
+    {
+     "role": "implement",
+     "text": "Read meeting-1.md and write the action items into actions.md with owner and due date."
+    },
+    {
+     "role": "verify",
+     "text": "Check each one against the notes."
+    },
+    {
+     "role": "polish",
+     "text": "Sort them by owner."
+    },
+    {
+     "role": "switch",
+     "text": "Okay, now we will do something else. Read CHANGELOG.md and write user-facing release notes for 1.4.0 into release-notes.md, leaving out internal changes."
+    },
+    {
+     "role": "verify",
+     "text": "Check them against the changelog."
+    },
+    {
+     "role": "polish",
+     "text": "Group them under \"New\" and \"Fixed\", one short sentence each."
+    },
+    {
+     "role": "polish",
+     "text": "Add a one-line intro that names the version."
+    }
+   ],
+   "cuts": [
+    4
+   ],
+   "families": [
+    "action-items-from-notes",
+    "release-notes-from-changelog"
+   ],
+   "subjects": [
+    null,
+    null
+   ],
+   "checks": [
+    "detect.two.said",
+    "merge.from-multi"
+   ]
+  },
+  {
+   "id": "P-2unsaid",
+   "kind": "procedure",
+   "surface": "cli",
+   "prompts": [
+    {
+     "role": "explore",
+     "text": "Propose an outline for a 5-minute talk on what skillpp keeps private, from docs/privacy.md. At most 5 slides; don't build it yet."
+    },
+    {
+     "role": "correct",
+     "text": "Add a slide on what leaves the machine when you draft a skill."
+    },
+    {
+     "role": "build",
+     "text": "Good, build it as privacy.pptx."
+    },
+    {
+     "role": "verify",
+     "text": "Open the file and check it has the slides from the outline."
+    },
+    {
+     "role": "switch",
+     "text": "Read meeting-2.md and write the action items with owner and due date into actions.md."
+    },
+    {
+     "role": "verify",
+     "text": "Check each one against the notes."
+    },
+    {
+     "role": "polish",
+     "text": "Sort them by due date."
+    }
+   ],
+   "cuts": [
+    5
+   ],
+   "families": [
+    "talk-deck-from-docs",
+    "action-items-from-notes"
+   ],
+   "subjects": [
+    "privacy",
+    null
+   ],
+   "checks": [
+    "detect.two.unsaid",
+    "merge.from-multi"
+   ]
+  },
+  {
+   "id": "P-3",
+   "kind": "procedure",
+   "surface": "desktop",
+   "prompts": [
+    {
+     "role": "implement",
+     "text": "Read notes.md and write a 120 to 180 word LinkedIn post into post.md; check the length with wc -w."
+    },
+    {
+     "role": "polish",
+     "text": "Make the hook punchier."
+    },
+    {
+     "role": "review",
+     "text": "Check every claim against notes.md and fix anything that isn't backed by it."
+    },
+    {
+     "role": "switch",
+     "text": "Okay, now something else. Write the action items from meeting-3.md into actions.md with owner and due date."
+    },
+    {
+     "role": "verify",
+     "text": "Check them against the notes."
+    },
+    {
+     "role": "polish",
+     "text": "Sort them by due date."
+    },
+    {
+     "role": "switch",
+     "text": "Read CHANGELOG.md and write release notes for 1.4.0 into release-notes.md for end users."
+    },
+    {
+     "role": "verify",
+     "text": "Check nothing internal slipped in."
+    },
+    {
+     "role": "polish",
+     "text": "Add a one-line intro that names the version."
+    }
+   ],
+   "cuts": [
+    4,
+    7
+   ],
+   "families": [
+    "post-from-source",
+    "action-items-from-notes",
+    "release-notes-from-changelog"
+   ],
+   "subjects": [
+    null,
+    null,
+    null
+   ],
+   "checks": [
+    "detect.three",
+    "merge.from-multi"
+   ]
+  }
+ ]
+}

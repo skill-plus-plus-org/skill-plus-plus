@@ -1,6 +1,6 @@
 """The review surface and the skill scaffold.
 
-Effect summaries, not purpose summaries (README 3.4): the proposal leads with
+Effect summaries, not purpose summaries (docs/design.md §3.4): the proposal leads with
 what the skill will *do*, because a purpose summary can be perfectly accurate
 while the steps underneath are wrong.
 """
@@ -219,12 +219,12 @@ def _render_dictated(entry: Entry, config: Config) -> str:
 
 def questions_for(entry: Entry, config: Config) -> list[Question]:
     """At most ``max_questions``. If synthesis has more than that, the candidate
-    is not ready — the count is a quality signal, not a budget (README 4)."""
+    is not ready — the count is a quality signal, not a budget (docs/design.md §4)."""
     return detect(entry)[: config.max_questions]
 
 
 def _yaml_list(items: list[str]) -> str:
-    return "[" + ", ".join(json.dumps(i) for i in items) + "]"
+    return "[" + ", ".join(json.dumps(i, ensure_ascii=False) for i in items) + "]"
 
 
 # Readable answer keys, so callers need not memorise internal question kinds.
@@ -340,7 +340,7 @@ def scaffold_skill(
     lines = [
         "---",
         f"name: {name}",
-        f"description: {json.dumps(desc)}",
+        f"description: {json.dumps(desc, ensure_ascii=False)}",
         "metadata:",
         '  source: "skill-plus-plus"',
         f'  provenance: "ledger:{entry.id}"',
@@ -431,7 +431,7 @@ def scaffold_skill(
 
 def check_dependencies(deps_cli: list[str], deps_mcp: list[str],
                        cwd: Path | None = None) -> dict:
-    """Dependency check at pull time, not at run time (README 5).
+    """Dependency check at pull time, not at run time (docs/design.md §5).
 
     Failing at install is cheap; failing halfway through a deploy is not.
     """

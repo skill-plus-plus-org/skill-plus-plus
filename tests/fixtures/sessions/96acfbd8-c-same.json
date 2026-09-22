@@ -1,0 +1,372 @@
+{
+  "tag": "96acfbd8",
+  "name": "c-same",
+  "session": "C-same",
+  "kind": "code",
+  "surface": "desktop",
+  "checks": [
+    "detect.same-kind",
+    "merge.from-multi"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T13:11:15.272Z",
+  "procedure": "explore how to add a feature to textkit, implement it, add tests and run the suite, commit; then explore how to add a feature to textkit, implement it, add tests and run the suite, commit",
+  "truth": {
+    "episodes": 2,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "add-feature-with-tests",
+      "add-feature-with-tests"
+    ],
+    "subjects": [
+      "slugify max_length",
+      "titlecase small_words"
+    ],
+    "boundary_after": [
+      12
+    ],
+    "roles": [
+      "explore",
+      "implement",
+      "test",
+      "commit",
+      "switch",
+      "implement",
+      "test",
+      "commit"
+    ]
+  },
+  "why": "Recorded from catalogue.json (C-same, code, desktop), truth fixed before recording. A second task of the same kind is still a new task. New tasks start at prompt(s) 5.",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 21,
+    "prompts": 8,
+    "failed": 2
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Look at textkit/slugify.py and suggest how to add a max_length argument that cuts the slug at a word boundary. Don't change anything yet."
+      },
+      "failed": false,
+      "reply": "## Suggestion: `max_length` with word-boundary cut\n\n**Signature**: `def slugify(text, max_length=None):`\n\n**Approach**: build slug as-is, then trim. Trailing-hyphen strip already handles boundary case.\n\n**Logic** (after line 19, before return):\n```python\nif max_length is not None and len(result) > max_length:\n    cut = result[:max_length]\n    last_hyphen = cut.rfind(\"-\")\n    if last_hyphen > 0:\n        result = cut[:last_hyphen]\n    else:\n        result = cut\n```\n\n**Why this shape**:\n- `rfind(\"-\")` locates last word boundary in truncated window. Words separated by single `-` (dedup already enforced line 15).\n- `last_hyphen > 0` (not `>= 0`) avoids empty result when only boundary is at index 0 — falls back to hard cut.\n- Fallback hard-cut when single word longer than `max_length`. Alternative: return empty. Pick based on caller need.\n\n**Edge cases to decide**:\n1. `max_length=0` → returns `\"\"`. Fine.\n2. Single word > max_length → hard cut mid-word (above) vs empty string. Ask user preference.\n3. Result already shorter than max_length → no-op. Correct.\n4. Validation for negative `max_length` → raise `ValueError` or silently treat as 0? Recommend raise.\n\n**Test cases worth adding**:\n- `slugify(\"hello world foo\", max_length=10)` → `\"hello`-`world\"` (11 chars? no: \"hello-world\" = 11 → cut at 10 = \"hello-worl\" → rfind = 5 → \"hello\")\n- `slugify(\"hello world\", max_length=100)` → `\"hello-world\"` unchanged\n- `slugify(\"supercalifragilistic\", max_length=5)` → `\"super\"` (hard cut, no hyphen)\n\nWant me to apply it? Which fallback for the long-single-word case?"
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-same/textkit/slugify.py"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 \"\"\"Turn a title into a URL slug.\"\"\" 2 3 ALLOWED = \"abcdefghijklmnopqrstuvwxyz0123456789\" 4 5 6 def slugify(text): 7 \"\"\"Lowercase the text, keep letters and digits, join words with hyphens.\"\"\" 8 result = \"\" 9 previous_was_hyphen = False 10 for char in text.lower(): 11 if char in ALLOWED: 12 result = result + char 13 previous_was_hyphen = False 14 elif char == \" \" or char == \"-\": 15 if not previou",
+      "assistant_note": "I should look at the file first before suggesting an approach.",
+      "closing_note": "## Suggestion: `max_length` with word-boundary cut **Signature**: `def slugify(text, max_length=None):` **Approach**: build slug as-is, then trim. Trailing-hyphen strip already handles boundary case. **Logic** (after line 19, before return): ```python if max_length is not None and len(result) > max_length: cut = result[:max_length] last_hyphen = cut.rfind(\"-\") if last_hyphen > 0: result = cut[:las",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Implement it."
+      },
+      "failed": false,
+      "reply": "Done. Long-single-word case: hard cut (fallback preserves partial content over empty string)."
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-same/textkit/slugify.py",
+        "old_string": "def slugify(text):\n    \"\"\"Lowercase the text, keep letters and digits, join words with hyphens.\"\"\"\n    result = \"\"\n    previous_was_hyphen = False\n    for char in text.lower():\n        if char in ALLOWED:\n            result = result + char\n            previous_was_hyphen = False\n        elif char == \" \" or char == \"-\":\n            if not previous_was_hyphen and result != \"\":\n                result = result + \"-\"\n                previous_was_hyphen = True\n    if result.endswith(\"-\"):\n        result = result[:-1]\n    return result",
+        "new_string": "def slugify(text, max_length=None):\n    \"\"\"Lowercase the text, keep letters and digits, join words with hyphens.\"\"\"\n    result = \"\"\n    previous_was_hyphen = False\n    for char in text.lower():\n        if char in ALLOWED:\n            result = result + char\n            previous_was_hyphen = False\n        elif char == \" \" or char == \"-\":\n            if not previous_was_hyphen and result != \"\":\n                result = result + \"-\"\n                previous_was_hyphen = True\n    if result.endswith(\"-\"):\n        result = result[:-1]\n    if max_length is not None and len(result) > max_length:\n        cut = result[:max_length]\n        last_hyphen = cut.rfind(\"-\")\n        if last_hyphen > 0:\n            result = cut[:last_hyphen]\n        else:\n            result = cut\n    return result"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-same/textkit/slugify.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "assistant_note": "Since the user didn't specify, I'll go with a hard-cut fallback since it's more practical than leaving it empty, and I'll skip validation for negative values to stay consistent with the existing code style, which doesn't validate elsewhere.",
+      "closing_note": "Done. Long-single-word case: hard cut (fallback preserves partial content over empty string).",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Add tests and run all the tests."
+      },
+      "failed": false,
+      "reply": "Bug in cut logic. When cut ends at word boundary (next char is hyphen), whole cut is clean. Fix:\n\n20/20 pass. One test caught real bug: boundary-at-hyphen case dropped whole last word. Fixed by checking `result[max_length] == \"-\"` before rfind fallback."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/C-same/",
+        "description": "List project root"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "README.md tests textkit",
+      "assistant_note": "Let me check the test setup.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/C-same/tests ${HOME}/skillpp-recordings/C-same/textkit",
+        "description": "List tests and textkit"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "${HOME}/skillpp-recordings/C-same/tests: __init__.py test_slugify.py test_titlecase.py test_wordfreq.py ${HOME}/skillpp-recordings/C-same/textkit: __init__.py __pycache__ slugify.py titlecase.py wordfreq.py",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-same/tests/test_slugify.py"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "1 import unittest 2 3 from textkit.slugify import slugify 4 5 6 class TestSlugify(unittest.TestCase): 7 def test_lowercases_and_joins_with_hyphens(self): 8 self.assertEqual(slugify(\"Hello World\"), \"hello-world\") 9 10 def test_drops_punctuation(self): 11 self.assertEqual(slugify(\"Hello, World!\"), \"hello-world\") 12 13 def test_collapses_spaces(self): 14 self.assertEqual(slugify(\" spaced out \"), \"spa",
+      "end": false
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-same/tests/test_slugify.py",
+        "old_string": "    def test_keeps_digits(self):\n        self.assertEqual(slugify(\"Top 10 Tips\"), \"top-10-tips\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()",
+        "new_string": "    def test_keeps_digits(self):\n        self.assertEqual(slugify(\"Top 10 Tips\"), \"top-10-tips\")\n\n    def test_max_length_cuts_at_word_boundary(self):\n        self.assertEqual(slugify(\"hello world foo\", max_length=10), \"hello\")\n\n    def test_max_length_no_cut_when_shorter(self):\n        self.assertEqual(slugify(\"hello world\", max_length=100), \"hello-world\")\n\n    def test_max_length_exact_fit(self):\n        self.assertEqual(slugify(\"hello world\", max_length=11), \"hello-world\")\n\n    def test_max_length_hard_cut_single_long_word(self):\n        self.assertEqual(slugify(\"supercalifragilistic\", max_length=5), \"super\")\n\n    def test_max_length_none_leaves_slug_intact(self):\n        self.assertEqual(slugify(\"hello world foo\"), \"hello-world-foo\")\n\n    def test_max_length_zero(self):\n        self.assertEqual(slugify(\"hello world\", max_length=0), \"\")\n\n    def test_max_length_boundary_at_hyphen(self):\n        self.assertEqual(slugify(\"hello world foo\", max_length=11), \"hello-world\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-same/tests/test_slugify.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python -m unittest discover -v",
+        "description": "Run all tests"
+      },
+      "failed": true,
+      "serves": 3,
+      "tool_returned": "Exit code 127 (eval):1: command not found: python",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -m unittest discover -v 2>&1",
+        "description": "Run all tests with python3"
+      },
+      "failed": true,
+      "serves": 3,
+      "tool_returned": "Exit code 1 test_collapses_spaces (tests.test_slugify.TestSlugify.test_collapses_spaces) ... ok test_drops_punctuation (tests.test_slugify.TestSlugify.test_drops_punctuation) ... ok test_keeps_digits (tests.test_slugify.TestSlugify.test_keeps_digits) ... ok test_lowercases_and_joins_with_hyphens (tests.test_slugify.TestSlugify.test_lowercases_and_joins_with_hyphens) ... ok test_max_length_boundary",
+      "end": false
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-same/textkit/slugify.py",
+        "old_string": "    if max_length is not None and len(result) > max_length:\n        cut = result[:max_length]\n        last_hyphen = cut.rfind(\"-\")\n        if last_hyphen > 0:\n            result = cut[:last_hyphen]\n        else:\n            result = cut",
+        "new_string": "    if max_length is not None and len(result) > max_length:\n        if result[max_length] == \"-\":\n            result = result[:max_length]\n        else:\n            cut = result[:max_length]\n            last_hyphen = cut.rfind(\"-\")\n            if last_hyphen > 0:\n                result = cut[:last_hyphen]\n            else:\n                result = cut"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-same/textkit/slugify.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "assistant_note": "Testing slugify with a max_length of 11 reveals a bug: cutting \"hello-world\" and finding the last hyphen trims it down to just \"hello\", when really the boundary already fell cleanly after a whole word so it should keep the full \"hello-world\". I need to check whether the character right after the cut point is itself a hyphen or boundary before trimming back further. Bug in cut logic. When cut ends ",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -m unittest discover 2>&1 | tail -5",
+        "description": "Rerun tests"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": ".................... ---------------------------------------------------------------------- Ran 20 tests in 0.005s OK",
+      "closing_note": "20/20 pass. One test caught real bug: boundary-at-hyphen case dropped whole last word. Fixed by checking `result[max_length] == \"-\"` before rfind fallback.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Commit it."
+      },
+      "failed": false,
+      "reply": "Committed `32863b9`. Skipped `__pycache__` (build artifacts, not tracked with intent)."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git status && echo \"---\" && git log --oneline -5",
+        "description": "Check status and log style"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "On branch master Changes not staged for commit: (use \"git add <file>...\" to update what will be committed) (use \"git restore <file>...\" to discard changes in working directory) modified: tests/test_slugify.py modified: textkit/__pycache__/__init__.cpython-314.pyc modified: textkit/__pycache__/slugify.cpython-314.pyc modified: textkit/__pycache__/titlecase.cpython-314.pyc modified: textkit/__pycach",
+      "assistant_note": "I need to check the git status, diff, and recent commit log to understand what changed and match the existing commit style.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git add textkit/slugify.py tests/test_slugify.py && git commit -m \"$(cat <<'EOF'\nAdd max_length arg to slugify with word-boundary cut\n\nCuts slug at the last hyphen within max_length; falls back to hard\ncut when a single word exceeds the limit. Keeps whole cut when the\nboundary lands exactly on a hyphen.\n\nCo-Authored-By: Claude Opus 4.7 <[REDACTED:email]>\nEOF\n)\"",
+        "description": "Commit slugify changes"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "[master 32863b9] Add max_length arg to slugify with word-boundary cut 2 files changed, 32 insertions(+), 1 deletion(-)",
+      "closing_note": "Committed `32863b9`. Skipped `__pycache__` (build artifacts, not tracked with intent).",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Now the same kind of thing for titlecase: suggest how to add a small_words argument, so words like \"of\" and \"the\" stay lowercase unless they come first. Don't change anything yet."
+      },
+      "failed": false,
+      "reply": "## Suggestion: `small_words` arg\n\n**Signature**: `def titlecase(text, small_words=None):`\n\n**Problem with current impl**: char-by-char loop. No word concept. Word-level logic needs word-level pass.\n\n**Approach — refactor to word split**:\n```python\nDEFAULT_SMALL = frozenset({\"a\", \"an\", \"and\", \"as\", \"at\", \"but\", \"by\",\n                           \"for\", \"in\", \"of\", \"on\", \"or\", \"the\", \"to\", \"with\"})\n\ndef titlecase(text, small_words=None):\n    small = DEFAULT_SMALL if small_words is None else frozenset(w.lower() for w in small_words)\n    words = text.split(\" \")\n    result = []\n    first_content_seen = False\n    for word in words:\n        if word == \"\":\n            result.append(word)\n            continue\n        lower = word.lower()\n        if not first_content_seen or lower not in small:\n            result.append(lower[:1].upper() + lower[1:])\n            first_content_seen = True\n        else:\n            result.append(lower)\n    return \" \".join(result)\n```\n\n**Key decisions**:\n\n1. **Split on single space, join back with single space** → preserves `\"mixed  CaSe\"` → `\"Mixed  Case\"` (existing test). `str.split()` no-arg collapses; explicit `\" \"` doesn't.\n\n2. **`first_content_seen` flag, not index 0** → handles leading whitespace/empty tokens. \"  the cat\" → first non-empty word capitalized.\n\n3. **`small_words=None` sentinel** → default set applied. `small_words=[]` → nothing stays lowercase (opt-out). `small_words={\"foo\"}` → replaces default entirely. Alternative: `add_small_words` param to extend default. Pick one.\n\n4. **Normalized to lowercase in set** for case-insensitive match.\n\n5. **Punctuation gotcha**: `\"cat, the dog\"` — token `\"the\"` matches, but `\"tale, of two cities\"` → token `of` matches. Token with trailing punct like `\"the,\"` won't match `\"the\"`. Punctuation-stripping for match adds complexity — recommend deferring unless caller needs it.\n\n**Existing test compat check**:\n- `\"hello world\"` → `[\"hello\",\"world\"]` → \"Hello World\" ✓\n- `\"HELLO THERE\"` → \"Hello There\" ✓\n- `\"mixed  CaSe\"` → `[\"mixed\",\"\",\"CaSe\"]` → \"Mixed\" + \"\" + \"Case\" → `\"Mixed  Case\"` ✓\n\n**Behavior change risk**: current impl treats any non-alpha as word boundary (`\"don't\"` → `\"Don'T\"`). New impl splits only on space → `\"don't\"` → `\"Don't\"`. **Fixes** an existing quirk but is observable. Flag to user.\n\n**Edge cases to decide**:\n1. Last word in sentence — should it stay lowercase if small? AP style capitalizes it. Add `last_word_capitalized=True` flag? Recommend: **not** in v1, keep simple.\n2. Words after `:` or `.` — new \"sentence\", capitalize? Skip for v1.\n3. Small word with mixed case in input (`\"tHe\"`) → output `\"the\"` (lowercase). Correct.\n\n**Questions before implementing**:\n- Extend or replace default set via `small_words`? (Recommend replace — simpler contract.)\n- OK with `\"don't\"` → `\"Don't\"` behavior change? (Improvement, but breaks anyone relying on old quirk.)"
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-same/textkit/titlecase.py"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "1 \"\"\"Capitalize every word in a line of text.\"\"\" 2 3 4 def titlecase(text): 5 \"\"\"Upper-case the first letter of every word and lower-case the rest.\"\"\" 6 result = \"\" 7 previous = \" \" 8 for char in text: 9 if previous.isalpha(): 10 result = result + char.lower() 11 else: 12 result = result + char.upper() 13 previous = char 14 return result 15",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-same/tests/test_titlecase.py"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "1 import unittest 2 3 from textkit.titlecase import titlecase 4 5 6 class TestTitlecase(unittest.TestCase): 7 def test_capitalizes_each_word(self): 8 self.assertEqual(titlecase(\"hello world\"), \"Hello World\") 9 10 def test_lowercases_the_rest(self): 11 self.assertEqual(titlecase(\"HELLO THERE\"), \"Hello There\") 12 13 def test_keeps_spacing(self): 14 self.assertEqual(titlecase(\"mixed CaSe\"), \"Mixed Ca",
+      "closing_note": "## Suggestion: `small_words` arg **Signature**: `def titlecase(text, small_words=None):` **Problem with current impl**: char-by-char loop. No word concept. Word-level logic needs word-level pass. **Approach — refactor to word split**: ```python DEFAULT_SMALL = frozenset({\"a\", \"an\", \"and\", \"as\", \"at\", \"but\", \"by\", \"for\", \"in\", \"of\", \"on\", \"or\", \"the\", \"to\", \"with\"}) def titlecase(text, small_words=",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Implement it."
+      },
+      "failed": false,
+      "reply": "25/25 pass. Choices made:\n- `small_words` replaces default (not extends)\n- Default set = 15 common AP-style small words\n- Word-split refactor changes `\"don't\"` → `\"Don't\"` (was `\"Don'T\"`) — improvement, no test covered old quirk"
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-same/textkit/titlecase.py",
+        "content": "\"\"\"Capitalize every word in a line of text.\"\"\"\n\nDEFAULT_SMALL_WORDS = frozenset({\n    \"a\", \"an\", \"and\", \"as\", \"at\", \"but\", \"by\",\n    \"for\", \"in\", \"of\", \"on\", \"or\", \"the\", \"to\", \"with\",\n})\n\n\ndef titlecase(text, small_words=None):\n    \"\"\"Upper-case the first letter of every word and lower-case the rest.\n\n    Words in ``small_words`` stay lowercase unless they are the first word.\n    Pass ``small_words=None`` (default) to use ``DEFAULT_SMALL_WORDS``, or an\n    explicit iterable to override.\n    \"\"\"\n    small = DEFAULT_SMALL_WORDS if small_words is None else frozenset(\n        w.lower() for w in small_words\n    )\n    words = text.split(\" \")\n    result = []\n    first_content_seen = False\n    for word in words:\n        if word == \"\":\n            result.append(word)\n            continue\n        lower = word.lower()\n        if not first_content_seen or lower not in small:\n            result.append(lower[:1].upper() + lower[1:])\n            first_content_seen = True\n        else:\n            result.append(lower)\n    return \" \".join(result)\n"
+      },
+      "failed": false,
+      "serves": 6,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-same/textkit/titlecase.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "assistant_note": "Since this is a small, single change, I'll go with the simpler contract of replacing the default set and accept the \"don't\"→\"Don't\" behavior change as an improvement — no need for formal task tracking here.",
+      "end": false
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-same/tests/test_titlecase.py",
+        "old_string": "    def test_keeps_spacing(self):\n        self.assertEqual(titlecase(\"mixed  CaSe\"), \"Mixed  Case\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()",
+        "new_string": "    def test_keeps_spacing(self):\n        self.assertEqual(titlecase(\"mixed  CaSe\"), \"Mixed  Case\")\n\n    def test_small_words_stay_lowercase(self):\n        self.assertEqual(\n            titlecase(\"the lord of the rings\"),\n            \"The Lord of the Rings\",\n        )\n\n    def test_small_word_first_is_capitalized(self):\n        self.assertEqual(titlecase(\"of mice and men\"), \"Of Mice and Men\")\n\n    def test_custom_small_words_replaces_default(self):\n        self.assertEqual(\n            titlecase(\"cats and dogs\", small_words={\"and\"}),\n            \"Cats and Dogs\",\n        )\n\n    def test_empty_small_words_capitalizes_everything(self):\n        self.assertEqual(\n            titlecase(\"the lord of the rings\", small_words=[]),\n            \"The Lord Of The Rings\",\n        )\n\n    def test_small_word_case_insensitive_match(self):\n        self.assertEqual(titlecase(\"A Tale OF Two Cities\"), \"A Tale of Two Cities\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()"
+      },
+      "failed": false,
+      "serves": 6,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-same/tests/test_titlecase.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -m unittest discover 2>&1 | tail -5",
+        "description": "Run all tests"
+      },
+      "failed": false,
+      "serves": 6,
+      "tool_returned": "......................... ---------------------------------------------------------------------- Ran 25 tests in 0.004s OK",
+      "closing_note": "25/25 pass. Choices made: - `small_words` replaces default (not extends) - Default set = 15 common AP-style small words - Word-split refactor changes `\"don't\"` → `\"Don't\"` (was `\"Don'T\"`) — improvement, no test covered old quirk",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Add tests and run all the tests."
+      },
+      "failed": false,
+      "reply": "Tests already added in prior step (25 pass). Adding remaining edge cases for coverage:\n\n29/29 pass. Titlecase now has 10 tests total."
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-same/tests/test_titlecase.py",
+        "old_string": "    def test_small_word_case_insensitive_match(self):\n        self.assertEqual(titlecase(\"A Tale OF Two Cities\"), \"A Tale of Two Cities\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()",
+        "new_string": "    def test_small_word_case_insensitive_match(self):\n        self.assertEqual(titlecase(\"A Tale OF Two Cities\"), \"A Tale of Two Cities\")\n\n    def test_small_words_preserves_double_spacing(self):\n        self.assertEqual(titlecase(\"cat  of  dog\"), \"Cat  of  Dog\")\n\n    def test_leading_space_still_capitalizes_first_content_word(self):\n        self.assertEqual(titlecase(\" the cat\"), \" The Cat\")\n\n    def test_small_words_accepts_list(self):\n        self.assertEqual(\n            titlecase(\"cats and dogs\", small_words=[\"and\"]),\n            \"Cats and Dogs\",\n        )\n\n    def test_small_words_input_case_ignored(self):\n        self.assertEqual(\n            titlecase(\"cats and dogs\", small_words={\"AND\"}),\n            \"Cats and Dogs\",\n        )\n\n\nif __name__ == \"__main__\":\n    unittest.main()"
+      },
+      "failed": false,
+      "serves": 7,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-same/tests/test_titlecase.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "assistant_note": "I've already covered the main test cases, but the user is asking again, so maybe they want more edge case coverage. I'm reviewing what's tested so far and thinking about gaps like multiple spaces preserved alongside small words. Since the tests already pass, I'll just add a couple more useful edge cases—like small words appearing mid-sentence versus first, and custom small_words as a list versus a",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -m unittest discover -v 2>&1 | tail -35",
+        "description": "Run all tests verbose"
+      },
+      "failed": false,
+      "serves": 7,
+      "tool_returned": "test_collapses_spaces (tests.test_slugify.TestSlugify.test_collapses_spaces) ... ok test_drops_punctuation (tests.test_slugify.TestSlugify.test_drops_punctuation) ... ok test_keeps_digits (tests.test_slugify.TestSlugify.test_keeps_digits) ... ok test_lowercases_and_joins_with_hyphens (tests.test_slugify.TestSlugify.test_lowercases_and_joins_with_hyphens) ... ok test_max_length_boundary_at_hyphen (",
+      "closing_note": "29/29 pass. Titlecase now has 10 tests total.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Commit it."
+      },
+      "failed": false,
+      "reply": "Committed `ff6ea09`."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git status",
+        "description": "Check status before commit"
+      },
+      "failed": false,
+      "serves": 8,
+      "tool_returned": "On branch master Changes not staged for commit: (use \"git add <file>...\" to update what will be committed) (use \"git restore <file>...\" to discard changes in working directory) modified: tests/test_titlecase.py modified: textkit/__pycache__/__init__.cpython-314.pyc modified: textkit/__pycache__/slugify.cpython-314.pyc modified: textkit/__pycache__/titlecase.cpython-314.pyc modified: textkit/__pyca",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git add textkit/titlecase.py tests/test_titlecase.py && git commit -m \"$(cat <<'EOF'\nAdd small_words arg to titlecase\n\nWords in small_words stay lowercase unless they are the first content\nword. Default list is the common AP-style set (a, an, and, of, the, ...).\nRefactored to a word-level pass, so contractions like \"don't\" now\ncapitalize as \"Don't\" instead of \"Don'T\".\n\nCo-Authored-By: Claude Opus 4.7 <[REDACTED:email]>\nEOF\n)\"",
+        "description": "Commit titlecase changes"
+      },
+      "failed": false,
+      "serves": 8,
+      "tool_returned": "[master ff6ea09] Add small_words arg to titlecase 2 files changed, 70 insertions(+), 10 deletions(-)",
+      "closing_note": "Committed `ff6ea09`.",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 0,
+    "answered": 7,
+    "replayed": "2026-09-22"
+  },
+  "expected_fail": "gemma4:e4b (2026-09-22) does not cut at prompt 5, the second feature of the same kind (titlecase small_words after slugify max_length), so both features bank as one episode."
+}
