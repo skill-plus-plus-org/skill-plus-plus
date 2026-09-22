@@ -1145,6 +1145,70 @@ def _available_models(config: Config) -> tuple[list[str], str]:
     return [str(m.get("name", "")) for m in data.get("models", [])], ""
 
 
+def _has_model(models: list[str], want: str) -> bool:
+    """Does Ollama hold *want*? `nomic-embed-text` is listed as `…:latest`."""
+    return any(name == want or name.startswith(f"{want}:") for name in models)
+
+
+# What `install` tells a reader before a download, not what it relies on: the
+# pull reports its real size as it goes.
+_MODEL_SIZES = {"gemma4:e4b": "about 10 GB", "nomic-embed-text": "about 0.3 GB"}
+
+
+def _pull_model(config: Config, name: str) -> str:
+    """Download *name* through the running Ollama. Returns an error, or ""."""
+    import urllib.error
+    import urllib.request
+    request = urllib.request.Request(
+        f"{config.ollama_url}/api/pull",
+        data=json.dumps({"model": name, "stream": True}).encode("utf-8"),
+        headers={"Content-Type": "application/json"})
+    shown = -1
+    try:
+        with urllib.request.urlopen(request, timeout=120) as resp:
+            for raw in resp:
+                event = json.loads(raw.decode("utf-8") or "{}")
+                if event.get("error"):
+                    return str(event["error"])
+                total, done = event.get("total"), event.get("completed")
+                if total and done is not None:
+                    pct = int(done * 100 / total)
+                    if pct != shown:
+                        shown = pct
+                        print(f"\r  {name}: {pct:3d}%", end="", flush=True)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return str(exc)
+    print(f"\r  {name}: done   ")
+    return ""
+
+
+def _install_models(config: Config, apply: bool) -> None:
+    """The two local models detection needs: list them, and pull the missing
+    ones on `--apply`. Ollama itself is an app, installed by its own
+    installer, so a missing Ollama is explained, not fixed."""
+    models, err = _available_models(config)
+    wanted = (config.local_model, config.embed_model)
+    print(f"\nmodels (Ollama at {config.ollama_url}):")
+    if err:
+        print("  Ollama is not running. Install it from https://ollama.com "
+              "(or `brew install ollama`), start it,\n  then run this again to "
+              "download the models. The hooks work meanwhile; sessions wait "
+              "until it answers.")
+        return
+    missing = [w for w in wanted if not _has_model(models, w)]
+    for want in wanted:
+        state = ("present" if want not in missing else
+                 f"missing, {_MODEL_SIZES.get(want, 'a download')}"
+                 + ("" if apply else "; --apply downloads it"))
+        print(f"  {want:<18} {state}")
+    if apply:
+        for want in missing:
+            err = _pull_model(config, want)
+            if err:
+                print(f"\n  could not pull {want}: {err}\n"
+                      f"  try `ollama pull {want}` yourself", file=sys.stderr)
+
+
 def _waiting_sessions(config: Config) -> dict:
     """Session files grouped by what is happening to them."""
     from .capture import (_FOLD_LOCK_SECONDS, _is_pending, _lock_alive,
@@ -1210,7 +1274,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print(f"models    ollama   reachable at {config.ollama_url}")
         for want in (config.local_model, config.embed_model):
-            here = any(name == want or name.startswith(f"{want}:") for name in models)
+            here = _has_model(models, want)
             print(f"          {'':8} {want} {'✓' if here else '✗ not pulled'}")
 
     s = _waiting_sessions(config)
@@ -1568,18 +1632,25 @@ def cmd_install(args: argparse.Namespace) -> int:
     for change in changes:
         print(f"  - {change}")
 
+    models = not args.remove and not args.no_models
     if not args.apply:
         print("\nDry run. Nothing was written.")
         if not args.remove:
             print("Re-run with --apply to install, or copy the hooks block below "
                   "into your settings manually:\n")
             print(json.dumps({"hooks": merged.get("hooks", {})}, indent=2))
+        if models:
+            _install_models(Config(args.root), apply=False)
         return 0
 
     settled = ("no change", "nothing to remove", "skillpp is not wired")
     if all(change.endswith("no change") or change.startswith(settled[1:])
            for change in changes):
         print("\nAlready in that state. Nothing written.")
+        # The hooks can be in place while the models are not: a first
+        # install that ran with Ollama stopped.
+        if models:
+            _install_models(Config(args.root), apply=True)
         return 0
 
     if not args.remove:
@@ -1599,6 +1670,9 @@ def cmd_install(args: argparse.Namespace) -> int:
             print(f"wrote {path}")
     except OSError as exc:
         print(f"could not update the slash commands: {exc}", file=sys.stderr)
+    # Last: a 10 GB download should not hold up the hooks.
+    if models:
+        _install_models(Config(args.root), apply=True)
     return 0
 
 
@@ -1836,6 +1910,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="wire DIR/.claude/settings.json — this repo only "
                         "(default: the current directory)")
     p.add_argument("--settings", help="wire this settings file instead")
+    p.add_argument("--no-models", action="store_true",
+                   help="leave the Ollama models alone (by default --apply pulls missing ones)")
     p.add_argument("--remove", action="store_true",
                    help="take skillpp's hooks back out, leaving any others")
     p.add_argument("--python",

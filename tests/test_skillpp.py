@@ -146,6 +146,18 @@ def setUpModule() -> None:
     import skillpp.capture as capture
     _REAL_NAME = capture._name_from_model
     capture._name_from_model = lambda config, entry: None
+    # And for `install`, which lists the Ollama models and pulls missing ones on
+    # --apply. A test must never start a 10 GB download, nor depend on what the
+    # machine running it has pulled: every model is present unless a test says
+    # otherwise, and a pull that is not stubbed fails the test.
+    global _REAL_MODELS, _REAL_PULL
+    import skillpp.cli as cli
+    _REAL_MODELS, _REAL_PULL = cli._available_models, cli._pull_model
+    cli._available_models = lambda config: ([config.local_model, config.embed_model + ":latest"], "")
+
+    def _no_pull(config, name):
+        raise AssertionError(f"a test tried to pull {name}")
+    cli._pull_model = _no_pull
 
 
 def tearDownModule() -> None:
@@ -156,6 +168,8 @@ def tearDownModule() -> None:
     boundary.describe_in_session = _REAL_DESCRIBE
     matching.embed = _REAL_EMBED
     capture._name_from_model = _REAL_NAME
+    import skillpp.cli as cli
+    cli._available_models, cli._pull_model = _REAL_MODELS, _REAL_PULL
 
 
 def _marker_judge(config, session, verdict=is_marker):
@@ -5069,6 +5083,88 @@ class TestShippedCommands(unittest.TestCase):
                                   script="/Users/dev/My Tools/skillpp")
             self.assertIn("-m skillpp hook", spaced)
             self.assertTrue(all(MARKER in c for c in (installed, spaced)))
+
+
+class TestInstallModels(TempRoot):
+    """`install` brings the two local models too, so a new user runs one
+    command instead of learning Ollama's first. Ollama itself is an app with its
+    own installer: missing, it is explained, and the hooks go in anyway."""
+
+    def setUp(self):
+        super().setUp()
+        import skillpp.cli as cli
+        self.cli = cli
+        self.project = self.root / "proj"
+        (self.project / ".claude").mkdir(parents=True)
+        self.pulled = []
+        self._stub(models=[self.config.local_model], err="")
+        pull = lambda config, name: self.pulled.append(name) or ""
+        saved = cli._pull_model
+        cli._pull_model = pull
+        self.addCleanup(lambda: setattr(cli, "_pull_model", saved))
+
+    def _stub(self, models, err):
+        saved = self.cli._available_models
+        self.cli._available_models = lambda config: (models, err)
+        self.addCleanup(lambda: setattr(self.cli, "_available_models", saved))
+
+    def _run(self, *argv):
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out), mock.patch("sys.stderr"):
+            code = self.cli.main(["--root", str(self.config.root), "install",
+                                  "--project", str(self.project), *argv])
+        return code, out.getvalue()
+
+    def test_a_dry_run_names_the_missing_model_and_downloads_nothing(self):
+        code, out = self._run()
+        self.assertEqual(code, 0)
+        self.assertIn("nomic-embed-text", out)
+        self.assertIn("--apply downloads it", out)
+        self.assertEqual(self.pulled, [])
+
+    def test_apply_pulls_only_what_is_missing_after_the_hooks(self):
+        code, out = self._run("--apply")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.pulled, [self.config.embed_model])
+        self.assertLess(out.index("wrote"), out.index("models (Ollama"))
+
+    def test_hooks_already_in_place_still_bring_the_models(self):
+        self._run("--apply", "--no-models")
+        self.assertEqual(self.pulled, [])
+        self._run("--apply")
+        self.assertEqual(self.pulled, [self.config.embed_model])
+
+    def test_without_ollama_the_hooks_go_in_and_it_says_how_to_get_it(self):
+        self._stub(models=[], err="connection refused")
+        code, out = self._run("--apply")
+        self.assertEqual(code, 0)
+        self.assertIn("Ollama is not running", out)
+        self.assertEqual(self.pulled, [])
+        self.assertTrue((self.project / ".claude" / "settings.json").exists())
+
+    def test_removing_leaves_the_models_alone(self):
+        self._run("--apply")
+        self.pulled.clear()
+        code, out = self._run("--remove", "--apply")
+        self.assertEqual(code, 0)
+        self.assertNotIn("models (Ollama", out)
+
+    def test_a_pull_reports_progress_and_errors_from_the_stream(self):
+        import io
+        from contextlib import redirect_stdout
+        from skillpp import cli
+        real = _REAL_PULL
+        lines = [b'{"status":"pulling","total":100,"completed":50}\n',
+                 b'{"status":"success"}\n']
+        with mock.patch("urllib.request.urlopen") as urlopen, redirect_stdout(io.StringIO()) as out:
+            urlopen.return_value.__enter__.return_value = lines
+            self.assertEqual(real(self.config, "m"), "")
+        self.assertIn(" 50%", out.getvalue())
+        with mock.patch("urllib.request.urlopen") as urlopen, redirect_stdout(io.StringIO()):
+            urlopen.return_value.__enter__.return_value = [b'{"error":"pull model manifest: not found"}\n']
+            self.assertIn("not found", real(self.config, "m"))
 
 
 class TestInstallScopes(TempRoot):

@@ -29,6 +29,8 @@ The first public release.
 - Describing every tool call with the local model is off by default; it cost
   2-11 seconds a call and nothing read it.
 - `install` copies all three slash commands, and `--remove` takes them out again.
+- `install` also downloads the two Ollama models when they are missing
+  (`--no-models` to skip); without Ollama it says how to get it.
 - More git commands that discard uncommitted work count as destructive.
 - The test suite needs no model and runs in about ten seconds.
 - The local judge is `gemma4:e4b`, with thinking off.
