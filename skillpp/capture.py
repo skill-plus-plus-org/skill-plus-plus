@@ -160,7 +160,7 @@ def _save_session(config: Config, session: dict) -> None:
 
 
 def _reply_text(response, limit: int | None = _RESPONSE_CHARS) -> str:
-    """What the tool said back, flattened and bounded.
+    """What the tool said back, flattened, scrubbed and bounded.
 
     Whatever shape the harness uses — a string, a dict of fields, a list of
     content blocks — reduce it to the leading text. `_failed` already inspects
@@ -187,7 +187,8 @@ def _reply_text(response, limit: int | None = _RESPONSE_CHARS) -> str:
                         for b in response)
     else:
         text = str(response or "")
-    flat = " ".join(text.split())
+    # Scrubbed before the cut, for the reason `_clip` gives.
+    flat = scrub(" ".join(text.split()))
     return flat if limit is None else flat[:limit]
 
 
@@ -221,9 +222,7 @@ def _narration(payload: dict) -> tuple[str, str]:
     # The text *preceding* the most recent tool call, which is this one — the
     # hook fires after the call, so the transcript already holds it. Taking the
     # text that follows instead returns nothing live, and on a finished
-    # transcript returns that session's closing words for every step: three
-    # consecutive steps were once given the same sentence, describing a file
-    # written long after the first of them ran.
+    # transcript gives every step the session's closing words.
     pending: list[str] = []
     before_last_call: list[str] = []
     # Text that was already closed off by a prompt before this call ran. Held
@@ -308,7 +307,10 @@ def _trailing_narration(payload: dict) -> str:
 
 
 def _clip(parts: list[str]) -> str:
-    text = " ".join(" ".join(parts).split())
+    # Scrubbed before the cut: a cut can leave a secret shorter than the
+    # patterns that recognise it, and backing off to the last space does not
+    # help when there is none before the cut, in a path or a line of JSON.
+    text = scrub(" ".join(" ".join(parts).split()))
     if len(text) > _RESPONSE_CHARS:
         text = text[:_RESPONSE_CHARS].rsplit(" ", 1)[0] + " …"
     return text
@@ -486,18 +488,16 @@ def handle_tool(config: Config, payload: dict) -> None:
     # has. `serves` is the hierarchy: which of the developer's requests this
     # step is working on, so a flat list can still be read as nested work.
     step["serves"] = sum(1 for s in session["steps"] if is_prompt(s)) or 1
-    returned = scrub(_reply_text(payload.get("tool_response")))
+    returned = _reply_text(payload.get("tool_response"))
     if returned:
         step["tool_returned"] = returned
     note, closes_previous = _narration(payload)
-    note = scrub(note)
     if note:
         step["assistant_note"] = note
     # What was said after the previous step and before the prompt that follows
     # it — that step's own completion report, not this one's lead-in. Written
     # backwards onto the step it describes. `setdefault`, because the hook may
     # fire again for the same gap and the first attribution is the right one.
-    closes_previous = scrub(closes_previous)
     if closes_previous:
         earlier = [s for s in session["steps"] if not is_prompt(s)]
         if earlier:
@@ -559,7 +559,7 @@ def handle_session_end(config: Config, payload: dict) -> dict:
 
     # The last task's own completion report, said after its final tool call.
     # Attached before folding so the episode carries it.
-    trailing = scrub(_trailing_narration(payload))
+    trailing = _trailing_narration(payload)
     if trailing:
         work = [s for s in session.get("steps", []) if not is_prompt(s)]
         if work:

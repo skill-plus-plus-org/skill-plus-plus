@@ -345,6 +345,72 @@ class TestSanitize(unittest.TestCase):
         self.assertEqual(a, b, "same shape must scrub identically or dedup breaks")
 
 
+class TestNothingSecretReachesDisk(TempRoot):
+    """The hooks scrub each field as it enters, so these go through the real
+    hooks and read every file they leave behind. Four fields were cut to size
+    before they were scrubbed; a bare token straddling the cut came out shorter
+    than the 40 characters the generic rule needs, and 25 of its 42 characters
+    were written to the session file."""
+
+    TOKEN = "q8Zr4Lm2Xv9Kp1Wd7Ns3Hc6Yb0Tf5Jg8Rk2Ue4Ao1"   # no prefix, no KEY=
+
+    def _row(self, kind, content):
+        return json.dumps({"type": kind, "message": {"content": content}}) + "\n"
+
+    def _on_disk(self) -> str:
+        return "".join(p.read_text(encoding="utf-8", errors="ignore")
+                       for p in self.config.root.rglob("*") if p.is_file())
+
+    def _session(self):
+        # Offline, so the session is held and its file stays on disk to be
+        # read. With a judge that answers, a successful fold deletes it.
+        self._stub_judge(None)
+        tx = self.root / "transcript.jsonl"
+        tx.write_text("")
+        return tx, {"session_id": "s", "transcript_path": str(tx), "cwd": str(self.root)}
+
+    def _say(self, tx, *blocks):
+        with tx.open("a", encoding="utf-8") as fh:
+            fh.write(self._row("assistant", list(blocks)))
+
+    def test_a_token_cut_by_a_field_limit_leaves_no_fragment(self):
+        from skillpp.capture import _RESPONSE_CHARS, handle_session_end
+        # The token starts 25 characters before the cut, in text with no space
+        # to back off to, like a path or a line of JSON.
+        straddling = ("/srv/app/build/" * 40)[:_RESPONSE_CHARS - 25] + self.TOKEN + " then more"
+        tx, base = self._session()
+        tx.write_text(self._row("user", "upload it"))
+        handle_prompt(self.config, {**base, "prompt": "upload it"})
+        self._say(tx, {"type": "text", "text": straddling}, {"type": "tool_use", "name": "Bash"})
+        handle_tool(self.config, {**base, "tool_name": "Bash",
+                                  "tool_input": {"command": "make upload"},
+                                  "tool_response": {"stdout": straddling}})
+        self._say(tx, {"type": "text", "text": straddling})
+        handle_session_end(self.config, base)
+        self.assertNotIn(self.TOKEN[:16], self._on_disk())
+
+    def test_every_field_a_hook_stores_is_scrubbed(self):
+        from skillpp.capture import handle_session_end
+        tx, base = self._session()
+        tx.write_text(self._row("user", f"deploy with {LEAKED_TOKEN}"))
+        handle_prompt(self.config, {**base, "prompt": f"deploy with {LEAKED_TOKEN}"})
+        self._say(tx, {"type": "text", "text": f"using {LEAKED_TOKEN}"},
+                  {"type": "tool_use", "name": "Bash"})
+        for tool, given in (
+                ("Bash", {"command": f"export T={LEAKED_TOKEN}", "description": LEAKED_TOKEN}),
+                ("Write", {"file_path": "/r/a.env", "content": f"KEY={LEAKED_TOKEN}"}),
+                ("Edit", {"file_path": "/r/a.py", "old_string": LEAKED_TOKEN, "new_string": "x"}),
+                ("WebFetch", {"url": f"https://h/?t={LEAKED_TOKEN}", "prompt": "p"})):
+            handle_tool(self.config, {**base, "tool_name": tool, "tool_input": given,
+                                      "tool_response": f"ok {LEAKED_TOKEN}"})
+        self._say(tx, {"type": "text", "text": f"done, {LEAKED_TOKEN} is set"})
+        handle_prompt(self.config, {**base, "prompt": "thanks"})
+        handle_session_end(self.config, base)
+        disk = self._on_disk()
+        self.assertNotIn(LEAKED_TOKEN, disk)
+        self.assertIn("REDACTED", disk)
+
+
 class TestNormalize(unittest.TestCase):
     def test_normalize_command_keeps_subcommand(self):
         self.assertEqual(normalize_command("git commit -m 'x'"), "git commit")
