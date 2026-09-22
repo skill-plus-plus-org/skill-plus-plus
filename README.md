@@ -55,43 +55,42 @@ commit it to your repo's `.claude/skills/` so everyone working in it gets it.
 - macOS or Linux, Python 3.10 or newer (the standard library only)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code), with `claude` on
   your PATH and logged in (run `claude`, then `/login`)
-- [Ollama](https://ollama.com) with two models, about 8 GB of free memory while
-  the larger one is loaded:
-
-  ```bash
-  ollama pull gemma4:e4b         # cuts sessions into tasks, names candidates
-  ollama pull nomic-embed-text   # decides whether two tasks are the same procedure
-  ```
+- [Ollama](https://ollama.com) installed and running (`brew install ollama` on a
+  Mac). skillpp downloads the two local models it needs while it installs:
+  about 10 GB on disk, and about 10 GB of free memory while it cuts a session.
 
 ## Quickstart
 
 ```bash
 pipx install git+https://github.com/himanshu096/skill-plus-plus
-skillpp install --project ~/code/my-repo --apply   # wire the hooks into one repo
-skillpp doctor                                     # hooks, Ollama, models: all green?
+skillpp install --project ~/code/my-repo --apply   # hooks, slash commands and the two local models
+skillpp doctor                                     # everything green?
 ```
 
-Restart Claude Code in that repo (hooks load when a session starts) and work as
-usual. Then open the review page:
+Start a new Claude Code session in that repo (a new chat in the CLI, or a new
+Code session in the desktop app): hooks load when a session starts. Work as
+usual, then open the review page:
 
 ```bash
 skillpp web
 ```
-
-Use `--user` instead of `--project` to capture every project. `skillpp install`
-is a dry run until you add `--apply`, backs up your settings file, and
-`--remove --apply` takes everything out again.
 
 **A first skill without waiting for three repeats:** run `/skillpp-keep` in a
 session (or `skillpp keep`) to save the work so far as a candidate, then
 `skillpp draft <id> --apply`. `SKILLPP_RECURRENCE=1` makes every candidate ready
 at once.
 
+**Install options.** Without `--apply`, `install` only shows what it would do,
+downloads included. `--user` instead of `--project` captures every project;
+`--no-models` leaves Ollama alone; `--remove --apply` takes the hooks and
+commands out again. Your settings file is backed up before it is changed.
+
 ### Installing a drafted skill
 
 Downloaded skills are zips holding `<name>/SKILL.md`. Unzip into
-`~/.claude/skills/` (every project) or `<repo>/.claude/skills/` (one repo), and
-record it:
+`~/.claude/skills/` (every project) or `<repo>/.claude/skills/` (one repo, and
+everyone who works in it), then tell skillpp where it went, so the review page
+shows the candidate as installed:
 
 ```bash
 skillpp promote <id> --skill-path ~/.claude/skills/<name>/SKILL.md

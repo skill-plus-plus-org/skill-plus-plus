@@ -41,8 +41,15 @@ skillpp install --settings path/to/settings.json --apply
 ```
 
 It also copies three slash commands into the matching `commands/` folder:
-`/skillpp-review`, `/skillpp-new` and `/skillpp-keep`. Hooks are read when a
-session starts, so restart Claude Code afterwards, and check:
+`/skillpp-review`, `/skillpp-new` and `/skillpp-keep`, and downloads the two
+Ollama models detection needs (`gemma4:e4b` and `nomic-embed-text`, about 10 GB)
+if they are missing. The dry run lists what it would download. Ollama itself
+has to be installed and running first (https://ollama.com); without it the
+hooks go in anyway, and sessions wait until it answers. `--no-models` skips the
+download.
+
+Hooks are read when a session starts, so start a new session afterwards (a new
+chat in the CLI, or a new Code session in the desktop app), and check:
 
 ```bash
 skillpp doctor
