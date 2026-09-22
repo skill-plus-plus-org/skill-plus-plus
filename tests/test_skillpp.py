@@ -4713,6 +4713,212 @@ class TestFoldPending(TempRoot):
         popen.return_value.wait.assert_not_called()
 
 
+class TestSessionCatalogue(unittest.TestCase):
+    """The public sessions' ground truth, the kit that records them, and the
+    builder that turns a recording into a fixture against that truth."""
+
+    SESSIONS = Path(__file__).resolve().parent / "fixtures" / "sessions"
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(cls.SESSIONS))
+        import from_transcript
+        cls.ft = from_transcript
+        cls.plans = from_transcript.catalogue()
+
+    @staticmethod
+    def _stream(*parts):
+        """`"p:text"` is a prompt, anything else one work step."""
+        from skillpp.segment import PROMPT_TOOL
+        return [{"tool": PROMPT_TOOL, "input": {"text": p[2:]}} if p.startswith("p:")
+                else {"tool": "Bash", "input": {"command": p}} for p in parts]
+
+    def test_every_prompt_in_the_catalogue_is_in_the_kit_word_for_word(self):
+        kit = (self.SESSIONS / "RECORDING.md").read_text(encoding="utf-8")
+        for sid, plan in self.plans.items():
+            for n, prompt in enumerate(plan["prompts"], 1):
+                with self.subTest(session=sid, prompt=n):
+                    self.assertIn(f"`{prompt['text']}`", kit)
+
+    def test_the_catalogue_adds_up(self):
+        """Every cut starts a task, and every task but look-only has a family."""
+        for sid, plan in self.plans.items():
+            with self.subTest(sid):
+                n = len(plan["prompts"])
+                self.assertTrue(all(1 < c <= n for c in plan["cuts"]), plan["cuts"])
+                tasks = len(plan["cuts"]) + 1
+                self.assertEqual(len(plan["families"]), 0 if "detect.look-only" in plan["checks"]
+                                 else tasks)
+                self.assertEqual(len(plan["subjects"]), len(plan["families"]))
+                for c in plan["cuts"]:
+                    self.assertEqual(plan["prompts"][c - 1]["role"], "switch")
+
+    def test_a_cut_before_a_prompt_lands_after_the_last_step_before_it(self):
+        steps = self._stream("p:one", "a", "b", "p:more", "c", "p:two", "d", "e")
+        self.assertEqual(self.ft.boundary_after(steps, [3]), [3])
+
+    def test_a_cut_with_no_work_before_it_is_refused(self):
+        steps = self._stream("p:one", "p:two", "a")
+        with self.assertRaises(SystemExit):
+            self.ft.boundary_after(steps, [2])
+
+    def test_an_answer_to_the_agent_does_not_shift_the_cut(self):
+        """The developer typed a reply the catalogue did not plan: the cut
+        still falls where the planned prompt starts the new task."""
+        planned = [{"role": "explore", "text": "Look at the code first"},
+                   {"role": "switch", "text": "Now write the release notes"}]
+        steps = self._stream("p:Look at the code first", "a",
+                             "p:yes, the second option", "b",
+                             "p:Now write the release notes", "c", "d")
+        which = self.ft.align(steps, planned)
+        self.assertEqual(which, [1, "answer", 2])
+        self.assertEqual(self.ft.boundary_after(steps, [2], which), [2])
+
+    def test_a_planned_prompt_missing_from_the_recording_is_refused(self):
+        planned = [{"role": "explore", "text": "Look at the code first"},
+                   {"role": "switch", "text": "Now write the release notes"}]
+        with self.assertRaises(SystemExit):
+            self.ft.align(self._stream("p:Look at the code first", "a"), planned)
+
+    def test_a_task_under_three_steps_is_flagged(self):
+        steps = self._stream("p:one", "a", "b", "c", "p:two", "d")
+        self.assertEqual(self.ft.thin_tasks(steps, [3]), [(2, 1)])
+
+    def test_the_judge_is_scored_by_the_role_of_each_prompt(self):
+        import score
+        steps = self._stream("p:start", "a", "b", "p:fix it", "c", "p:other job", "d", "e")
+        steps[2]["end"] = True          # a cut at the correction: false
+        steps[4]["end"] = False         # no cut at the switch: missed
+        doc = {"tag": "t", "steps": steps,
+               "truth": {"roles": ["explore", "correct", "switch"], "boundary_after": [3]}}
+        self.assertEqual(score.cuts_by_role(doc), {
+            "correct": {"asked": 1, "false": 1, "cuts": 0, "missed": 0},
+            "switch": {"asked": 1, "false": 0, "cuts": 1, "missed": 1}})
+
+    def test_merged_pairs_are_counted_by_how_alike_the_runs_are(self):
+        import recurrence
+        rows = [{"family": "f", "entry": "e1", "kind": "code", "level": "identical", "subject": "x"},
+                {"family": "f", "entry": "e1", "kind": "code", "level": "identical", "subject": "x"},
+                {"family": "f", "entry": "e2", "kind": "code", "level": None, "subject": "y"}]
+        levels = recurrence.evaluate(rows)["levels"]
+        self.assertEqual(levels[("identical", "code")], {"should": 1, "merged": 1})
+        self.assertEqual(levels[("different subject", "code")], {"should": 2, "merged": 0})
+
+    @unittest.skipIf(shutil.which("git") is None, "needs git")
+    def test_setup_gives_code_sessions_a_repo_committed_by_nobody_real(self):
+        import subprocess
+        setup = self.SESSIONS / "recording" / "setup.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            for sid in ("C-3", "P-2said"):
+                subprocess.run(["sh", str(setup), sid, tmp], check=True,
+                               capture_output=True)
+            log = subprocess.run(["git", "-C", f"{tmp}/C-3", "log", "--format=%an <%ae>"],
+                                 capture_output=True, text=True, check=True).stdout
+            self.assertEqual(log.strip(), "Recorder <recorder@example.com>")
+            self.assertEqual(sorted(os.listdir(f"{tmp}/P-2said")),
+                             ["CHANGELOG.md", "meeting-1.md"])
+
+    def test_the_seed_repo_lacks_every_feature_the_prompts_ask_for(self):
+        """A feature prompt asking for what already works would measure
+        nothing: `isalnum()` keeps `é`, so the seed must keep ASCII only."""
+        seed = str(self.SESSIONS / "recording" / "seed-repo")
+        sys.path.insert(0, seed)
+        try:
+            from textkit.slugify import slugify
+            from textkit.titlecase import titlecase
+            from textkit import wordfreq
+        finally:
+            sys.path.remove(seed)
+            for name in [m for m in sys.modules if m == "textkit" or m.startswith("textkit.")]:
+                del sys.modules[name]
+        self.assertEqual(slugify("Café au lait"), "caf-au-lait")
+        self.assertEqual(titlecase("don't stop the music"), "Don'T Stop The Music")
+        for option in ("--top", "--min-length", "--json"):
+            with self.subTest(option), self.assertRaises(SystemExit), \
+                    mock.patch("sys.stderr"):
+                wordfreq.main([option, "3", "f.txt"])
+
+
+class TestDraftCheck(unittest.TestCase):
+    """The criteria a drafted SKILL.md is held to, run on hand-written drafts,
+    so the checker is known to fail what it should before a real draft runs."""
+
+    GOOD = """---
+name: talk-deck-from-docs
+description: "Use when someone needs a short talk built from a document: outline first, approval, then the deck."
+metadata:
+  provenance: "ledger:abc123"
+---
+
+# talk-deck-from-docs
+
+## When to use
+
+Someone asks for slides drawn from a document they point at.
+
+## Procedure
+
+1. Read the source material the user names.
+2. Propose an outline of the slides; keep to the length the user asks for, e.g. 6 slides.
+3. Check every claim in the outline against the source and report what is not backed.
+4. Wait for the user to approve the outline before building anything.
+5. Build the deck as a .pptx file.
+6. Open the file and check the slides match the approved outline.
+"""
+    LOG = "# 2026-09-22T08:00:00+00:00  exit 0  60.0s\n"
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "benchmarks"))
+        import draft_check
+        cls.dc = draft_check
+        data = draft_check.load_cases()
+        cls.case, cls.hedge = data["cases"]["draft.procedure.deck"], data["hedge"]
+
+    def _failed(self, text, log=None):
+        rows = self.dc.evaluate(text, self.LOG if log is None else log, "abc123",
+                                {"tag": "5d99e183", "steps": [{"tool_returned": "[main 1a2b3c4] x"}]},
+                                self.case, self.hedge)
+        return {r["id"] for r in rows if not r["ok"]}
+
+    def test_a_good_draft_passes_every_criterion(self):
+        self.assertEqual(self._failed(self.GOOD), set())
+
+    def test_building_before_approval_fails(self):
+        swapped = self.GOOD.replace(
+            "4. Wait for the user to approve the outline before building anything.\n"
+            "5. Build the deck as a .pptx file.",
+            "4. Build the deck as a .pptx file.\n"
+            "5. Wait for the user to approve it.")
+        self.assertIn("order D4<D5", self._failed(swapped))
+
+    def test_a_setting_from_that_day_stated_as_a_rule_fails(self):
+        rule = self.GOOD.replace("keep to the length the user asks for, e.g. 6 slides",
+                                 "always use 6 slides")
+        self.assertIn("settings", self._failed(rule))
+
+    def test_anything_from_the_recording_fails(self):
+        self.assertIn("G8", self._failed(self.GOOD + "\nSee ${HOME}/skillpp-recordings.\n"))
+        self.assertIn("G8", self._failed(self.GOOD + "\nIt was commit 1a2b3c4.\n"))
+
+    def test_pasted_shell_fails(self):
+        block = "\n```bash\ncd x\npython3 a.py\npython3 b.py\ngit commit\n```\n"
+        self.assertIn("G9", self._failed(self.GOOD + block))
+
+    def test_the_run_name_in_the_description_fails(self):
+        self.assertIn("meta", self._failed(self.GOOD.replace("from a document", "from the skillpp README")))
+
+    def test_a_declined_or_failed_run_fails(self):
+        self.assertIn("G1", self._failed(self.GOOD, log="# t  exit 1  1.0s\n"))
+        self.assertIn("G1", self._failed(self.GOOD, log=self.LOG + "SKILLPP-DECLINE: one bug\n"))
+
+    def test_the_bare_template_fails(self):
+        self.assertIn("G5", self._failed(self.GOOD + "\n<!-- skillpp:write-the-procedure -->\n"))
+
+    def test_an_open_question_that_is_a_statement_fails(self):
+        self.assertIn("G10", self._failed(self.GOOD + "\n## Open questions\n\n- The limit is unclear.\n"))
+
+
 class TestNothingPrivateIsTracked(unittest.TestCase):
     """Everything tracked here is published. Real sessions once carried a
     colleague's name, an internal hostname and an account id into the repo;

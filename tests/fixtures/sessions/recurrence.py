@@ -70,9 +70,13 @@ def fold_all(config: Config) -> list[dict]:
             raise SystemExit(
                 f"{doc['tag']}: {len(episodes)} banked episode(s) but "
                 f"{len(families)} family label(s) — fix the fixture truth first")
-        for n, (episode, family) in enumerate(zip(episodes, families), 1):
+        subjects = list(doc["truth"].get("subjects") or [])
+        subjects += [None] * (len(families) - len(subjects))
+        for n, (episode, family, subject) in enumerate(zip(episodes, families, subjects), 1):
             rows.append({"episode": f"{doc['tag']}#{n}", "family": family,
-                         "entry": episode["id"], "status": episode["status"]})
+                         "entry": episode["id"], "status": episode["status"],
+                         "subject": subject, "kind": doc.get("kind"),
+                         "level": doc["truth"].get("level")})
     return rows
 
 
@@ -84,12 +88,17 @@ def evaluate(rows: list[dict]) -> dict:
         by_entry[r["entry"]].add(r["family"])
 
     correct = wrong = missed = 0
+    levels = defaultdict(lambda: {"should": 0, "merged": 0})
     for a, b in combinations(rows, 2):
         same_family = a["family"] == b["family"]
         same_entry = a["entry"] == b["entry"]
         correct += same_family and same_entry
         wrong += (not same_family) and same_entry
         missed += same_family and not same_entry
+        if same_family:
+            cell = levels[(pair_level(a, b), a.get("kind"))]
+            cell["should"] += 1
+            cell["merged"] += same_entry
 
     return {
         "families": {f: len(ids) for f, ids in sorted(by_family.items())},
@@ -97,7 +106,20 @@ def evaluate(rows: list[dict]) -> dict:
         "wrong_merges": {e: sorted(fs) for e, fs in by_entry.items() if len(fs) > 1},
         "pairs": {"correct": correct, "wrong": wrong, "missed": missed,
                   "should_merge": correct + missed},
+        "levels": dict(levels),
     }
+
+
+# How alike two runs of one procedure are, which is what makes merging them
+# easy or hard: the same prompts, the same goal driven differently, or the same
+# procedure on another subject. Set per session in the catalogue.
+LEVELS = ("identical", "same-goal", "different subject")
+
+
+def pair_level(a: dict, b: dict) -> str:
+    if a.get("level") and a.get("level") == b.get("level"):
+        return a["level"]
+    return "different subject"
 
 
 def main() -> int:
@@ -121,6 +143,17 @@ def main() -> int:
     print(f"wrong merges (different families in one entry): {p['wrong']} pair(s)")
     for entry, families in result["wrong_merges"].items():
         print(f"  {entry}: {', '.join(families)}")
+
+    kinds = sorted({k for _, k in result["levels"]} - {None}) or [None]
+    if any(k for k in kinds):
+        print("\nmerged pairs by how alike the runs are")
+        print(f"  {'level':<20}" + "".join(f"{k:>14}" for k in kinds))
+        for level in LEVELS:
+            cells = [result["levels"].get((level, k)) for k in kinds]
+            if not any(cells):
+                continue
+            print(f"  {level:<20}" + "".join(
+                f"{(str(c['merged']) + '/' + str(c['should'])) if c else '–':>14}" for c in cells))
 
     # Only families that repeat can be unified or not; a one-run family is in
     # a single entry by construction and would flatter the count.

@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""Check drafted skills against criteria fixed before any draft ran.
+
+    python3 tests/benchmarks/draft_check.py prepare draft.code.feature
+    python3 tests/benchmarks/draft_check.py check
+
+Drafting is a frontier-model call, so it is not part of the unit suite: the
+developer runs it. Everything around it is scripted, so a change to the draft
+prompt (`skillpp/commands/skillpp-draft.md`) can be judged the same way every
+time.
+
+`prepare` folds one recorded session, alone, into its own ledger and prints the
+`skillpp draft` command to run. `check` reads what the draft wrote and prints
+every criterion in `tests/fixtures/sessions/draft_cases.json` as pass or fail,
+with the line that decided it.
+
+One session per draft, by the one-run rule: the draft is written from the
+candidate's first run, so a single recorded run is exactly its input.
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[1]
+SESSIONS = REPO / "tests" / "fixtures" / "sessions"
+CASES = SESSIONS / "draft_cases.json"
+DEFAULT_OUT = Path.home() / "skillpp-draft-check"
+sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(SESSIONS))
+
+from skillpp.lifecycle import parse_frontmatter  # noqa: E402
+
+MARKER = "<!-- skillpp:write-the-procedure -->"
+STEP = re.compile(r"^\s{0,3}\d+\.\s")
+HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
+NEGATED = re.compile(r"\b(not|no|never|without|don'?t|doesn'?t|avoid)\b", re.IGNORECASE)
+HEX = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
+LEAKS = ("${HOME}", "/Users/", "/private/", "skillpp-recordings")
+
+
+def load_cases() -> dict:
+    return json.loads(CASES.read_text(encoding="utf-8"))
+
+
+# -- reading a SKILL.md ----------------------------------------------------
+
+def body_of(text: str) -> str:
+    """Everything after the frontmatter."""
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            return text[end + 4:]
+    return text
+
+
+def sections(text: str) -> list[tuple[str, str]]:
+    """(heading, body) for each `##` section, in order."""
+    out, title, lines = [], "", []
+    for line in body_of(text).splitlines():
+        m = HEADING.match(line)
+        if m and len(m.group(1)) == 2:
+            out.append((title, "\n".join(lines)))
+            title, lines = m.group(2).strip(), []
+        else:
+            lines.append(line)
+    out.append((title, "\n".join(lines)))
+    return out
+
+
+def procedure_steps(text: str) -> list[str]:
+    """The numbered steps of the procedure: the first section after
+    `## When to use` that has numbered lines. A step runs until the next
+    numbered line or heading, so its explanation counts as part of it."""
+    secs = sections(text)
+    names = [t.lower() for t, _ in secs]
+    start = names.index("when to use") + 1 if "when to use" in names else 0
+    for title, body in secs[start:]:
+        if title.lower() in ("open questions", "requirements"):
+            continue
+        steps, current = [], None
+        for line in body.splitlines():
+            if HEADING.match(line):
+                break
+            if STEP.match(line):
+                if current is not None:
+                    steps.append(current)
+                current = line
+            elif current is not None:
+                current += "\n" + line
+        if current is not None:
+            steps.append(current)
+        if steps:
+            return steps
+    return []
+
+
+def sentences(text: str) -> list[str]:
+    # Not after "e.g." or "i.e.": splitting there moved the hedge that makes a
+    # setting an example into the sentence before it.
+    return [s for s in re.split(r"(?<!e\.g\.)(?<!i\.e\.)(?<=[.!?])\s+|\n", text) if s.strip()]
+
+
+# -- the checks ------------------------------------------------------------
+
+def result(cid: str, label: str, ok: bool, evidence: str = "") -> dict:
+    return {"id": cid, "label": label, "ok": bool(ok), "evidence": evidence.strip()[:160]}
+
+
+def general_checks(text: str, log: str, entry_id: str, fixture: dict | None) -> list[dict]:
+    out = []
+    header = log.splitlines()[0] if log else ""
+    declined = next((l for l in log.splitlines() if l.strip().startswith("SKILLPP-DECLINE:")), "")
+    out.append(result("G1", "the run finished", re.search(r"\bexit 0\b", header) and not declined,
+                      declined or header or "no agent.log"))
+
+    front = parse_frontmatter(text)
+    provenance = str((front.get("metadata") or {}).get("provenance", ""))
+    out.append(result("G2", "valid frontmatter", front and provenance == f"ledger:{entry_id}",
+                      f"provenance: {provenance or 'missing'}"))
+    name = str(front.get("name") or "")
+    out.append(result("G3", "a usable name",
+                      re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name) and len(name) <= 64, name))
+    desc = str(front.get("description") or "")
+    out.append(result("G4", "the description is a trigger",
+                      20 <= len(desc) <= 200 and re.search(r"\bwhen(ever)?\b", desc, re.I),
+                      f"{len(desc)} chars: {desc}"))
+    out.append(result("G5", "the template was filled in", MARKER not in text,
+                      MARKER if MARKER in text else ""))
+
+    when = next((b for t, b in sections(text) if t.lower() == "when to use"), None)
+    out.append(result("G6", "a trigger section", when is not None and when.strip(),
+                      "missing" if when is None else when.strip().splitlines()[0] if when.strip() else "empty"))
+    steps = procedure_steps(text)
+    out.append(result("G7", "real steps", 3 <= len(steps) <= 12, f"{len(steps)} numbered steps"))
+
+    leaks = [s for s in LEAKS if s in text]
+    if fixture:
+        if fixture.get("tag") and fixture["tag"] in text:
+            leaks.append(fixture["tag"])
+        seen = set(HEX.findall(json.dumps(fixture.get("steps", []))))
+        leaks += sorted(h for h in set(HEX.findall(text)) if h in seen)
+    out.append(result("G8", "nothing from the recording leaked", not leaks, ", ".join(leaks)))
+
+    blocks = re.findall(r"^```.*?\n(.*?)^```", text, re.M | re.S)
+    long = [b for b in blocks if len(b.strip().splitlines()) > 3]
+    out.append(result("G9", "no shell pasted back", not long,
+                      long[0].splitlines()[0] if long else ""))
+
+    questions = next((b for t, b in sections(text) if t.lower() == "open questions"), "")
+    items = [l.strip() for l in questions.splitlines() if re.match(r"\s*(-|\*|\d+\.)\s", l)]
+    bad = [i for i in items if not i.rstrip(" *_").endswith("?")]
+    out.append(result("G10", "questions are questions", not bad, bad[0] if bad else ""))
+    return out
+
+
+def find_concept(steps: list[str], spec: dict, found: dict[str, int | None]) -> int | None:
+    after = found.get(spec["after"]) if spec.get("after") else 0
+    if spec.get("after") and after is None:
+        return None
+    for n, step in enumerate(steps, 1):
+        if n <= (after or 0):
+            continue
+        if spec.get("max_step") and n > spec["max_step"]:
+            return None
+        if all(re.search(p, step, re.IGNORECASE) for p in spec["all"]):
+            return n
+    return None
+
+
+def case_checks(text: str, case: dict, hedge: str) -> list[dict]:
+    out = []
+    steps = procedure_steps(text)
+    body = body_of(text)
+    found: dict[str, int | None] = {}
+    for cid, spec in case.get("concepts", {}).items():
+        found[cid] = n = find_concept(steps, spec, found)
+        out.append(result(cid, spec["label"], n is not None,
+                          f"step {n}: {steps[n - 1].splitlines()[0]}" if n else "not found"))
+
+    for a, op, b in case.get("order", []):
+        na, nb = found.get(a), found.get(b)
+        ok = na is not None and nb is not None and (na < nb if op == "<" else na <= nb)
+        out.append(result(f"order {a}{op}{b}", "step order", ok, f"{a} at {na}, {b} at {nb}"))
+
+    for spec in case.get("absent", []):
+        hits = [s for s in sentences(body) if re.search(spec["pattern"], s, re.I)
+                and not NEGATED.search(s)]
+        out.append(result(spec["id"], spec["label"], not hits, hits[0] if hits else ""))
+
+    unhedged = [s for pat in case.get("settings", []) for s in sentences(body)
+                if re.search(pat, s, re.I) and not re.search(hedge, s, re.I)]
+    if case.get("settings"):
+        out.append(result("settings", "that day's settings are inputs", not unhedged,
+                          unhedged[0] if unhedged else ""))
+
+    front = parse_frontmatter(text)
+    meta = f"{front.get('name', '')} {front.get('description', '')}".lower()
+    named = [t for t in case.get("meta_forbid", []) if t.lower() in meta]
+    out.append(result("meta", "about the procedure, not this run", not named, ", ".join(named)))
+
+    if case.get("body_limit"):
+        lim = case["body_limit"]
+        hits = [s for s in sentences(body) if re.search(lim["pattern"], s, re.I)]
+        loose = [s for s in hits if not re.search(hedge, s, re.I)]
+        out.append(result(lim["id"], lim["label"], len(hits) <= lim["max"] and not loose,
+                          f"{len(hits)} mention(s)" + (f"; unhedged: {loose[0]}" if loose else "")))
+    return out
+
+
+def evaluate(text: str, log: str, entry_id: str, fixture: dict | None,
+             case: dict, hedge: str) -> list[dict]:
+    return general_checks(text, log, entry_id, fixture) + case_checks(text, case, hedge)
+
+
+# -- the two commands ------------------------------------------------------
+
+def _fixture_for(session: str) -> dict:
+    import score
+    for doc in score.load():
+        if doc.get("session") == session:
+            return doc
+    raise SystemExit(f"no fixture for session {session}; build it with "
+                     f"from_transcript.py --session {session}")
+
+
+def prepare(check: str, out: Path, force: bool) -> int:
+    cases = load_cases()["cases"]
+    if check not in cases:
+        raise SystemExit(f"unknown check {check!r}; known: {', '.join(cases)}")
+    fixture = _fixture_for(cases[check]["session"])
+    here = out / check
+    root = here / "skillpp"
+    if root.exists() and not force:
+        raise SystemExit(f"{root} exists; pass --force to prepare it again")
+
+    # One session in an empty ledger has nothing to be matched against, so the
+    # embedding cannot change the outcome: a fixed vector stands in, and no
+    # local model is started. Naming is off for the same reason — the draft
+    # names the skill itself.
+    os.environ["SKILLPP_NAME"] = "0"
+    from skillpp import matching
+    matching.embed = lambda text, **kw: [1.0, 0.0, 0.0]
+    matching.model_reachable = lambda config: True
+    from skillpp.capture import fold_session
+    from skillpp.config import Config
+    from skillpp.ledger import Ledger
+
+    if root.exists():
+        import shutil
+        shutil.rmtree(root)
+    config = Config(root)
+    config.ensure_dirs()
+    fold_session(config, {"session_id": fixture["tag"], "cwd": "", "prompts": [],
+                          "steps": copy.deepcopy(fixture["steps"])}, force=True)
+    entries = sorted(Ledger(config).all(), key=lambda e: -len(e.steps))
+    if not entries:
+        raise SystemExit(f"{fixture['tag']} banked nothing; see its fixture")
+    entry = entries[0]
+    (here / "case.json").write_text(json.dumps(
+        {"check": check, "entry": entry.id, "session": cases[check]["session"],
+         "fixture": str(fixture["_path"])}, indent=1) + "\n")
+    review = here / "review.md"
+    if not review.exists():
+        review.write_text(
+            f"# Review: {check}\n\nAnswer yes or no, with a line on why.\n\n"
+            "1. Could a colleague follow it?\n2. Does it generalize beyond this one run?\n"
+            "3. Did any one-off setting become a fixed rule?\n"
+            "4. Are the open questions sensible?\n5. Is anything invented?\n")
+    print(f"prepared {check}: candidate {entry.id} from {fixture['tag']} "
+          f"({cases[check]['session']})")
+    print(f"\nrun:\n  python3 {REPO / 'bin' / 'skillpp'} --root {root} draft {entry.id} --apply")
+    print(f"\nthen review it in {review}")
+    return 0
+
+
+def check(out: Path, only: list[str]) -> int:
+    data = load_cases()
+    failed = 0
+    names = only or list(data["cases"])
+    for name in names:
+        meta_path = out / name / "case.json"
+        if not meta_path.exists():
+            print(f"-- {name}: not prepared")
+            continue
+        meta = json.loads(meta_path.read_text())
+        draft_dir = out / name / "skillpp" / "drafts" / meta["entry"]
+        skill = draft_dir / "SKILL.md"
+        if not skill.exists():
+            print(f"-- {name}: no draft yet in {draft_dir}")
+            continue
+        log_path = draft_dir / "agent.log"
+        log = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+        fixture = json.loads(Path(meta["fixture"]).read_text()) if Path(meta["fixture"]).exists() else None
+        rows = evaluate(skill.read_text(encoding="utf-8"), log, meta["entry"], fixture,
+                        data["cases"][name], data["hedge"])
+        bad = [r for r in rows if not r["ok"]]
+        failed += bool(bad)
+        print(f"\n{'PASS' if not bad else 'FAIL'}  {name}  ({len(rows) - len(bad)}/{len(rows)})")
+        for r in rows:
+            print(f"   {'ok ' if r['ok'] else 'XX '} {r['id']:<14} {r['label']:<38} {r['evidence']}")
+    return 1 if failed else 0
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("prepare", help="fold a case's session into its own ledger")
+    p.add_argument("case")
+    p.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    p.add_argument("--force", action="store_true")
+    c = sub.add_parser("check", help="check every prepared draft")
+    c.add_argument("cases", nargs="*")
+    c.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    args = ap.parse_args(argv)
+    if args.cmd == "prepare":
+        return prepare(args.case, args.out.expanduser(), args.force)
+    return check(args.out.expanduser(), args.cases)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

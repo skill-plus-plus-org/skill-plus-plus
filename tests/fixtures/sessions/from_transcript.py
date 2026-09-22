@@ -198,18 +198,99 @@ def extract(path: Path) -> list[dict]:
     return json.loads(blob)
 
 
-def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("tag")
-    ap.add_argument("--name", required=True, help="slug for the filename")
-    ap.add_argument("--episodes", type=int, required=True, help="ground truth")
-    ap.add_argument("--markers", type=int, default=None)
-    ap.add_argument("--title", default=None, help="omit for a commitless session")
-    ap.add_argument("--must-contain", action="append", default=[])
-    args = ap.parse_args(argv)
+CATALOGUE = HERE / "catalogue.json"
+# A task below this many work steps is decided by the two-step floor rather than
+# the judge, which is what made the first public set measure so little.
+THIN = 3
 
-    transcript = find(args.tag)
-    steps = extract(transcript)
+
+def catalogue() -> dict[str, dict]:
+    """The public sessions' ground truth, fixed before recording."""
+    doc = json.loads(CATALOGUE.read_text(encoding="utf-8"))
+    return {s["id"]: s for s in doc["sessions"]}
+
+
+def find_session(session_id: str) -> Path | None:
+    """The transcript recorded in `~/skillpp-recordings/<session_id>/`.
+
+    Claude Code names a project's transcript folder after its working
+    directory, `/` and `.` turned into `-`, so the folder `setup.sh` made is
+    enough to find it, from the CLI and the desktop app alike.
+    """
+    suffix = "-skillpp-recordings-" + session_id
+    dirs = [d for d in Path.home().glob(".claude/projects/*") if d.name.endswith(suffix)]
+    chats = sorted(f for d in dirs for f in d.glob("*.jsonl"))
+    if len(chats) > 1:
+        raise SystemExit(f"{session_id}: {len(chats)} chats were recorded in its folder; "
+                         "keep the one to use and delete the others:\n  "
+                         + "\n  ".join(map(str, chats)))
+    return chats[0] if chats else None
+
+
+def _said(step: dict) -> str:
+    return " ".join(str((step.get("input") or {}).get("text", "")).split())
+
+
+def align(steps: list[dict], planned: list[dict]) -> list[str | int]:
+    """Which planned prompt each recorded prompt is: its number, or "answer".
+
+    A developer answering the agent types a prompt the catalogue did not plan,
+    which would shift every prompt number after it. Matching by text, in
+    order, lets that answer belong to whatever task it was asked in.
+    """
+    from difflib import SequenceMatcher
+    recorded = [_said(s) for s in steps if is_prompt(s)]
+    out: list[str | int] = []
+    nxt = 0
+    for text in recorded:
+        if nxt < len(planned):
+            want = " ".join(planned[nxt]["text"].split())
+            if SequenceMatcher(None, text, want).ratio() >= 0.8:
+                nxt += 1
+                out.append(nxt)
+                continue
+        out.append("answer")
+    if nxt != len(planned):
+        missing = planned[nxt]["text"][:70]
+        raise SystemExit(f"planned prompt {nxt + 1} was not found in the recording: {missing!r}…")
+    return out
+
+
+def boundary_after(steps: list[dict], cuts: list[int],
+                   which: list[str | int] | None = None) -> list[int]:
+    """The work steps after which a new task starts, from the prompts that start one.
+
+    *cuts* are prompt numbers, 1-based, as the catalogue writes them. *which*
+    maps recorded prompts to planned ones (see `align`); without it, the
+    recorded prompts are the planned ones.
+    """
+    out, prompt_no, work = [], 0, 0
+    for step in steps:
+        if is_prompt(step):
+            planned = which[prompt_no] if which else prompt_no + 1
+            prompt_no += 1
+            if planned in cuts:
+                if work == 0 or (out and out[-1] == work):
+                    raise SystemExit(f"prompt {planned} starts a task, but no work came before it")
+                out.append(work)
+        else:
+            work += 1
+    if len(out) != len(cuts):
+        raise SystemExit(f"cuts before prompts {cuts} found {len(out)} of them")
+    return out
+
+
+def thin_tasks(steps: list[dict], after: list[int]) -> list[tuple[int, int]]:
+    """Tasks under `THIN` work steps, as (task number, steps)."""
+    total = sum(1 for s in steps if not is_prompt(s))
+    edges = [0, *after, total]
+    return [(n, edges[n] - edges[n - 1]) for n in range(1, len(edges))
+            if edges[n] - edges[n - 1] < THIN]
+
+
+def write_fixture(transcript: Path, name: str, truth: dict, extra: dict | None = None,
+                  steps: list[dict] | None = None) -> tuple[Path, dict]:
+    steps = extract(transcript) if steps is None else steps
     blob = json.dumps(steps)
     hits = SECRETS.findall(blob)
     if hits:
@@ -226,14 +307,15 @@ def main(argv: list[str]) -> int:
         raise SystemExit("refusing to write, the leak guard found:\n  " + "\n  ".join(leaks[:20]))
 
     work = [s for s in steps if not is_prompt(s)]
+    tag = transcript.stem[:8]
     doc = {
-        "tag": args.tag[:8],
-        "name": args.name,
+        "tag": tag,
+        "name": name,
+        **(extra or {}),
         "captured": __import__("datetime").date.today().isoformat(),
         "started": started(transcript),
         "procedure": "",
-        "truth": {"episodes": args.episodes, "markers": args.markers,
-                  "title": args.title, "must_contain": args.must_contain},
+        "truth": truth,
         "why": "", "history": "",
         "shape": {"steps": len(work),
                   "prompts": len(steps) - len(work),
@@ -241,15 +323,97 @@ def main(argv: list[str]) -> int:
         "steps": steps,
     }
     # Beside the others it will be scored with, public or private.
-    out = Path(os.environ.get("SKILLPP_FIXTURES") or HERE).expanduser() / f"{args.tag[:8]}-{args.name}.json"
+    out = Path(os.environ.get("SKILLPP_FIXTURES") or HERE).expanduser() / f"{tag}-{name}.json"
     out.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    return out, doc
+
+
+def build_session(session_id: str, plan: dict) -> Path | None:
+    """Build one catalogue session's fixture, its truth taken from the catalogue."""
+    transcript = find_session(session_id)
+    if transcript is None:
+        print(f"-- {session_id}: not recorded yet")
+        return None
+    steps = extract(transcript)
+    which = align(steps, plan["prompts"])
+    after = boundary_after(steps, plan["cuts"], which)
+    roles = [plan["prompts"][w - 1]["role"] if isinstance(w, int) else w for w in which]
+    truth = {"episodes": len(plan["families"]), "markers": None, "title": None,
+             "must_contain": [], "families": plan["families"],
+             "subjects": plan["subjects"], "boundary_after": after, "roles": roles}
+    if plan.get("level"):
+        truth["level"] = plan["level"]
+    out, doc = write_fixture(
+        transcript, session_id.lower(), truth,
+        extra={"session": session_id, "kind": plan["kind"],
+               "surface": plan["surface"], "checks": plan["checks"]},
+        steps=steps)
+    answers = roles.count("answer")
+    print(f"wrote {out.name}: {doc['shape']['steps']} steps, {doc['shape']['prompts']} prompts"
+          + (f" ({answers} answer(s) to the agent)" if answers else "")
+          + f", cuts after {after or 'none'}")
+    for task, n in thin_tasks(steps, after) if plan["families"] else []:
+        print(f"   THIN  task {task} has {n} work step(s), under {THIN}: the floor, "
+              f"not the judge, decides it. Note it in `why`.")
+    return out
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("tag", nargs="?", help="a transcript id, for a session outside the catalogue")
+    ap.add_argument("--session", help="a catalogue session id, e.g. C-F1")
+    ap.add_argument("--all-sessions", action="store_true",
+                    help="every catalogue session that has been recorded")
+    ap.add_argument("--name", help="slug for the filename")
+    ap.add_argument("--episodes", type=int, help="ground truth: candidates banked")
+    ap.add_argument("--markers", type=int, default=None)
+    ap.add_argument("--title", default=None, help="omit for a commitless session")
+    ap.add_argument("--must-contain", action="append", default=[])
+    ap.add_argument("--cut-before-prompt", type=int, action="append", default=[],
+                    help="a prompt number (1-based) that starts a new task")
+    ap.add_argument("--family", action="append", default=[], help="one per banked task")
+    ap.add_argument("--subject", action="append", default=[], help="one per banked task")
+    ap.add_argument("--check", action="append", default=[])
+    ap.add_argument("--kind", choices=("code", "procedure"))
+    ap.add_argument("--roles", help="comma-separated, one per prompt")
+    args = ap.parse_args(argv)
+
+    if args.all_sessions or args.session:
+        plans = catalogue()
+        ids = list(plans) if args.all_sessions else [args.session]
+        for session_id in ids:
+            if session_id not in plans:
+                raise SystemExit(f"no session {session_id!r} in {CATALOGUE.name}")
+            build_session(session_id, plans[session_id])
+        print("fill in `procedure` and `why` by hand before committing")
+        return 0
+
+    if not args.tag or not args.name:
+        ap.error("give a transcript tag and --name, or --session / --all-sessions")
+    episodes = args.episodes if args.episodes is not None else len(args.family)
+    transcript = find(args.tag)
+    steps = extract(transcript)
+    truth = {"episodes": episodes, "markers": args.markers,
+             "title": args.title, "must_contain": args.must_contain}
+    if args.family:
+        truth["families"] = args.family
+    if args.subject:
+        truth["subjects"] = args.subject
+    if args.cut_before_prompt:
+        truth["boundary_after"] = boundary_after(steps, sorted(args.cut_before_prompt))
+    if args.roles:
+        truth["roles"] = [r.strip() for r in args.roles.split(",")]
+    extra = {k: v for k, v in (("kind", args.kind), ("checks", args.check)) if v}
+    out, doc = write_fixture(transcript, args.name, truth, extra, steps=steps)
 
     got = segment([dict(s) for s in steps], 2)
     print(f"wrote {out.name}")
-    print(f"  {len(work)} steps, {doc['shape']['prompts']} prompts, "
+    print(f"  {doc['shape']['steps']} steps, {doc['shape']['prompts']} prompts, "
           f"{doc['shape']['failed']} failed")
-    print(f"  segments into {len(got)} episode(s) against a truth of {args.episodes}"
-          f"{'   <-- records a gap' if len(got) != args.episodes else ''}")
+    print(f"  segments into {len(got)} episode(s) against a truth of {episodes}"
+          f"{'   <-- records a gap' if len(got) != episodes else ''}")
+    for task, n in thin_tasks(steps, truth.get("boundary_after", [])) if episodes else []:
+        print(f"  THIN  task {task} has {n} work step(s), under {THIN}")
     print("  fill in `procedure`, `why` and `history` by hand before committing")
     return 0
 

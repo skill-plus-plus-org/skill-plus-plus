@@ -24,6 +24,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -35,6 +36,7 @@ REPO = HERE.parents[2]
 # pointing this at it. `expected.json` beside them holds the numbers that
 # belong to that set alone.
 SESSIONS = Path(os.environ.get("SKILLPP_FIXTURES") or HERE).expanduser()
+FIXTURE_NAME = re.compile(r"^[0-9a-f]{8}-.+\.json$")
 sys.path.insert(0, str(REPO))
 # Folding names each banked candidate with the local LLM. Nothing scored here
 # reads the name, and it loaded a second model beside the embedder
@@ -56,7 +58,10 @@ def expected() -> dict:
 def load(tag: str | None = None) -> list[dict]:
     out = []
     for path in sorted(SESSIONS.glob("*.json")):
-        if path.name == "expected.json":
+        # A fixture is named after its transcript: `<8-hex tag>-<name>.json`.
+        # The set's other files (expected.json, catalogue.json, the draft
+        # cases) sit beside them and are not sessions.
+        if not FIXTURE_NAME.match(path.name):
             continue
         doc = json.loads(path.read_text(encoding="utf-8"))
         if tag is None or doc["tag"].startswith(tag):
@@ -156,6 +161,79 @@ def check(doc: dict) -> dict:
     }
 
 
+def cuts_by_role(doc: dict) -> dict[str, dict[str, int]]:
+    """At each prompt after the first: was a cut made, and should it have been?
+
+    Keyed by the prompt's role (`truth.roles`), so a judge that cuts at every
+    "correct" or never at an unannounced "switch" shows up by name rather than
+    in one overall count. Read from the stored verdicts; a fixture without
+    `roles` or without verdicts contributes nothing.
+    """
+    roles = doc["truth"].get("roles")
+    want = set(doc["truth"].get("boundary_after") or [])
+    out: dict[str, dict[str, int]] = {}
+    if not roles or not any("end" in s for s in doc["steps"] if not is_prompt(s)):
+        return out
+    work, last, prompt_no = 0, None, 0
+    for step in doc["steps"]:
+        if is_prompt(step):
+            if prompt_no and work and prompt_no < len(roles):
+                cell = out.setdefault(roles[prompt_no], {"asked": 0, "false": 0,
+                                                         "cuts": 0, "missed": 0})
+                cell["asked"] += 1
+                cut = last is not None and last.get("end") is True
+                if work in want:
+                    cell["cuts"] += 1
+                    cell["missed"] += not cut
+                else:
+                    cell["false"] += cut
+            prompt_no += 1
+        else:
+            work += 1
+            last = step
+    return out
+
+
+def check_table(docs: list[dict], rows: dict[str, dict]) -> list[str]:
+    """One line per check id, passes per kind of work."""
+    cells: dict[tuple[str, str], list[int]] = {}
+    for doc in docs:
+        row = rows[doc["tag"]]
+        ok = all(row[k]["ok"] for k in ("episodes", "kept", "boundary"))
+        for check in doc.get("checks") or []:
+            if not check.startswith("detect."):
+                continue            # merge checks are scored by recurrence.py
+            cell = cells.setdefault((check, doc.get("kind") or "-"), [0, 0])
+            cell[0] += ok
+            cell[1] += 1
+    if not cells:
+        return []
+    kinds = sorted({k for _, k in cells})
+    lines = ["", f"{'check':<24}" + "".join(f"{k:>12}" for k in kinds)]
+    for check in sorted({c for c, _ in cells}):
+        lines.append(f"{check:<24}" + "".join(
+            f"{'/'.join(map(str, cells[(check, k)])) if (check, k) in cells else '–':>12}"
+            for k in kinds))
+    return lines
+
+
+def role_table(docs: list[dict]) -> list[str]:
+    total: dict[str, dict[str, int]] = {}
+    for doc in docs:
+        for role, cell in cuts_by_role(doc).items():
+            into = total.setdefault(role, {"asked": 0, "false": 0, "cuts": 0, "missed": 0})
+            for k, v in cell.items():
+                into[k] += v
+    if not total:
+        return []
+    lines = ["", "judge verdicts by prompt role   asked   false cuts   real cuts missed"]
+    for role in sorted(total):
+        c = total[role]
+        missed = f"{c['missed']}/{c['cuts']}" if c["cuts"] else "–"
+        lines.append(f"  {role:<28} {c['asked']:>5}   {c['false']:>10}   {missed:>16}")
+    return lines
+
+
 def main(argv: list[str]) -> int:
     docs = load(argv[0] if argv else None)
     if not docs:
@@ -163,8 +241,9 @@ def main(argv: list[str]) -> int:
         return 1
 
     failed = 0
+    rows = {}
     for doc in docs:
-        row = check(doc)
+        row = rows[doc["tag"]] = check(doc)
         ok = all(row[k]["ok"]
                  for k in ("episodes", "title", "kept", "markers",
                            "boundary"))
@@ -195,6 +274,9 @@ def main(argv: list[str]) -> int:
         if not b["n/a"]:
             print(f"       cut after step {b['got']} / want {b['want']}"
                   f"{'' if b['ok'] else '   <-- wrong place'}")
+
+    for line in check_table(docs, rows) + role_table(docs):
+        print(line)
 
     gaps = sum(1 for d in docs if d.get("expected_fail"))
     print(f"\n{len(docs) - failed - gaps}/{len(docs) - gaps} sessions pass"

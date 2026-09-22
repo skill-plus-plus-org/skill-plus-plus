@@ -8,6 +8,29 @@ Recorded work does not, and it has repeatedly caught what the corpus could not.
 One task banked as six fragments, for example, and a commit made with
 `git -C <path> commit` was invisible to marker detection.
 
+## The public set
+
+The public sessions are recorded from a plan fixed in advance, `catalogue.json`:
+22 sessions of two kinds of work, each written to test named functions.
+- **Code:** one procedure in a small seeded git repo, `recording/seed-repo/`:
+  explore → implement → test → commit.
+- **Procedure:** knowledge work from a source file: read → write → check.
+
+`RECORDING.md` is the kit you record from, and `recording/setup.sh <id>`
+prepares each session's folder. The catalogue holds every prompt, the prompt
+numbers where a new task starts, and the family and subject of every task.
+From the catalogue:
+- `from_transcript.py --session <id>` finds the recording by its folder and
+  writes the truth into the fixture;
+- `score.py` reports every detection check per kind of work, and the judge's
+  cuts per prompt role;
+- `recurrence.py` reports merged pairs by how alike the runs are: identical,
+  same goal, or different subject.
+
+`draft_cases.json` holds what a drafted skill must contain for four of these
+sessions. `tests/benchmarks/draft_check.py` prepares each draft and checks it.
+The drafting itself is a frontier-model call, so you run it.
+
 ## Public and private sets
 
 The sessions in this directory are public work and ship with the repo. A set
@@ -43,6 +66,10 @@ its sessions in `expected.json`:
 | `truth.title` | what the entry should be called |
 | `truth.must_contain` | substrings that must survive into a banked episode: the steps the procedure exists for |
 | `truth.families` | one procedure family per banked episode, for `recurrence.py` |
+| `truth.subjects` | what each banked episode worked on, e.g. `wordfreq --top`: two runs of one family on different subjects are the hard merge |
+| `truth.level` | `identical` or `same-goal` for the runs made to be alike; pairs across levels count as different subject |
+| `truth.roles` | one role per recorded prompt (`explore`, `correct`, `switch`, `answer`…), so the judge is scored by kind of prompt |
+| `session`, `kind`, `surface`, `checks` | the catalogue entry it was recorded from: which session, code or procedure, CLI or desktop, and what it tests |
 | `why` | why the ground truth is what it is, argued rather than asserted |
 | `history` | what the pipeline did before, so a regression is recognisable |
 | `steps` | the step stream, with `$HOME` templated out |
@@ -75,12 +102,22 @@ recorded session fails the suite rather than being noticed three weeks later.
 
 ## Adding one
 
-Do real work in a project with the hooks installed, end the session explicitly
-so `SessionEnd` fires, then build the fixture from its transcript:
+For the public set, record from `RECORDING.md`, then:
 
 ```bash
-python3 tests/fixtures/sessions/from_transcript.py <tag> --name <short-name>
+python3 tests/fixtures/sessions/from_transcript.py --all-sessions
 ```
+
+For any other session, build the fixture from its transcript and give the truth
+by hand. `--cut-before-prompt N` saves counting steps:
+
+```bash
+python3 tests/fixtures/sessions/from_transcript.py <tag> --name <short-name> \
+    --family add-feature-with-tests --family write-makefile --cut-before-prompt 5
+```
+
+It warns when a task has fewer than three work steps: below that, the two-step
+floor decides the result, not the judge.
 
 It writes beside the others (or into `SKILLPP_FIXTURES`, when set), scrubbed,
 and refuses to write while your home path or account name is still in it.
