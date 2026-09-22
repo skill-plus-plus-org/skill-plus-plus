@@ -1,28 +1,28 @@
 {
- "about": "What a drafted SKILL.md must contain, per case. Fixed before the first draft runs (tests/benchmarks/draft_check.py). A concept is present when every pattern in `all` matches inside one numbered step of the procedure; `after` searches only steps after that concept's step; `max_step` caps where it may first appear. Order rules compare first-step numbers. Settings are one-off values from the run that may appear only hedged. Patterns are case-insensitive regexes.",
+ "about": "What a drafted SKILL.md must contain, per case. Fixed before the first draft runs (tests/benchmarks/draft_check.py). A concept is present when every pattern in `all` matches inside one numbered step of the procedure; `after` searches only steps after that concept's step; `max_step` caps where it may first appear. Order rules compare first-step numbers. Settings are one-off values from the run that may appear only hedged. Patterns are case-insensitive regexes. Revised 2026-09-22 after the first four drafts, for how drafts are written, not what they must contain: steps may be ### subheadings; a question item may wrap; settings asked about under Open questions are not rules; `affirmative` concepts skip negated sentences; word boundaries on the explore and read verbs (\"reader\" had matched \"read\"), with \"assess\" added. Also: affirmative concepts join wrapped lines before splitting sentences; F1 is a plan before code (reading is implied, and F1 < F3 keeps it first); F2 accepts the same waiting words as D4.",
  "hedge": "e\\.g\\.|for example|such as|if the user|the user'?s|given|asked|requested",
  "cases": {
   "draft.code.feature": {
    "session": "C-V1",
    "concepts": {
     "F1": {
-     "label": "explore first",
+     "label": "a plan before any code",
      "all": [
-      "read|look at|inspect|explore",
-      "propose|suggest|plan"
+      "\\b(propose|suggest|plan|assess)"
      ]
     },
     "F2": {
      "label": "no edits before agreement",
      "all": [
-      "before (editing|changing|implementing)|don'?t (edit|change)|no edits|agree|confirm|approv"
+      "before (editing|changing|implementing)|without (editing|changing)|don'?t (edit|change|implement)|do not (edit|change|implement)|no edits|agree|confirm|approv|go.?ahead|wait for"
      ]
     },
     "F3": {
      "label": "implement",
      "all": [
       "implement|make the change|write the code"
-     ]
+     ],
+     "affirmative": true
     },
     "F4": {
      "label": "add tests",
@@ -89,8 +89,8 @@
     "R1": {
      "label": "explore first",
      "all": [
-      "read|look at|inspect|explore",
-      "propose|suggest|plan|simplif"
+      "\\b(read|reads|reading|look at|inspect|explore)\\b",
+      "\\b(propose|suggest|plan|simplif|assess)"
      ]
     },
     "R2": {
@@ -143,7 +143,7 @@
     "D1": {
      "label": "read the source",
      "all": [
-      "read|source|material"
+      "\\b(read|reads|reading)\\b|\\bsource\\b|\\bmaterial\\b"
      ]
     },
     "D2": {
@@ -163,14 +163,16 @@
      "label": "wait for approval",
      "all": [
       "approv|confirm|sign.?off|go.?ahead|wait for"
-     ]
+     ],
+     "after": "D3"
     },
     "D5": {
      "label": "build",
      "all": [
       "build|create|generate",
       "pptx|deck|slides|presentation"
-     ]
+     ],
+     "affirmative": true
     },
     "D6": {
      "label": "verify the result",
@@ -194,7 +196,7 @@
     ],
     [
      "D4",
-     "<",
+     "<=",
      "D5"
     ],
     [
@@ -219,7 +221,7 @@
     "P1": {
      "label": "read the source first",
      "all": [
-      "read",
+      "\\bread\\b",
       "source|notes|document|material"
      ],
      "max_step": 2

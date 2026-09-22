@@ -4900,7 +4900,7 @@ Someone asks for slides drawn from a document they point at.
             "5. Build the deck as a .pptx file.",
             "4. Build the deck as a .pptx file.\n"
             "5. Wait for the user to approve it.")
-        self.assertIn("order D4<D5", self._failed(swapped))
+        self.assertIn("order D4<=D5", self._failed(swapped))
 
     def test_a_setting_from_that_day_stated_as_a_rule_fails(self):
         rule = self.GOOD.replace("keep to the length the user asks for, e.g. 6 slides",
@@ -4924,6 +4924,32 @@ Someone asks for slides drawn from a document they point at.
 
     def test_the_bare_template_fails(self):
         self.assertIn("G5", self._failed(self.GOOD + "\n<!-- skillpp:write-the-procedure -->\n"))
+
+    def test_steps_written_as_subheadings_are_read_as_steps(self):
+        steps = self.GOOD.split("## Procedure")[1]
+        as_headings = "\n".join(
+            "### " + line if line[:2].strip(".").isdigit() else line for line in steps.splitlines())
+        self.assertEqual(self._failed(self.GOOD.split("## Procedure")[0] + "## Procedure" + as_headings), set())
+
+    def test_a_wrapped_question_with_its_mark_mid_item_passes(self):
+        text = self.GOOD + ("\n## Open questions\n\n- Is six the default, or asked each time? The run\n"
+                            "  used six without asking.\n")
+        self.assertNotIn("G10", self._failed(text))
+
+    def test_a_setting_asked_about_is_not_a_rule(self):
+        text = self.GOOD + "\n## Open questions\n\n- Should it always be 6 slides?\n"
+        self.assertNotIn("settings", self._failed(text))
+
+    def test_a_negation_on_the_line_before_does_not_count_as_building(self):
+        wrapped = self.GOOD.replace(
+            "2. Propose an outline of the slides;",
+            "2. Propose an outline of the slides. Do not\n   generate the deck yet;")
+        self.assertEqual(self._failed(wrapped), set())
+
+    def test_reader_is_not_read(self):
+        spec = {"all": [r"\b(read|reads|reading|look at|inspect|explore)\b", r"\b(propose|assess)"]}
+        self.assertIsNone(self.dc.find_concept(["1. Propose it so the reader sees why."], spec, {}))
+        self.assertEqual(self.dc.find_concept(["1. Read the file and propose it."], spec, {}), 1)
 
     def test_an_open_question_that_is_a_statement_fails(self):
         self.assertIn("G10", self._failed(self.GOOD + "\n## Open questions\n\n- The limit is unclear.\n"))

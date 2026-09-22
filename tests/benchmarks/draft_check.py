@@ -40,6 +40,7 @@ from skillpp.lifecycle import parse_frontmatter  # noqa: E402
 
 MARKER = "<!-- skillpp:write-the-procedure -->"
 STEP = re.compile(r"^\s{0,3}\d+\.\s")
+SUBSTEP = re.compile(r"^###\s+(step\s+)?\d+[.):]?\s", re.IGNORECASE)
 HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 NEGATED = re.compile(r"\b(not|no|never|without|don'?t|doesn'?t|avoid)\b", re.IGNORECASE)
 HEX = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
@@ -85,6 +86,20 @@ def procedure_steps(text: str) -> list[str]:
     for title, body in secs[start:]:
         if title.lower() in ("open questions", "requirements"):
             continue
+        # Steps written as `### 1. Read the script` subheadings: each runs to
+        # the next one, numbered lists inside it included.
+        if any(SUBSTEP.match(l) for l in body.splitlines()):
+            steps, current = [], None
+            for line in body.splitlines():
+                if SUBSTEP.match(line):
+                    if current is not None:
+                        steps.append(current)
+                    current = line.lstrip("# ")
+                elif current is not None:
+                    current += "\n" + line
+            if current is not None:
+                steps.append(current)
+            return steps
         steps, current = [], None
         for line in body.splitlines():
             if HEADING.match(line):
@@ -100,6 +115,26 @@ def procedure_steps(text: str) -> list[str]:
         if steps:
             return steps
     return []
+
+
+def without_questions(text: str) -> str:
+    """The draft minus `## Open questions`: a setting the draft *asks* about
+    is the behaviour wanted, not a one-off turned into a rule."""
+    return "\n".join(b for t, b in sections(text) if t.lower() != "open questions")
+
+
+def question_items(text: str) -> list[str]:
+    """Each item under `## Open questions`, its wrapped lines joined."""
+    items: list[str] = []
+    for title, body in sections(text):
+        if title.lower() != "open questions":
+            continue
+        for line in body.splitlines():
+            if re.match(r"\s{0,3}(-|\*|\d+\.)\s", line):
+                items.append(line.strip())
+            elif line.strip() and items and not line.startswith(("#", "---", "_")):
+                items[-1] += " " + line.strip()
+    return items
 
 
 def sentences(text: str) -> list[str]:
@@ -154,9 +189,7 @@ def general_checks(text: str, log: str, entry_id: str, fixture: dict | None) -> 
     out.append(result("G9", "no shell pasted back", not long,
                       long[0].splitlines()[0] if long else ""))
 
-    questions = next((b for t, b in sections(text) if t.lower() == "open questions"), "")
-    items = [l.strip() for l in questions.splitlines() if re.match(r"\s*(-|\*|\d+\.)\s", l)]
-    bad = [i for i in items if not i.rstrip(" *_").endswith("?")]
+    bad = [i for i in question_items(text) if "?" not in i]
     out.append(result("G10", "questions are questions", not bad, bad[0] if bad else ""))
     return out
 
@@ -170,7 +203,15 @@ def find_concept(steps: list[str], spec: dict, found: dict[str, int | None]) -> 
             continue
         if spec.get("max_step") and n > spec["max_step"]:
             return None
-        if all(re.search(p, step, re.IGNORECASE) for p in spec["all"]):
+        # "Do not build yet" names the build without asking for it: where the
+        # concept is an instruction to do something, negated sentences do not count.
+        text = step
+        if spec.get("affirmative"):
+            # Joined first: a wrapped line put "Do not" and "generate any file"
+            # in different sentences.
+            flat = " ".join(step.split())
+            text = " ".join(s for s in sentences(flat) if not NEGATED.search(s))
+        if all(re.search(p, text, re.IGNORECASE) for p in spec["all"]):
             return n
     return None
 
@@ -178,7 +219,7 @@ def find_concept(steps: list[str], spec: dict, found: dict[str, int | None]) -> 
 def case_checks(text: str, case: dict, hedge: str) -> list[dict]:
     out = []
     steps = procedure_steps(text)
-    body = body_of(text)
+    body = without_questions(text)
     found: dict[str, int | None] = {}
     for cid, spec in case.get("concepts", {}).items():
         found[cid] = n = find_concept(steps, spec, found)
