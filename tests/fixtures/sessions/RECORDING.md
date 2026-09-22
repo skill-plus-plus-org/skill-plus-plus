@@ -357,9 +357,9 @@ Start a new Code session in the Desktop app, folder `~/skillpp-recordings/P-N1` 
 
 ### P-2said: Two tasks, switch announced
 
-The task changes at prompt 3, and you say so.
+The task changes at prompt 4, and you say so.
 
-*Expected:* 2 saved task(s) each · cut at prompt: 3 · families: `action-items-from-notes`, `release-notes-from-changelog`
+*Expected:* 2 saved task(s) each · cut at prompt: 4 · families: `action-items-from-notes`, `release-notes-from-changelog`
 
 **P-2said** · Desktop
 
@@ -368,17 +368,19 @@ tests/fixtures/sessions/recording/setup.sh P-2said
 ```
 Start a new Code session in the Desktop app, folder `~/skillpp-recordings/P-2said` (local, not a worktree).
 
-1. `Read meeting-1.md, write the action items into actions.md with owner and due date, and check each against the notes.`
-2. `Sort them by owner.`
-3. `Okay, now we will do something else. Read CHANGELOG.md and write user-facing release notes for 1.4.0 into release-notes.md, leaving out internal changes.`
-4. `Check them against the changelog.`
-5. `Add a one-line intro that names the version.`
+1. `Read meeting-1.md and write the action items into actions.md with owner and due date.`
+2. `Check each one against the notes.`
+3. `Sort them by owner.`
+4. `Okay, now we will do something else. Read CHANGELOG.md and write user-facing release notes for 1.4.0 into release-notes.md, leaving out internal changes.`
+5. `Check them against the changelog.`
+6. `Group them under "New" and "Fixed", one short sentence each.`
+7. `Add a one-line intro that names the version.`
 
 ### P-2unsaid: Two tasks, switch not announced
 
-A deck, then action items, with no word in between. The task changes at prompt 4.
+A deck, then action items, with no word in between. The task changes at prompt 5.
 
-*Expected:* 2 saved task(s) each · cut at prompt: 4 · families: `talk-deck-from-docs`, `action-items-from-notes`
+*Expected:* 2 saved task(s) each · cut at prompt: 5 · families: `talk-deck-from-docs`, `action-items-from-notes`
 
 **P-2unsaid** · CLI
 
@@ -390,15 +392,16 @@ Start `cd ~/skillpp-recordings/P-2unsaid && claude`, and end with `/exit`.
 1. `Propose an outline for a 5-minute talk on what skillpp keeps private, from docs/privacy.md. At most 5 slides; don't build it yet.`
 2. `Add a slide on what leaves the machine when you draft a skill.`
 3. `Good, build it as privacy.pptx.`
-4. `Read meeting-2.md and write the action items with owner and due date into actions.md.`
-5. `Check each one against the notes.`
-6. `Sort them by due date.`
+4. `Open the file and check it has the slides from the outline.`
+5. `Read meeting-2.md and write the action items with owner and due date into actions.md.`
+6. `Check each one against the notes.`
+7. `Sort them by due date.`
 
 ### P-3: Three tasks
 
-The task changes at prompt 3 (announced) and at prompt 5 (not announced).
+The task changes at prompt 4 (announced) and at prompt 7 (not announced).
 
-*Expected:* 3 saved task(s) each · cut at prompt: 3, 5 · families: `post-from-source`, `action-items-from-notes`, `release-notes-from-changelog`
+*Expected:* 3 saved task(s) each · cut at prompt: 4, 7 · families: `post-from-source`, `action-items-from-notes`, `release-notes-from-changelog`
 
 **P-3** · Desktop
 
@@ -409,10 +412,13 @@ Start a new Code session in the Desktop app, folder `~/skillpp-recordings/P-3` (
 
 1. `Read notes.md and write a 120 to 180 word LinkedIn post into post.md; check the length with wc -w.`
 2. `Make the hook punchier.`
-3. `Okay, now something else. Write the action items from meeting-3.md into actions.md with owner and due date.`
-4. `Check them against the notes.`
-5. `Read CHANGELOG.md and write release notes for 1.4.0 into release-notes.md for end users.`
-6. `Check nothing internal slipped in.`
+3. `Check every claim against notes.md and fix anything that isn't backed by it.`
+4. `Okay, now something else. Write the action items from meeting-3.md into actions.md with owner and due date.`
+5. `Check them against the notes.`
+6. `Sort them by due date.`
+7. `Read CHANGELOG.md and write release notes for 1.4.0 into release-notes.md for end users.`
+8. `Check nothing internal slipped in.`
+9. `Add a one-line intro that names the version.`
 
 ## Left out on purpose
 

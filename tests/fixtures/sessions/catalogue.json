@@ -787,7 +787,11 @@
    "prompts": [
     {
      "role": "implement",
-     "text": "Read meeting-1.md, write the action items into actions.md with owner and due date, and check each against the notes."
+     "text": "Read meeting-1.md and write the action items into actions.md with owner and due date."
+    },
+    {
+     "role": "verify",
+     "text": "Check each one against the notes."
     },
     {
      "role": "polish",
@@ -803,11 +807,15 @@
     },
     {
      "role": "polish",
+     "text": "Group them under \"New\" and \"Fixed\", one short sentence each."
+    },
+    {
+     "role": "polish",
      "text": "Add a one-line intro that names the version."
     }
    ],
    "cuts": [
-    3
+    4
    ],
    "families": [
     "action-items-from-notes",
@@ -840,6 +848,10 @@
      "text": "Good, build it as privacy.pptx."
     },
     {
+     "role": "verify",
+     "text": "Open the file and check it has the slides from the outline."
+    },
+    {
      "role": "switch",
      "text": "Read meeting-2.md and write the action items with owner and due date into actions.md."
     },
@@ -853,7 +865,7 @@
     }
    ],
    "cuts": [
-    4
+    5
    ],
    "families": [
     "talk-deck-from-docs",
@@ -882,6 +894,10 @@
      "text": "Make the hook punchier."
     },
     {
+     "role": "review",
+     "text": "Check every claim against notes.md and fix anything that isn't backed by it."
+    },
+    {
      "role": "switch",
      "text": "Okay, now something else. Write the action items from meeting-3.md into actions.md with owner and due date."
     },
@@ -890,17 +906,25 @@
      "text": "Check them against the notes."
     },
     {
+     "role": "polish",
+     "text": "Sort them by due date."
+    },
+    {
      "role": "switch",
      "text": "Read CHANGELOG.md and write release notes for 1.4.0 into release-notes.md for end users."
     },
     {
      "role": "verify",
      "text": "Check nothing internal slipped in."
+    },
+    {
+     "role": "polish",
+     "text": "Add a one-line intro that names the version."
     }
    ],
    "cuts": [
-    3,
-    5
+    4,
+    7
    ],
    "families": [
     "post-from-source",
