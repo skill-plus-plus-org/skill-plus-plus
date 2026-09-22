@@ -39,14 +39,11 @@ from .segment import (PROMPT_TOOL, feeds_a_write, is_prompt, segment,
 # `Read`'s path is kept because `_substantive` below needs it: read-then-edit is
 # how a procedure names the file it operates on, and the rule that keeps those
 # reads compares the read's `file_path` against the write's. Without the field
-# that comparison is against `None`, so the rule could never fire — measured on
-# a real session, four `Read` steps captured and none kept, while the same
-# session replayed from its transcript kept three.
+# that comparison is against `None`, and the rule never fires.
 #
-# It was left out deliberately once, on the grounds that a `Read` is exploration
-# and exploration should not reach a signature. That holds for a read that leads
-# nowhere, and `_substantive` already drops those. It does not hold for the read
-# that fed the edit.
+# Keeping the path does not let exploration into a signature: a read that leads
+# nowhere is still dropped by `_substantive`. Only the read that fed an edit
+# stays, and it needs the path to be recognised.
 #
 # A step that keeps only a path cannot be described. Asked what the `Write` that
 # produced COVERAGE.md did, a model shown `{"file_path": ".../COVERAGE.md"}`
@@ -206,11 +203,9 @@ def _narration(payload: dict) -> tuple[str, str]:
     before the prompt reports the work that just finished, and what came after
     introduces the work about to start.
 
-    Merging them put every completion report on the wrong task. Measured on
-    `241955c7`: three times in one 24-step session a report of finished work
-    was filed on the first step *after* the next prompt, describing work that
-    had not happened when it was written. One of the three was an
-    investigation's entire deliverable, stored inside the next task.
+    Merged, a report of finished work lands on the first step of the next
+    task, describing work that has not happened yet — an investigation's whole
+    deliverable can end up stored inside the task after it.
 
     The hook payload carries `transcript_path`. Everything here is best effort:
     a missing or unreadable transcript costs the narration and nothing else.
@@ -352,10 +347,8 @@ _ENVELOPE_PREFIXES = ("<task-notification", "<system-reminder",
 
 # How much of the agent's reply to one prompt a candidate keeps. The reply is
 # where a conversation-driven procedure lives — the proposal, the fact-check,
-# the question before building — and measured on three real runs the longest
-# was 7.6k characters. Replies to consecutive prompts with no tool call between
-# them used to overwrite each other in `_narration`, so run 1 of a real session
-# kept none of 4,900 characters.
+# the question before building. The longest reply in the recorded runs was
+# about 7.6k characters.
 _REPLY_CHARS = 8000
 # A `user` row with string content that is not something the person typed: a
 # tool's image result is recorded this way.
@@ -602,11 +595,10 @@ def handle_session_end(config: Config, payload: dict) -> dict:
 def mark_ending(config: Config, session_id: str, transcript: str | None = None) -> dict:
     """Record that a session ended. The fold itself happens elsewhere.
 
-    All `SessionEnd` does now. The judge and the embeddings used to run inside
-    the hook, which is how nine desktop sessions ended up held: one cold model
-    call can reach `boundary.DEFAULT_TIMEOUT`, Claude Code's hook budget is
-    around a minute, and quitting the app gives less — so the hook was killed
-    and the work waited twelve hours for `fold_pending`'s idle rule.
+    Nothing slow runs in the hook. One cold model call can reach
+    `boundary.DEFAULT_TIMEOUT`, Claude Code gives a hook about a minute and
+    less when the app quits, and a killed hook leaves the work waiting for
+    `fold_pending`'s idle rule.
 
     The stamp is written here, by the hook, and not by the worker: a worker that
     never starts must still leave a trace, and that trace is what lets
@@ -629,9 +621,8 @@ def fold_session_now(config: Config, session_id: str, *,
     """Fold one ended session, alone. The only way into `handle_session_end`.
 
     Both the detached worker and the pending sweep come through here, which is
-    what stops the two of them banking the same session twice — measured once
-    already, when a live `SessionEnd` fold and a manual one ran together and an
-    entry's `occurrences` went to 2.
+    what stops the two of them banking the same session twice and counting
+    every episode in it twice.
     """
     path = _session_file(config, session_id)
     if not path.exists():
@@ -769,15 +760,10 @@ def fold_pending(config: Config, *, exclude: str | None = None,
                  idle_hours: float = PENDING_IDLE_HOURS) -> list[dict]:
     """Bank the sessions that ended without being banked.
 
-    Measured on the real ledger: of ten unbanked sessions, nine were desktop
-    sessions where `SessionEnd` *did* fire — at quitting the app — and the
-    boundary judge got no answer from the local model in time, so each was held.
-    Nothing ever read `held` again. The tenth was a CLI session that never ended.
-
-    The fold no longer runs inside that hook — `SessionEnd` stamps `ending` and
-    spawns a worker — so this sweep is the safety net rather than the cure: it
-    catches a worker that was launched and died with the app, a session held
-    because no model answered, and one where `SessionEnd` never fired at all.
+    `SessionEnd` stamps `ending` and spawns a worker, so this sweep is the
+    safety net rather than the normal path. It catches a worker that was
+    launched and died with the app, a session held because no model answered,
+    and one where `SessionEnd` never fired at all.
     Everything goes through `fold_session_now`, so the judge, the fold, the
     per-session lock and the held stamp are the ones a normal end uses, and
     `folded` keeps a partial retry from counting an episode twice. *exclude* is
@@ -817,9 +803,9 @@ def _is_pending(session: dict, idle: float, idle_hours: float) -> bool:
     Three rules, covering three different failures, none of them redundant:
 
     * ``held`` — a fold that ran and could not reach a model.
-    * ``ending`` past the grace — a fold that was launched and died with it,
-      which before the stamp existed was indistinguishable from a live session
-      and so waited out the idle rule.
+    * ``ending`` past the grace — a fold that was launched and died with it.
+      Without the stamp it would look like a live session and wait out the idle
+      rule.
     * idle — the only rule that catches a session where `SessionEnd` never
       fired at all: a window closed, a laptop shut down.
     """
@@ -863,14 +849,12 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
                  source: str = "capture", persist: bool = False) -> dict:
     """Turn a finished session into ledger entries — one per task.
 
-    A session holding several unrelated tasks used to become a single entry
-    whose signature described none of them, which is why a workflow performed
-    three times never reached the recurrence threshold. It is now cut into
-    episodes first (see ``skillpp.segment``) and each is folded separately.
+    The session is cut into episodes first (see ``skillpp.segment``) and each
+    is folded separately: as one entry, a session holding several unrelated
+    tasks gets a signature that describes none of them, and never recurs.
 
-    The return value keeps the shape callers already expect — the last folded
-    episode's result — with an added ``episodes`` key listing every outcome. A
-    session that segments into one episode returns exactly what it always did.
+    Returns the last folded episode's result, with ``episodes`` listing every
+    outcome; a session that is one episode returns just that episode's result.
     """
     # No verdicts means no local model answered, which means skillpp is offline
     # for this session. Banking anyway would mean guessing the boundaries from
@@ -878,8 +862,8 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
     # than the judge. Reported rather than returned empty, because a silent
     # nothing is indistinguishable from a session that held no work.
     # No tool call at all is a conversation, not an unjudged session: there is
-    # no step a verdict could sit on. Reading it as offline held nine real chat
-    # sessions forever under "<model> did not answer" while the model was up.
+    # no step a verdict could sit on. Read as offline, every chat-only session
+    # would be held forever under "<model> did not answer" with the model up.
     if not [s for s in session.get("steps", []) if not is_prompt(s)]:
         return {"status": "too-thin", "steps": 0, "episodes": [], "flagged": 0}
     if not was_judged(session.get("steps", [])) and not force:
@@ -968,11 +952,10 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
 def _turns(steps: list[dict], cwd: str = "") -> list[dict]:
     """The run as a conversation: each prompt, the agent's reply, what it used.
 
-    This is what a draft is written from. Measured by drafting one real run
-    four ways, the raw tool steps buried the procedure under another skill's
-    internals and session paths, while the prompts and replies carried it —
+    This is what a draft is written from. Raw tool steps bury the procedure
+    under tool internals and session paths; the prompts and replies carry it —
     the review checkpoints and how each check was done. The one fact only a
-    tool call held was *which skill* built the result, hence `used`.
+    tool call holds is *which skill* built the result, hence `used`.
     """
     turns: list[dict] = []
     for step in steps:
@@ -1046,11 +1029,8 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
             existing.sessions.append(sid)
         # Every recognition counts, repeats inside one session included — the
         # count is how often the procedure was recognized, and `sessions` keeps
-        # where. This was once the size of the session union instead: measured
-        # on 76 real sessions, counting sightings let 25 of 467 entries claim
-        # more occurrences than sessions (worst x154 against 17), so one long
-        # sitting can reach the recurrence threshold on its own. Chosen anyway,
-        # on 2026-09-17: a procedure repeated within a session is a repeat.
+        # where. So one long sitting can reach the recurrence threshold on its
+        # own. Deliberate: a procedure repeated within a session is a repeat.
         existing.occurrences += 1
         # Every recognition, not every distinct session: the count above works
         # the same way, and two sightings inside one session are two lines.
@@ -1242,10 +1222,9 @@ def _intents_for(session: dict, steps: list[dict]) -> list[str]:
     return _within_budget(list(session.get("prompts", [])))
 
 
-# A count is the wrong bound. Five prompts is below what an ordinary directed
-# task takes: the session this was measured on ran seven turns, and the prompt
-# the cap dropped was its closing check that one constant was still the single
-# source of truth — the verification step the procedure exists to perform. Budget by characters instead, so a task keeps its shape while a
+# A count is the wrong bound: an ordinary directed task can run past five
+# prompts, and a count drops the last ones, which is where the closing check
+# lives. Budget by characters instead, so a task keeps its shape while a
 # runaway session still cannot bloat an entry.
 _INTENT_BUDGET_CHARS = 2000
 
@@ -1412,8 +1391,7 @@ def _cli_dependencies(steps: list[dict]) -> set[str]:
 # prompt rather than being guessed at.
 # `git -C <path> commit` and `git -c user.email=… commit` are commits: the
 # subject must be found past git's global options, not only immediately after
-# `git`. A real session committed this way and the entry was titled from a
-# prompt instead.
+# `git`.
 #
 # Only the first line of the message is taken, and deliberately without
 # matching the heredoc's closing delimiter: `max_field_chars` truncates a long
@@ -1431,10 +1409,9 @@ def _subject_of(steps: list[dict]) -> str:
     """The last commit's subject line, if a commit is what ended this episode.
 
     A commit message is written after the work and says what it accomplished;
-    the opening prompt is written before and says what was wrong. On the
-    session this was measured against, the prompt gave the entry the title
-    "Looks good — commit", while the commit subject named the case that had been
-    added. The second is the name of a procedure; the first is not.
+    the opening prompt is written before and says what was wrong, or just
+    "Looks good — commit". A commit subject is the name of a procedure; a
+    prompt like that is not.
     """
     for step in reversed(steps):
         if step.get("tool") != "Bash" or step.get("failed"):
