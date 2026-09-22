@@ -204,12 +204,10 @@ def _narration(payload: dict) -> tuple[str, str]:
     introduces the work about to start.
 
     Merging them put every completion report on the wrong task. Measured on
-    `241955c7`, three times in one 24-step session — "Scan done. All 4
-    walkthrough-variant TOPICS...", "Added `atlas_card_staged`...",
-    "Regenerated. 40 cases (was 39)..." — each filed on the first step *after*
-    the next prompt, describing work that had not happened when it was written.
-    The first of those is an investigation's entire deliverable, stored inside
-    the next task.
+    `241955c7`: three times in one 24-step session a report of finished work
+    was filed on the first step *after* the next prompt, describing work that
+    had not happened when it was written. One of the three was an
+    investigation's entire deliverable, stored inside the next task.
 
     The hook payload carries `transcript_path`. Everything here is best effort:
     a missing or unreadable transcript costs the narration and nothing else.
@@ -1242,10 +1240,9 @@ def _intents_for(session: dict, steps: list[dict]) -> list[str]:
 
 
 # A count is the wrong bound. Five prompts is below what an ordinary directed
-# task takes: the session this was measured on ran seven turns, and the one the
-# cap dropped was "check the docstring — confirm TOPICS is still the single
-# source of truth", which is the verification step the procedure exists to
-# perform. Budget by characters instead, so a task keeps its shape while a
+# task takes: the session this was measured on ran seven turns, and the prompt
+# the cap dropped was its closing check that one constant was still the single
+# source of truth — the verification step the procedure exists to perform. Budget by characters instead, so a task keeps its shape while a
 # runaway session still cannot bloat an entry.
 _INTENT_BUDGET_CHARS = 2000
 
@@ -1433,8 +1430,8 @@ def _subject_of(steps: list[dict]) -> str:
     A commit message is written after the work and says what it accomplished;
     the opening prompt is written before and says what was wrong. On the
     session this was measured against, the prompt gave the entry the title
-    "Looks good — commit" while the commit said "add walkthrough-card case for
-    Desk Booking". The second is the name of a procedure; the first is not.
+    "Looks good — commit", while the commit subject named the case that had been
+    added. The second is the name of a procedure; the first is not.
     """
     for step in reversed(steps):
         if step.get("tool") != "Bash" or step.get("failed"):

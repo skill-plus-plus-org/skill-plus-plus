@@ -77,8 +77,8 @@ def render(entry) -> tuple[str, str]:
     # Every stated intent, not the first three. The cap predated an episode
     # holding a whole task: on a real seven-turn session it handed the model
     # "did you call MCP for this?" — a question about the agent's own behaviour
-    # — while dropping "check the docstring, confirm TOPICS is still the single
-    # source of truth", the verification step the procedure exists to perform.
+    # — while dropping the closing check that one constant was still the single
+    # source of truth, the verification step the procedure exists to perform.
     # `_intents_for` already bounds this by characters; capping again here only
     # loses the end of the task, which is where verification lives.
     ask_text = "\n    ".join(entry.intents) or entry.title or "(not recorded)"

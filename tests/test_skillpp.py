@@ -557,13 +557,13 @@ class TestCapture(TempRoot):
         """
         from skillpp.capture import _subject_of, _title_for
         heredoc = ("git add -A && git commit -m \"$(cat <<'EOF'\n"
-                   "test(eval): add walkthrough-card case for Desk Booking\n\n"
+                   "test(eval): add tutorial-card case for Expense Report\n\n"
                    "Sibling to desk_booking_local.\nEOF\n)\"")
         steps = [bash(heredoc)]
         self.assertEqual(_subject_of(steps),
-                         "add walkthrough-card case for Desk Booking")
+                         "add tutorial-card case for Expense Report")
         self.assertEqual(_title_for(["Looks good — commit"], steps),
-                         ("add walkthrough-card case for Desk Booking", "commit"))
+                         ("add tutorial-card case for Expense Report", "commit"))
 
     def test_commit_subject_parsing_falls_through_rather_than_guessing(self):
         """Unrecognised forms keep the old behaviour instead of inventing one."""
@@ -583,7 +583,7 @@ class TestCapture(TempRoot):
         """The verification step lives at the end of a task, where the cap was.
 
         Capped at three, the model was handed "did you call MCP for this?" and
-        never saw "confirm TOPICS is still the single source of truth".
+        never saw "confirm TITLES is still the single source of truth".
         """
         from skillpp.episode import render
         entry = Entry(id="a", signature="s", title="t",
@@ -592,8 +592,8 @@ class TestCapture(TempRoot):
                                "did you call MCP for this?",
                                "use the adk-docs MCP tool",
                                "regenerate the evalset",
-                               "check the docstring in book.py",
-                               "confirm TOPICS is still the single source of truth"])
+                               "check the docstring in page.py",
+                               "confirm TITLES is still the single source of truth"])
         ask, _ = render(entry)
         self.assertIn("adk-docs", ask)
         self.assertIn("single source of truth", ask)
@@ -1319,8 +1319,8 @@ class TestSegmentBoundaries(unittest.TestCase):
                  bash("python3 -c 'json.load(...)'"),
                  self._prompt("regenerate the evalset from that"),
                  bash("python3 eval/generate_evalset.py"),
-                 self._prompt("check the docstring in book.py first"),
-                 bash("grep -n TOPICS book.py"),
+                 self._prompt("check the docstring in page.py first"),
+                 bash("grep -n TITLES page.py"),
                  self._prompt("looks good — commit"),
                  bash("git diff --stat"),
                  bash("git commit -m 'test(eval): add desk-booking case'")]
@@ -1881,7 +1881,7 @@ class TestNarrationIsAttributedToTheRightStep(TempRoot):
         rows = [self._assistant(self._call())]
         handle_tool(self.config, {"session_id": "s", "cwd": "/r",
                                   "tool_name": "Read",
-                                  "tool_input": {"file_path": "/book.py"},
+                                  "tool_input": {"file_path": "/page.py"},
                                   **self._transcript(rows)})
         rows += [self._assistant(self._text("Scan done. All 4 resolve.")),
                  self._prompt_row("Separate job: add the case")]
@@ -1890,7 +1890,7 @@ class TestNarrationIsAttributedToTheRightStep(TempRoot):
         rows += [self._assistant(self._call())]
         handle_tool(self.config, {"session_id": "s", "cwd": "/r",
                                   "tool_name": "Bash",
-                                  "tool_input": {"command": "grep -n atlas"},
+                                  "tool_input": {"command": "grep -n chart"},
                                   **self._transcript(rows)})
 
         from skillpp.capture import _load_session
@@ -5625,10 +5625,10 @@ class TestJudgeInput(unittest.TestCase):
         steps = [
             {"tool": "UserPrompt", "input": {"text": "find the blank cards"},
              "reply": "Looked through both files. Where do you suspect the blanks are?"},
-            {"tool": "Bash", "input": {"command": "grep -n card book.py"},
-             "tool_returned": "12: card walkthrough"},
+            {"tool": "Bash", "input": {"command": "grep -n card page.py"},
+             "tool_returned": "12: card tutorial"},
             {"tool": "UserPrompt", "input": {"text": "Separate job: add a case"},
-             "reply": "Added atlas_card_staged to cases.json."},
+             "reply": "Added chart_card_staged to cases.json."},
             {"tool": "Bash", "input": {"command": "npm test"}},
         ]
         (index, said, follow), = b.gaps(steps)
@@ -5641,10 +5641,10 @@ class TestJudgeInput(unittest.TestCase):
         text = self._gap(REPLY_BEFORE_CHARS=400, REPLY_AFTER_CHARS=400,
                          STEP_OUTPUT_CHARS=400)
         order = [text.index(s) for s in (
-            "Now they ran", "It returned:", "12: card walkthrough",
+            "Now they ran", "It returned:", "12: card tutorial",
             "After that, the assistant told them:", "Where do you suspect",
             "Then they say:", "Separate job", "The assistant answered:",
-            "Added atlas_card_staged", "What they do next:")]
+            "Added chart_card_staged", "What they do next:")]
         self.assertEqual(order, sorted(order))
 
     def test_an_off_slot_adds_nothing(self):
@@ -5662,7 +5662,7 @@ class TestJudgeInput(unittest.TestCase):
         self.assertEqual(before, "… you suspect the blanks are?")
         self.assertNotIn("Looked through", text)
         # The start of the answer, cut the same way.
-        self.assertEqual(after, "Added atlas_card_staged to …")
+        self.assertEqual(after, "Added chart_card_staged to …")
 
     def test_the_next_steps_section_can_be_removed_or_relabelled(self):
         """With thinking on, the model judged the steps under "What they do

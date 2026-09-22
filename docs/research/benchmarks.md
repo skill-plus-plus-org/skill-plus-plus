@@ -1090,8 +1090,8 @@ request was finished. It was replaced — see *The question moved* below. Kept
 because everything here was measured and none of it should be retried.
 
 The last remaining gap at the time. Two unrelated jobs in one sitting — investigate why some
-walkthrough cards render blank (read-only, nothing written), then separately add
-the missing `atlas` eval case and commit. Truth is 2 episodes; the pipeline
+tutorial cards render blank (read-only, nothing written), then separately add
+the missing `chart` eval case and commit. Truth is 2 episodes; the pipeline
 banks 1, because the judge marks no ending anywhere.
 
 Every step was replayed through `gemma3n:e4b` at `_VALUE_CHARS=80`,
@@ -1109,11 +1109,11 @@ constant on all 357 judgements ever made.
 `render_step`, `{STEP}` the step being judged.
 
 ```
-- TOPICS in book.py can stage walkthrough cards whose body has no matching key
+- TITLES in page.py can stage tutorial cards whose body has no matching key
   in toolWalkthroughs.ts … Work out which ones, and tell me before changing
   anything.                                    <- inserted: forbids an artifact
 
-Just now, they read the file `… book.py`       <- inserted
+Just now, they read the file `… page.py`       <- inserted
 
 A task ends when everything the developer asked for has been produced — a change
 that outlasts the session.                     <- fixed: requires an artifact
@@ -1140,8 +1140,8 @@ Four definitions, tested on the steps that discriminate — 6 must be an ending,
 The reason no wording can work is visible in the rendered steps:
 
 ```
-step 3: read the file `…/backend/acme_agent/book.py`
-step 6: read the file `…/backend/acme_agent/book.py`
+step 3: read the file `…/backend/acme_agent/page.py`
+step 6: read the file `…/backend/acme_agent/page.py`
 ```
 
 Byte-identical. Step 3 is mid-investigation, step 6 finishes it. The only
@@ -1502,11 +1502,11 @@ against a hand-written family label:
 
 | family | runs |
 | --- | --- |
-| add-eval-case | 7 — the three walkthrough-card sessions, `a8b61dae`, `241955c7` task 2, and the two handbook fact sessions `d5fd2e59`, `a7be1ef5` |
+| add-eval-case | 7 — the three tutorial-card sessions, `a8b61dae`, `241955c7` task 2, and the two glossary fact sessions `d5fd2e59`, `a7be1ef5` |
 | coverage-writeup | 2 |
 
 Card and fact cases were two families for a while. Compared step by step
-(`d5fd2e59` against `241955c7`'s atlas case) they are the same work — read
+(`d5fd2e59` against `241955c7`'s chart case) they are the same work — read
 `cases.json`, edit it, check the JSON, regenerate, commit — and the steps that
 differ do the same job with other commands (`ls` and `head` against `find` and
 `grep`, both locating `generate_evalset.py`). What tells them apart is only in

@@ -10,7 +10,7 @@ sessions actually started, through the real `fold_session`, and compares where
 each banked episode landed against `truth.families`.
 
 Ground truth is one label per banked episode, written by hand. Same label, same
-procedure: "add a walkthrough-card eval case" and "add a handbook fact eval
+procedure: "add a tutorial-card eval case" and "add a glossary fact eval
 case" are both `add-eval-case`, with the kind of case as a variation.
 
 Scored three ways, because each hides something the others show:

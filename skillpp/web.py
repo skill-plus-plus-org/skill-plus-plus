@@ -1510,7 +1510,7 @@ function reviseBlock(d){
   if(d.revising) return `<div class="revise"><span class="state"><span class="spin"></span>Revising… the draft below updates when the agent is done</span></div>`;
   if(!writing.has(d.id)) return `<div class="revise">${err}<button class="create" data-revise-open="${id}">Revise</button></div>`;
   return `<div class="revise">${err}
-    <textarea data-instruction="${id}" placeholder="What should change? e.g. also cover handbook fact cases, not only walkthrough cards">${esc(drafts[d.id] || "")}</textarea>
+    <textarea data-instruction="${id}" placeholder="What should change? e.g. cover the case where the file does not exist yet">${esc(drafts[d.id] || "")}</textarea>
     <div class="bar"><button class="create" data-revise-send="${id}">Send to agent</button>
     <button data-revise-cancel="${id}">Cancel</button></div></div>`;
 }
