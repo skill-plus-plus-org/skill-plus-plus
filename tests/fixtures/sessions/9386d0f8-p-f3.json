@@ -1,0 +1,178 @@
+{
+  "tag": "9386d0f8",
+  "name": "p-f3",
+  "session": "P-F3",
+  "kind": "procedure",
+  "surface": "desktop",
+  "checks": [
+    "merge.fixed",
+    "detect.one",
+    "detect.review"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T13:24:29.334Z",
+  "procedure": "write a LinkedIn post from notes.md within a word limit, count words, check every claim against the notes",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "post-from-source"
+    ],
+    "subjects": [
+      null
+    ],
+    "boundary_after": [],
+    "roles": [
+      "implement",
+      "verify",
+      "review",
+      "correct",
+      "verify"
+    ],
+    "level": "identical"
+  },
+  "why": "Recorded from catalogue.json (P-F3, procedure, desktop), truth fixed before recording. One task over several follow-ups: no prompt after the first starts a new task. Review and correction prompts continue the task, they do not start one.",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 7,
+    "prompts": 5,
+    "failed": 0
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Read notes.md and write a LinkedIn post of 120 to 180 words from it into post.md: a hook in the first line, three short takeaways, and a question at the end. Only use facts from the notes."
+      },
+      "failed": false,
+      "reply": "Wrote [post.md](post.md). ~168 words. Hook line, three numbered takeaways (crash rate, start time, cut feature), question at end. All facts from notes."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/P-F3/",
+        "description": "List working dir"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "notes.md",
+      "assistant_note": "I should check notes.md first to see what's there.",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-F3/notes.md"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 # Retro: Skycast 1.0, six weeks after launch 2 3 Team: three people, one Android and iOS app that shows a 7-day forecast. 4 5 - We shipped a beta to 40 users two weeks before launch. They found 11 bugs, 6 and 9 of them were fixed before 1.0. 7 - The crash rate went from 4% of sessions in the beta to 0.5% after launch, 8 mostly by removing a background refresh that ran on low memory. 9 - App star",
+      "end": false
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-F3/post.md",
+        "content": "Six weeks after Skycast 1.0 shipped, the data taught us more than the roadmap ever did.\n\nWe're a team of three who built one Android and iOS app for a 7-day forecast. Two weeks before launch we handed a beta to 40 users. They found 11 bugs; we fixed 9 before 1.0. Three lessons stuck:\n\n1. Real users beat guesses. Crash rate dropped from 4% of sessions in the beta to 0.5% after launch, mostly by removing a background refresh that ran on low memory.\n\n2. Cache before you optimize. App start went from 3.2 seconds to 1.1 seconds once we cached the last forecast on the device instead of waiting for the network.\n\n3. Cut what nobody opens. Hourly radar maps took a third of design time in month one, and only 2 of 40 beta users opened them. We shipped without them.\n\nSix weeks in: 4.6 from 310 ratings. Top complaint: no widget yet.\n\nWhat's one feature you cut before launch and never missed?\n"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "File created successfully at: ${HOME}/skillpp-recordings/P-F3/post.md (file state is current in your context — no need to Read it back)",
+      "assistant_note": "I'm drafting the LinkedIn post now, starting with a hook about what the numbers revealed six weeks after Skycast 1.0 shipped, then outlining three takeaways—beginning with how the beta test caught bugs before launch and improved the crash rate—followed by a closing question, all staying within 120-180 words and sourced only from the notes. Caching the last forecast on-device cut app start time fro",
+      "closing_note": "Wrote [post.md](post.md). ~168 words. Hook line, three numbered takeaways (crash rate, start time, cut feature), question at end. All facts from notes.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Count the words with wc -w and fix the post if it is outside the limit."
+      },
+      "failed": false,
+      "reply": "166 words. In range [120, 180]. No fix needed."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "wc -w ${HOME}/skillpp-recordings/P-F3/post.md",
+        "description": "Count words"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "166 ${HOME}/skillpp-recordings/P-F3/post.md",
+      "closing_note": "I'm cross-checking each claim in the post against the notes—team size, app details, beta timeline, bug counts, crash rate improvement from removing background refresh, and the app start time reduction from caching the last forecast. Continuing through the remaining claims: cutting hourly radar maps despite taking a third of design time and barely being used, the 4.6 store rating from 310 ratings, ",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Check every claim in the post against notes.md and tell me which ones aren't backed by it."
+      },
+      "failed": false,
+      "reply": "Unbacked claims in [post.md](post.md):\n\n- **\"data taught us more than the roadmap ever did\"** — editorial framing, no roadmap mentioned in notes.\n- **\"Real users beat guesses\"** — slogan, not in notes.\n- **\"Cache before you optimize\"** — slogan, not in notes.\n- **\"Cut what nobody opens\"** — slogan, not in notes (notes say cut because took design time + low usage).\n- **\"no widget yet\"** — notes say \"there is no widget\"; \"yet\" implies planned/coming, not stated.\n\nAll numeric/factual claims (team of 3, 40 beta users, 11 bugs / 9 fixed, 4%→0.5% crash, 3.2s→1.1s start, cache on device, radar maps = third of design time, 2/40 opened radar, 4.6 from 310 ratings, widget complaint) match notes.\n\nFix: drop slogans or replace \"yet\"?"
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Make the hook punchier and fix anything that wasn't backed by the notes."
+      },
+      "failed": false,
+      "reply": "148 words. In range.\n\nChanges:\n- New hook: \"Skycast 1.0 shipped six weeks ago. Three numbers stuck with me.\" — concrete, tight.\n- Dropped slogans (\"Real users beat guesses\", \"Cache before you optimize\", \"Cut what nobody opens\").\n- Dropped \"roadmap\" framing.\n- \"no widget yet\" → \"no widget\" (matches notes).\n- All claims now trace to [notes.md](notes.md)."
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-F3/post.md",
+        "content": "Skycast 1.0 shipped six weeks ago. Three numbers stuck with me.\n\nWe're a team of three who built one Android and iOS app for a 7-day forecast. Two weeks before launch we handed a beta to 40 users. They found 11 bugs; we fixed 9 before 1.0.\n\n1. Crash rate went from 4% of sessions in the beta to 0.5% after launch, mostly by removing a background refresh that ran on low memory.\n\n2. App start dropped from 3.2 seconds to 1.1 seconds once we cached the last forecast on the device instead of waiting for the network.\n\n3. Hourly radar maps took a third of design time in the first month, and only 2 of 40 beta users opened them. We cut them from 1.0.\n\nSix weeks in: 4.6 from 310 ratings. Most common complaint: no widget.\n\nWhat's one feature you cut before launch and never missed?\n"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/P-F3/post.md has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "assistant_note": "I'm trying out a few punchier hook options for the piece, leaning toward something concrete like the beta-testing bug count or the design cuts before shipping Skycast 1.0, and cutting unbacked slogans in favor of specific numbers. Now I'm drafting the actual takeaways: beta testing catching crashes with real percentages, local caching cutting app start time, and radar maps getting cut from the rel",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "wc -w ${HOME}/skillpp-recordings/P-F3/post.md",
+        "description": "Count words"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "148 ${HOME}/skillpp-recordings/P-F3/post.md",
+      "closing_note": "148 words. In range. Changes: - New hook: \"Skycast 1.0 shipped six weeks ago. Three numbers stuck with me.\" — concrete, tight. - Dropped slogans (\"Real users beat guesses\", \"Cache before you optimize\", \"Cut what nobody opens\"). - Dropped \"roadmap\" framing. - \"no widget yet\" → \"no widget\" (matches notes). - All claims now trace to [notes.md](notes.md).",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Count the words again."
+      },
+      "failed": false,
+      "reply": "148 words. In range [120, 180]."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "wc -w ${HOME}/skillpp-recordings/P-F3/post.md",
+        "description": "Count words"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "148 ${HOME}/skillpp-recordings/P-F3/post.md",
+      "closing_note": "148 words. In range [120, 180].",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 0,
+    "answered": 3,
+    "replayed": "2026-09-22"
+  }
+}

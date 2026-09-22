@@ -1,0 +1,218 @@
+{
+  "tag": "c6007828",
+  "name": "c-n1",
+  "session": "C-N1",
+  "kind": "code",
+  "surface": "cli",
+  "checks": [
+    "merge.near-miss"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T12:44:26.552Z",
+  "procedure": "simplify a textkit module without changing its behaviour, run the tests, commit",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "refactor-keeping-tests-green"
+    ],
+    "subjects": [
+      "slugify"
+    ],
+    "boundary_after": [],
+    "roles": [
+      "explore",
+      "implement",
+      "test",
+      "commit"
+    ]
+  },
+  "why": "Recorded from catalogue.json (C-N1, code, cli), truth fixed before recording. ",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 12,
+    "prompts": 4,
+    "failed": 2
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Read textkit/slugify.py and tell me what you would simplify without changing its behaviour. Don't edit yet."
+      },
+      "failed": false,
+      "reply": "Simplifications, behavior-preserving:\n\n1. `ALLOWED` → drop constant. Use `char.isalnum() and char.isascii()` or keep set literal. Current string works but `in \"...\"` slower. Set = `set(string.ascii_lowercase + string.digits)` clearer.\n\n2. `char == \" \" or char == \"-\"` → `char in \" -\"` or `char in {\" \", \"-\"}`.\n\n3. `result = result + char` → `result += char`. Same for hyphen line.\n\n4. Trailing `-` strip: `result.rstrip(\"-\")` replaces `endswith` + slice. Also handles multiple trailing hyphens defensively (but current code guarantees only one, so pure style).\n\n5. Whole loop → regex, one line:\n   ```python\n   import re\n   return re.sub(r\"[^a-z0-9]+\", \"-\", text.lower()).strip(\"-\")\n   ```\n   Matches behavior: lowercase, collapse runs of non-alnum to single `-`, trim edges. Note: current code only collapses `\" \"` and `\"-\"` runs — other chars (e.g. `\"!\"`) are dropped silently, not collapsed. So regex `[^a-z0-9]+` changes behavior for `\"a!b\"` → `\"a-b\"` vs current `\"ab\"`. **Not equivalent.**\n\n   Behavior-equivalent regex: `re.sub(r\"[ -]+\", \"-\", \"\".join(c for c in text.lower() if c in ALLOWED or c in \" -\")).strip(\"-\")` — uglier than the loop. Skip.\n\n6. `previous_was_hyphen` flag redundant with `result.endswith(\"-\")` check, but flag is O(1) vs endswith also O(1) — no win.\n\nBest minimal cleanup: keep loop, apply #2, #3, #4. Regex rewrite tempting but changes behavior for punctuation."
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-N1/textkit/slugify.py"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 \"\"\"Turn a title into a URL slug.\"\"\" 2 3 ALLOWED = \"abcdefghijklmnopqrstuvwxyz0123456789\" 4 5 6 def slugify(text): 7 \"\"\"Lowercase the text, keep letters and digits, join words with hyphens.\"\"\" 8 result = \"\" 9 previous_was_hyphen = False 10 for char in text.lower(): 11 if char in ALLOWED: 12 result = result + char 13 previous_was_hyphen = False 14 elif char == \" \" or char == \"-\": 15 if not previou",
+      "closing_note": "Simplifications, behavior-preserving: 1. `ALLOWED` → drop constant. Use `char.isalnum() and char.isascii()` or keep set literal. Current string works but `in \"...\"` slower. Set = `set(string.ascii_lowercase + string.digits)` clearer. 2. `char == \" \" or char == \"-\"` → `char in \" -\"` or `char in {\" \", \"-\"}`. 3. `result = result + char` → `result += char`. Same for hyphen line. 4. Trailing `-` strip:",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Do it."
+      },
+      "failed": false,
+      "reply": "Done. Changes:\n- `result = result + x` → `result += x` (2x)\n- `char == \" \" or char == \"-\"` → `char in \" -\"`\n- trailing hyphen strip → `rstrip(\"-\")`\n\nBehavior identical."
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-N1/textkit/slugify.py",
+        "old_string": "def slugify(text):\n    \"\"\"Lowercase the text, keep letters and digits, join words with hyphens.\"\"\"\n    result = \"\"\n    previous_was_hyphen = False\n    for char in text.lower():\n        if char in ALLOWED:\n            result = result + char\n            previous_was_hyphen = False\n        elif char == \" \" or char == \"-\":\n            if not previous_was_hyphen and result != \"\":\n                result = result + \"-\"\n                previous_was_hyphen = True\n    if result.endswith(\"-\"):\n        result = result[:-1]\n    return result",
+        "new_string": "def slugify(text):\n    \"\"\"Lowercase the text, keep letters and digits, join words with hyphens.\"\"\"\n    result = \"\"\n    previous_was_hyphen = False\n    for char in text.lower():\n        if char in ALLOWED:\n            result += char\n            previous_was_hyphen = False\n        elif char in \" -\":\n            if not previous_was_hyphen and result != \"\":\n                result += \"-\"\n                previous_was_hyphen = True\n    return result.rstrip(\"-\")"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-N1/textkit/slugify.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "closing_note": "Done. Changes: - `result = result + x` → `result += x` (2x) - `char == \" \" or char == \"-\"` → `char in \" -\"` - trailing hyphen strip → `rstrip(\"-\")` Behavior identical.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Run the tests to show nothing changed."
+      },
+      "failed": false,
+      "reply": "13 passed, 0 failed, 0.02s. Behavior unchanged."
+    },
+    {
+      "tool": "Skill",
+      "input": {
+        "skill": "bootstrapping-an-ephemeral-test-runner"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "Launching skill: bootstrapping-an-ephemeral-test-runner",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "which uv pipx pip3; ls /opt/homebrew/bin/pytest 2>/dev/null",
+        "description": "Probe test runner tools"
+      },
+      "failed": true,
+      "serves": 3,
+      "tool_returned": "Exit code 1 /opt/homebrew/bin/uv pipx not found /opt/homebrew/bin/pip3",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/C-N1/ && ls ${HOME}/skillpp-recordings/C-N1/textkit/ 2>/dev/null",
+        "description": "List repo layout"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "README.md tests textkit __init__.py __pycache__ slugify.py titlecase.py wordfreq.py",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/C-N1/tests/ && cat ${HOME}/skillpp-recordings/C-N1/pyproject.toml 2>/dev/null; cat ${HOME}/skillpp-recordings/C-N1/pytest.ini 2>/dev/null",
+        "description": "Check tests dir and pytest config"
+      },
+      "failed": true,
+      "serves": 3,
+      "tool_returned": "Exit code 1 __init__.py test_slugify.py test_titlecase.py test_wordfreq.py",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "uv run --with pytest pytest tests/ 2>&1 | tail -80",
+        "description": "Run pytest ephemerally"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "============================= test session starts ============================== platform darwin -- Python 3.14.4, pytest-9.1.1, pluggy-1.6.0 rootdir: ${HOME}/skillpp-recordings/C-N1 collected 13 items tests/test_slugify.py .... [ 30%] tests/test_titlecase.py ... [ 53%] tests/test_wordfreq.py ...... [100%] ============================== 13 passed in 0.02s ==============================",
+      "closing_note": "13 passed, 0 failed, 0.02s. Behavior unchanged.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Commit it."
+      },
+      "failed": false,
+      "reply": "Committed b2f8fc9. Skipped `__pycache__/` noise — tracked but stale bytecode, not part of source change. Heads up: `__pycache__/` is tracked in repo, likely wants `.gitignore`."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git -C ${HOME}/skillpp-recordings/C-N1 status",
+        "description": "Git status"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "On branch master Changes not staged for commit: (use \"git add <file>...\" to update what will be committed) (use \"git restore <file>...\" to discard changes in working directory) modified: textkit/__pycache__/__init__.cpython-314.pyc modified: textkit/__pycache__/slugify.cpython-314.pyc modified: textkit/__pycache__/titlecase.cpython-314.pyc modified: textkit/__pycache__/wordfreq.cpython-314.pyc mod",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git -C ${HOME}/skillpp-recordings/C-N1 diff",
+        "description": "Git diff"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "diff --git a/textkit/__pycache__/__init__.cpython-314.pyc b/textkit/__pycache__/__init__.cpython-314.pyc index 340a2c3..27788b9 100644 Binary files a/textkit/__pycache__/__init__.cpython-314.pyc and b/textkit/__pycache__/__init__.cpython-314.pyc differ diff --git a/textkit/__pycache__/slugify.cpython-314.pyc b/textkit/__pycache__/slugify.cpython-314.pyc index f720f93..798995b 100644 Binary files a",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git -C ${HOME}/skillpp-recordings/C-N1 log --oneline -5",
+        "description": "Recent commits"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "83dfbb9 Initial textkit",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git -C ${HOME}/skillpp-recordings/C-N1 add textkit/slugify.py && git -C ${HOME}/skillpp-recordings/C-N1 commit -m \"$(cat <<'EOF'\nrefactor(slugify): simplify without changing behavior\n\nUse `+=`, `char in \" -\"`, and `rstrip(\"-\")` in place of longhand\nequivalents. All 13 tests pass.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <[REDACTED:email]>\nEOF\n)\"",
+        "description": "Stage slugify and commit"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "[master b2f8fc9] refactor(slugify): simplify without changing behavior 1 file changed, 4 insertions(+), 6 deletions(-)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git -C ${HOME}/skillpp-recordings/C-N1 status",
+        "description": "Verify commit"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "On branch master Changes not staged for commit: (use \"git add <file>...\" to update what will be committed) (use \"git restore <file>...\" to discard changes in working directory) modified: textkit/__pycache__/__init__.cpython-314.pyc modified: textkit/__pycache__/slugify.cpython-314.pyc modified: textkit/__pycache__/titlecase.cpython-314.pyc modified: textkit/__pycache__/wordfreq.cpython-314.pyc Unt",
+      "closing_note": "Committed b2f8fc9. Skipped `__pycache__/` noise — tracked but stale bytecode, not part of source change. Heads up: `__pycache__/` is tracked in repo, likely wants `.gitignore`.",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 0,
+    "answered": 3,
+    "replayed": "2026-09-22"
+  }
+}

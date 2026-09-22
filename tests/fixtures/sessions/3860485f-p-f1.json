@@ -1,0 +1,178 @@
+{
+  "tag": "3860485f",
+  "name": "p-f1",
+  "session": "P-F1",
+  "kind": "procedure",
+  "surface": "desktop",
+  "checks": [
+    "merge.fixed",
+    "detect.one",
+    "detect.review"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T13:18:39.319Z",
+  "procedure": "write a LinkedIn post from notes.md within a word limit, count words, check every claim against the notes",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "post-from-source"
+    ],
+    "subjects": [
+      null
+    ],
+    "boundary_after": [],
+    "roles": [
+      "implement",
+      "verify",
+      "review",
+      "correct",
+      "verify"
+    ],
+    "level": "identical"
+  },
+  "why": "Recorded from catalogue.json (P-F1, procedure, desktop), truth fixed before recording. One task over several follow-ups: no prompt after the first starts a new task. Review and correction prompts continue the task, they do not start one.",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 7,
+    "prompts": 5,
+    "failed": 0
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Read notes.md and write a LinkedIn post of 120 to 180 words from it into post.md: a hook in the first line, three short takeaways, and a question at the end. Only use facts from the notes."
+      },
+      "failed": false,
+      "reply": "Wrote [post.md](post.md). ~168 words. Hook line, 3 takeaways, closing question. All facts from notes."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/P-F1/",
+        "description": "List working dir"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "notes.md",
+      "assistant_note": "I should start by checking notes.md to see what's there.",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-F1/notes.md"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 # Retro: Skycast 1.0, six weeks after launch 2 3 Team: three people, one Android and iOS app that shows a 7-day forecast. 4 5 - We shipped a beta to 40 users two weeks before launch. They found 11 bugs, 6 and 9 of them were fixed before 1.0. 7 - The crash rate went from 4% of sessions in the beta to 0.5% after launch, 8 mostly by removing a background refresh that ran on low memory. 9 - App star",
+      "end": false
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-F1/post.md",
+        "content": "Six weeks after launching Skycast 1.0 — three engineers, one 7-day forecast app on Android and iOS — here's what the retro taught us.\n\nThree takeaways:\n\n1. Beta testing paid off. 40 beta users found 11 bugs, and 9 of them were fixed before 1.0. Session crash rate fell from 4% to 0.5%, mostly by removing a background refresh that ran on low memory.\n\n2. Cache beats network for perceived speed. Storing the last forecast on the device instead of waiting for the network cut app start time from 3.2 seconds to 1.1 seconds.\n\n3. Cut what few people use. Hourly radar maps ate a third of our design time in the first month, and only 2 of 40 beta users opened them. We shipped 1.0 without them.\n\nOne habit worth keeping: a weekly 20-minute demo to the whole team caught two misunderstandings about forecast units early. Six-week result: 4.6 stars from 310 ratings. Loudest complaint: no widget yet.\n\nWhat's a feature you cut and never missed?\n"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "File created successfully at: ${HOME}/skillpp-recordings/P-F1/post.md (file state is current in your context — no need to Read it back)",
+      "assistant_note": "I'm drafting the LinkedIn post, opening with a hook about what the six weeks after launching Skycast 1.0 taught the three-person team, then working through the first takeaway about beta testers catching bugs before launch. The remaining takeaways cover caching cutting app start time significantly, and dropping the hourly radar maps feature since almost no beta users touched it despite eating a thi",
+      "closing_note": "Wrote [post.md](post.md). ~168 words. Hook line, 3 takeaways, closing question. All facts from notes.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Count the words with wc -w and fix the post if it is outside the limit."
+      },
+      "failed": false,
+      "reply": "167 words. Within 120-180. No fix needed."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "wc -w ${HOME}/skillpp-recordings/P-F1/post.md",
+        "description": "Count words"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "167 ${HOME}/skillpp-recordings/P-F1/post.md",
+      "closing_note": "I'm cross-checking each claim against the notes: team size of three, the Android/iOS app with 7-day forecasts, the 40-user beta two weeks before launch, the 11 bugs found with 9 fixed pre-1.0, the crash rate drop from 4% to 0.5%, removal of background refresh on low memory, and the app start time improving from 3.2s to 1.1s with cached forecasts stored on-device. I also see notes on cutting hourly",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Check every claim in the post against notes.md and tell me which ones aren't backed by it."
+      },
+      "failed": false,
+      "reply": "Unbacked claims:\n\n- **\"three engineers\"** — notes say \"three people\", role unstated.\n- **\"Cache beats network for perceived speed\"** — framing/interpretation, not in notes. Notes give the numbers, not the lesson.\n- **\"no widget yet\"** — \"yet\" implies plan to add one. Notes only say complaint exists.\n\nRest checks out."
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Make the hook punchier and fix anything that wasn't backed by the notes."
+      },
+      "failed": false,
+      "reply": "166 words. In range.\n\nFixes:\n- Hook: numbers-first opener.\n- \"three engineers\" → \"team of three\".\n- Dropped \"Cache beats network\" framing → factual \"On-device caching changed how the app feels\".\n- \"no widget yet\" → \"no widget\"."
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-F1/post.md",
+        "content": "Crash rate 4% → 0.5%. Start time 3.2s → 1.1s. Six weeks after Skycast 1.0 shipped, here's what our team of three learned.\n\nThree takeaways:\n\n1. Beta testing paid off. 40 beta users found 11 bugs, and 9 of them were fixed before 1.0. Session crash rate fell from 4% to 0.5%, mostly by removing a background refresh that ran on low memory.\n\n2. On-device caching changed how the app feels. Storing the last forecast on the device instead of waiting for the network cut app start time from 3.2 seconds to 1.1 seconds.\n\n3. Cut what few people use. Hourly radar maps ate a third of our design time in the first month, and only 2 of 40 beta users opened them. We shipped 1.0 without them.\n\nOne habit worth keeping: a weekly 20-minute demo to the whole team caught two misunderstandings about forecast units early. Six-week result: 4.6 stars from 310 ratings. Loudest complaint: no widget.\n\nWhat's a feature you cut and never missed?\n"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/P-F1/post.md has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "assistant_note": "I want to fix the hook—swap \"three engineers\" for \"three people\" and cut the cache-versus-network framing entirely. Comparing two options, I like the punchier one leading with hard numbers: crash rate dropping from 4% to 0.5% and startup time from 3.2s to 1.1s, six weeks after shipping Skycast 1.0. From there I'll lay out three takeaways: beta testing catching bugs before launch (fixing the crash ",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "wc -w ${HOME}/skillpp-recordings/P-F1/post.md",
+        "description": "Verify word count"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "166 ${HOME}/skillpp-recordings/P-F1/post.md",
+      "closing_note": "166 words. In range. Fixes: - Hook: numbers-first opener. - \"three engineers\" → \"team of three\". - Dropped \"Cache beats network\" framing → factual \"On-device caching changed how the app feels\". - \"no widget yet\" → \"no widget\".",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Count the words again."
+      },
+      "failed": false,
+      "reply": "166 words. In range (120-180)."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "wc -w ${HOME}/skillpp-recordings/P-F1/post.md",
+        "description": "Count words"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "166 ${HOME}/skillpp-recordings/P-F1/post.md",
+      "closing_note": "166 words. In range (120-180).",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 0,
+    "answered": 3,
+    "replayed": "2026-09-22"
+  }
+}

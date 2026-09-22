@@ -1,17 +1,20 @@
 {
   "family_sizes": {
-    "add-function-with-tests": 3,
-    "write-checklist": 1,
-    "write-linkedin-post": 3,
-    "write-makefile": 1
+    "action-items-from-notes": 3,
+    "add-feature-with-tests": 8,
+    "post-from-source": 4,
+    "refactor-keeping-tests-green": 2,
+    "release-notes-from-changelog": 3,
+    "talk-deck-from-docs": 4
   },
   "notes": {
-    "family_sizes": "Runs labelled per family among the banked episodes; the third add-function-with-tests run is the first task of 5d99e183.",
-    "baseline": "2026-09-22, gemma4:e4b judge with thinking off, nomic-embed-text at the default floors: 7/9 sessions (C's announced cut missed; D a known gap), 1/2 repeated procedures unified, 0 wrong merges.",
+    "family_sizes": "Runs labelled per family among the banked episodes. Three known gaps (C-2said, C-3, C-same) each bank one episode that merged two planned tasks; it is labelled unlabelled:<tag>#n, so write-makefile has no labelled run and add-feature-with-tests has 8 of its 11 planned.",
+    "baseline_detection": "2026-09-22, gemma4:e4b judge, thinking off: 19/22 sessions right, 6/9 real cuts caught, 0 false cuts. Missed: C-2said (announced switch), C-3 (unannounced switch), C-same (same-kind switch). Procedure sessions 11/11.",
+    "baseline_merging": "nomic-embed-text at the default floors: 0 wrong merges; merged pairs identical 3/3 code, 3/3 procedure; same goal 3/3 and 3/3; different subject 1/23 code, 12/12 procedure. 5/6 repeated procedures unified; add-feature-with-tests is split across 4 entries.",
     "judge_prompts": "Every judge prompt at the defaults over this set."
   },
   "judge_prompts": {
-    "count": 9,
-    "sha256": "fabc56bc48598506f16902088a13f0b718e1fa9a4e2bd711fc5a795a64afb9cf"
+    "count": 86,
+    "sha256": "df53aba03f4842c0b79440d3ae5a31bb380688826ec45135ed742decca9fa6fe"
   }
 }

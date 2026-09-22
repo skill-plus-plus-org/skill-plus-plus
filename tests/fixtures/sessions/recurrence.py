@@ -49,6 +49,35 @@ from skillpp.config import Config              # noqa: E402
 BANKED = ("created", "merged")
 
 
+def gap_labels(doc: dict, banked: int, families: list, subjects: list) -> tuple[list, list]:
+    """Labels for what a known gap actually banked.
+
+    An episode keeps its family only where its steps are exactly one planned
+    task: a missed cut that merged two tasks gets a label of its own, so it
+    counts neither as a correct merge nor for either family. The cuts made are
+    read from the stored verdicts, the planned ones from `truth.boundary_after`.
+    """
+    from skillpp.segment import is_prompt
+    work = [s for s in doc["steps"] if not is_prompt(s)]
+    made = [n for n, s in enumerate(work, 1) if s.get("end") is True and n < len(work)]
+    planned = doc["truth"].get("boundary_after") or []
+    ranges = lambda cuts: list(zip([0, *cuts], [*cuts, len(work)]))
+    wanted = {r: i for i, r in enumerate(ranges(planned))}
+    got = ranges(made)
+    if len(got) != banked:
+        return ([f"unlabelled:{doc['tag']}#{n}" for n in range(1, banked + 1)],
+                [None] * banked)
+    fam, sub = [], []
+    for n, r in enumerate(got, 1):
+        if r in wanted and wanted[r] < len(families):
+            fam.append(families[wanted[r]])
+            sub.append(subjects[wanted[r]])
+        else:
+            fam.append(f"unlabelled:{doc['tag']}#{n}")
+            sub.append(None)
+    return fam, sub
+
+
 def fold_all(config: Config) -> list[dict]:
     """Fold every fixture into *config*'s ledger. One row per banked episode."""
     docs = sorted(live_score.load(None), key=lambda d: (d.get("started", ""), d["tag"]))
@@ -60,18 +89,17 @@ def fold_all(config: Config) -> list[dict]:
         episodes = [e for e in (result.get("episodes") or [result])
                     if e.get("status") in BANKED]
         families = list(doc["truth"].get("families", []))
+        subjects = list(doc["truth"].get("subjects") or [])
+        subjects += [None] * (len(families) - len(subjects))
         # A known gap banks what a correct run would not. Its extra episodes get
         # a label of their own, so they can never score as a correct merge and
         # show up as a wrong one if they join another family's entry.
-        if doc.get("expected_fail") and len(episodes) > len(families):
-            families += [f"unlabelled:{doc['tag']}#{n}"
-                         for n in range(len(families) + 1, len(episodes) + 1)]
+        if doc.get("expected_fail") and len(episodes) != len(families):
+            families, subjects = gap_labels(doc, len(episodes), families, subjects)
         if len(families) != len(episodes):
             raise SystemExit(
                 f"{doc['tag']}: {len(episodes)} banked episode(s) but "
                 f"{len(families)} family label(s) — fix the fixture truth first")
-        subjects = list(doc["truth"].get("subjects") or [])
-        subjects += [None] * (len(families) - len(subjects))
         for n, (episode, family, subject) in enumerate(zip(episodes, families, subjects), 1):
             rows.append({"episode": f"{doc['tag']}#{n}", "family": family,
                          "entry": episode["id"], "status": episode["status"],

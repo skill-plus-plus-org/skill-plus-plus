@@ -1,0 +1,229 @@
+{
+  "tag": "f7ed92cd",
+  "name": "p-2unsaid",
+  "session": "P-2unsaid",
+  "kind": "procedure",
+  "surface": "cli",
+  "checks": [
+    "detect.two.unsaid",
+    "merge.from-multi"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T13:50:20.940Z",
+  "procedure": "outline a talk from a doc, recheck it with the developer, build the .pptx only after approval, check it; then turn meeting notes into action items with owner and due date, check them against the notes",
+  "truth": {
+    "episodes": 2,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "talk-deck-from-docs",
+      "action-items-from-notes"
+    ],
+    "subjects": [
+      "privacy",
+      null
+    ],
+    "boundary_after": [
+      6
+    ],
+    "roles": [
+      "explore",
+      "correct",
+      "build",
+      "verify",
+      "switch",
+      "verify",
+      "polish"
+    ]
+  },
+  "why": "Recorded from catalogue.json (P-2unsaid, procedure, cli), truth fixed before recording. The task changes with no word announcing it. New tasks start at prompt(s) 5.",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 10,
+    "prompts": 7,
+    "failed": 0
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Propose an outline for a 5-minute talk on what skillpp keeps private, from docs/privacy.md. At most 5 slides; don't build it yet."
+      },
+      "failed": false,
+      "reply": "Outline. 5 slides, ~1 min each.\n\n**Slide 1 — Frame: \"shell history, not telemetry\"**\n- Skillpp records Claude Code sessions locally to spot repeat work.\n- Threat model = your shell history. Trust boundary = your machine.\n- Talk maps: what's kept, where, what's scrubbed, what leaves.\n\n**Slide 2 — What gets captured**\n- Prompts (2k chars), tool inputs (2k/field), tool results (400), agent words (400 around calls, 8k per reply), session context.\n- Only in projects with hooks wired. No env, no unseen files.\n\n**Slide 3 — Where it lives + lifecycle**\n- All under `~/.claude/skillpp/` (`sessions/`, `ledger/`, `drafts/`, `embeddings.json`, `decisions.jsonl`, `skillpp.log`).\n- Nothing expires on own. `skillpp expire` prunes stale; `rm -rf` nukes all.\n\n**Slide 4 — Scrubbing: what it catches, what it misses**\n- Caught on write → `[REDACTED:type]`: keys (AWS/GH/Slack/Anthropic/OpenAI/Google), JWTs, DB conn strings, creds-in-URLs, emails, internal hosts, high-entropy strings.\n- Missed: names, phone numbers, IPs, external hostnames, sensitive prose, file contents. Hence \"shell history\".\n\n**Slide 5 — What leaves the machine + opt-outs**\n- Local by default: Ollama + review page on `127.0.0.1` (rejects cross-origin).\n- Egress only on **Draft Skill** / **Revise** with `--apply` → sends one candidate to your agent's provider.\n- Extra publish: uploading skill, committing bundle.\n- Opt-outs: `SKILLPP_INTERNAL=1` (one session), `--project` scoping, dismiss/delete candidate."
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-2unsaid/docs/privacy.md"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 # Privacy 2 3 skillpp records what you do with Claude Code so it can recognise the work you 4 repeat. This page says exactly what that record holds, where it is kept, what 5 is removed from it, and the one way any of it leaves your machine. 6 7 ## What is recorded 8 9 For every session in a project where the hooks are wired: 10 11 | What | Kept | Limit | 12 | --- | --- | --- | 13 | Your prompts ",
+      "closing_note": "Revised outline. 6 slides. **Slide 1 — Frame: \"shell history, not telemetry\"** - Skillpp records Claude Code sessions locally to spot repeat work. - Threat model = shell history. Trust boundary = your machine. - Roadmap: kept, where, scrubbed, draft egress, opt-outs. **Slide 2 — What gets captured** - Prompts (2k chars), tool inputs (2k/field), tool results (400), agent words (400 around calls, 8k",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Add a slide on what leaves the machine when you draft a skill."
+      },
+      "failed": false,
+      "reply": "Revised outline. 6 slides.\n\n**Slide 1 — Frame: \"shell history, not telemetry\"**\n- Skillpp records Claude Code sessions locally to spot repeat work.\n- Threat model = shell history. Trust boundary = your machine.\n- Roadmap: kept, where, scrubbed, draft egress, opt-outs.\n\n**Slide 2 — What gets captured**\n- Prompts (2k chars), tool inputs (2k/field), tool results (400), agent words (400 around calls, 8k per reply), context.\n- Only projects with hooks wired. No env, no unseen files.\n\n**Slide 3 — Where it lives + lifecycle**\n- All under `~/.claude/skillpp/` (`sessions/`, `ledger/`, `drafts/`, `embeddings.json`, `decisions.jsonl`, `skillpp.log`).\n- Nothing expires on own. `skillpp expire` prunes; `rm -rf` nukes.\n\n**Slide 4 — Scrubbing: hits and misses**\n- Caught → `[REDACTED:type]`: keys (AWS/GH/Slack/Anthropic/OpenAI/Google), JWTs, DB conn strings, creds-in-URLs, emails, internal hosts, high-entropy strings.\n- Missed: names, phones, IPs, external hostnames, prose, file contents.\n\n**Slide 5 — Drafting: the one egress path** *(new)*\n- Trigger: **Draft Skill** / **Revise** button, or `skillpp draft` / `skillpp revise --apply`. Never without click or `--apply`.\n- Runs your agent (`claude -p` default) → sends to that agent's model provider.\n- Payload: one candidate + its first run's conversation + steps + your note.\n- Not sent: rest of ledger, other candidates, other sessions.\n- Provider sees it like any prompt you type.\n\n**Slide 6 — Also-publishes + opt-outs**\n- Local baseline: Ollama on-box, review page `127.0.0.1` only (rejects cross-origin).\n- Extra publish paths: upload skill (→ Claude account), commit skill/bundle (→ shared repo).\n- Opt-outs: `SKILLPP_INTERNAL=1 claude` (one session), `--project` scoping, dismiss candidate / delete `ledger/` file."
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Good, build it as privacy.pptx."
+      },
+      "failed": false,
+      "reply": "Built. `docs/privacy.pptx` (35 KB, 6 slides, 16:9). Builder script at `docs/build_privacy_pptx.py` — re-run with `uv run --with python-pptx python docs/build_privacy_pptx.py` to regenerate. Delete builder if unwanted."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/P-2unsaid/docs/ && which uv python3",
+        "description": "Check docs dir and tools"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "privacy.md /opt/homebrew/bin/uv /opt/homebrew/bin/python3",
+      "end": false
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-2unsaid/docs/build_privacy_pptx.py",
+        "content": "from pptx import Presentation\nfrom pptx.util import Inches, Pt\nfrom pptx.enum.shapes import MSO_SHAPE\nfrom pptx.dml.color import RGBColor\n\nSLIDES = [\n    {\n        \"title\": \"skillpp privacy: shell history, not telemetry\",\n        \"subtitle\": \"What is kept, where, what is scrubbed, what leaves\",\n        \"bullets\": [\n            \"Records Claude Code sessions locally to spot repeat work\",\n            \"Threat model = your shell history\",\n            \"Trust boundary = your machine\",\n            \"Roadmap: kept → where → scrubbed → draft egress → opt-outs\",\n        ],\n    },\n    {\n        \"title\": \"What gets captured\",\n        \"bullets\": [\n            \"Prompts: text you typed (2,000 chars each)\",\n            \"Tool inputs: Bash cmd, Write/Edit paths + content, Read/Glob/Grep patterns, WebFetch/Search URL, Skill/Task name+args, MCP up to 5 args (2,000 chars/field)\",\n            \"Tool results: first 400 chars\",\n            \"Agent words: 400 chars around each tool call, 8,000 per reply\",\n            \"Context: session id, cwd, timestamps, failure flag\",\n            \"Only projects with hooks wired. No env, no unseen files.\",\n        ],\n    },\n    {\n        \"title\": \"Where it lives + lifecycle\",\n        \"bullets\": [\n            \"All under ~/.claude/skillpp/ (or $SKILLPP_ROOT)\",\n            \"sessions/ – per-session buffer until folded\",\n            \"ledger/ – one file per candidate: steps, first-run convo, decision\",\n            \"drafts/<id>/ – drafted skills, .revisions/, agent.log\",\n            \"embeddings.json, review_summaries.json, decisions.jsonl, usage.json, skillpp.log\",\n            \"Nothing expires on its own. `skillpp expire` prunes; `rm -rf ~/.claude/skillpp/` nukes all.\",\n        ],\n    },\n    {\n        \"title\": \"Scrubbing on write: hits and misses\",\n        \"bullets\": [\n            \"Every captured string scrubbed before disk → [REDACTED:type]\",\n            \"Caught: private keys; [REDACTED:high-entropy] tokens; JWTs; bearer tokens\",\n            \"Caught: DB conn strings… [truncated 3812 chars]"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "File created successfully at: ${HOME}/skillpp-recordings/P-2unsaid/docs/build_privacy_pptx.py (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "uv run --with python-pptx python docs/build_privacy_pptx.py",
+        "description": "Build pptx via ephemeral uv env"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "Downloading lxml (8.2MiB) Downloaded lxml Installed 5 packages in 22ms wrote ${HOME}/skillpp-recordings/P-2unsaid/docs/privacy.pptx",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls -la ${HOME}/skillpp-recordings/P-2unsaid/docs/privacy.pptx",
+        "description": "Verify pptx exists"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "-rw-r--r--@ 1 ${USER} staff 35850 Sep 22 15:51 ${HOME}/skillpp-recordings/P-2unsaid/docs/privacy.pptx",
+      "closing_note": "Built. `docs/privacy.pptx` (35 KB, 6 slides, 16:9). Builder script at `docs/build_privacy_pptx.py` — re-run with `uv run --with python-pptx python docs/build_privacy_pptx.py` to regenerate. Delete builder if unwanted.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Open the file and check it has the slides from the outline."
+      },
+      "failed": false,
+      "reply": "All 6 slides present, match outline 1:1:\n\n1. Frame ✓\n2. What captured ✓\n3. Where + lifecycle ✓\n4. Scrubbing hits/misses ✓\n5. Drafting egress (new slide) ✓\n6. Also-publishes + opt-outs ✓\n\nFile good."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "uv run --with python-pptx python -c \"\nfrom pptx import Presentation\np = Presentation('${HOME}/skillpp-recordings/P-2unsaid/docs/privacy.pptx')\nprint('slide count:', len(p.slides))\nfor i, s in enumerate(p.slides, 1):\n    print(f'\\n--- slide {i} ---')\n    for shp in s.shapes:\n        if shp.has_text_frame:\n            for para in shp.text_frame.paragraphs:\n                t = ''.join(r.text for r in para.runs) or para.text\n                if t.strip():\n                    print(t)\n\"\n",
+        "description": "Dump text of every slide"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "slide count: 6 --- slide 1 --- skillpp privacy: shell history, not telemetry What is kept, where, what is scrubbed, what leaves • Records Claude Code sessions locally to spot repeat work • Threat model = your shell history • Trust boundary = your machine • Roadmap: kept → where → scrubbed → draft egress → opt-outs --- slide 2 --- What gets captured Prompts: text you typed (2,000 chars each) Tool i",
+      "closing_note": "All 6 slides present, match outline 1:1: 1. Frame ✓ 2. What captured ✓ 3. Where + lifecycle ✓ 4. Scrubbing hits/misses ✓ 5. Drafting egress (new slide) ✓ 6. Also-publishes + opt-outs ✓ File good.",
+      "end": true
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Read meeting-2.md and write the action items with owner and due date into actions.md."
+      },
+      "failed": false,
+      "reply": "Wrote `actions.md`. 4 action items, 1 deferred, 1 ongoing noted. Dates verbatim from source (no year given in doc)."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "find ${HOME}/skillpp-recordings/P-2unsaid -name \"meeting-2.md\" -not -path \"*/node_modules/*\" 2>/dev/null",
+        "description": "Locate meeting-2.md"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "${HOME}/skillpp-recordings/P-2unsaid/meeting-2.md",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-2unsaid/meeting-2.md"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "1 # Release review, 17 Sep 2 3 Present: Priya, Sam, Jordan 4 5 - The 1.4.0 release notes need a user-facing version; Jordan drafts them by 6 Friday 19 September. 7 - Sam fixes the wrong temperature unit shown after switching regions, 8 before the 1.4.0 build on 22/09. 9 - Priya asks the two beta testers who reported battery drain for logs, 10 this week. 11 - Nobody takes the tablet layout yet; rev",
+      "end": false
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-2unsaid/actions.md",
+        "content": "# Action items — Release review, 17 Sep\n\n| Owner | Action | Due |\n| --- | --- | --- |\n| Jordan | Draft user-facing 1.4.0 release notes | Fri 19 Sep |\n| Sam | Fix wrong temperature unit shown after region switch | Before 1.4.0 build, 22/09 |\n| Priya | Ask two beta testers who reported battery drain for logs | This week (of 17 Sep) |\n| Jordan | Update Alex (absent) on the unit bug | Today (17 Sep) |\n\nDeferred: tablet layout — no owner, revisit October.\nOngoing: Alex owns the widget.\n"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "File created successfully at: ${HOME}/skillpp-recordings/P-2unsaid/actions.md (file state is current in your context — no need to Read it back)",
+      "closing_note": "Verify each row against `meeting-2.md`: **Row 1 — Jordan, release notes, Fri 19 Sep** Source line 5-6: \"The 1.4.0 release notes need a user-facing version; Jordan drafts them by Friday 19 September.\" ✓ Owner Jordan, action matches, due Fri 19 Sep matches. **Row 2 — Sam, temperature unit fix, before 22/09** Source line 7-8: \"Sam fixes the wrong temperature unit shown after switching regions, before",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Check each one against the notes."
+      },
+      "failed": false,
+      "reply": "Verify each row against `meeting-2.md`:\n\n**Row 1 — Jordan, release notes, Fri 19 Sep**\nSource line 5-6: \"The 1.4.0 release notes need a user-facing version; Jordan drafts them by Friday 19 September.\"\n✓ Owner Jordan, action matches, due Fri 19 Sep matches.\n\n**Row 2 — Sam, temperature unit fix, before 22/09**\nSource line 7-8: \"Sam fixes the wrong temperature unit shown after switching regions, before the 1.4.0 build on 22/09.\"\n✓ Owner Sam, action matches, due \"before 1.4.0 build 22/09\" matches.\n\n**Row 3 — Priya, battery-drain logs, this week**\nSource line 9-10: \"Priya asks the two beta testers who reported battery drain for logs, this week.\"\n✓ Owner Priya, action matches, due \"this week\" matches.\n\n**Row 4 — Jordan, update Alex on unit bug, today**\nSource line 12: \"Alex (absent) owns the widget; Jordan updates him on the unit bug today.\"\n✓ Owner Jordan, action matches, due \"today\" matches.\n\n**Deferred — tablet layout, October**\nSource line 11: \"Nobody takes the tablet layout yet; revisit in October.\"\n✓ Correctly excluded from action rows.\n\n**Ongoing — Alex owns widget**\nSource line 12: \"Alex (absent) owns the widget\"\n✓ Correctly noted as ongoing, not action.\n\nAll 4 rows + deferred + ongoing faithful to notes. Nothing missed, nothing invented."
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Sort them by due date."
+      },
+      "failed": false,
+      "reply": "Sorted ascending: Today (17) → Fri 19 → this week (~by Sun 21) → before 22/09 build."
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-2unsaid/actions.md",
+        "old_string": "| Owner | Action | Due |\n| --- | --- | --- |\n| Jordan | Draft user-facing 1.4.0 release notes | Fri 19 Sep |\n| Sam | Fix wrong temperature unit shown after region switch | Before 1.4.0 build, 22/09 |\n| Priya | Ask two beta testers who reported battery drain for logs | This week (of 17 Sep) |\n| Jordan | Update Alex (absent) on the unit bug | Today (17 Sep) |",
+        "new_string": "| Owner | Action | Due |\n| --- | --- | --- |\n| Jordan | Update Alex (absent) on the unit bug | Today (17 Sep) |\n| Jordan | Draft user-facing 1.4.0 release notes | Fri 19 Sep |\n| Priya | Ask two beta testers who reported battery drain for logs | This week (of 17 Sep) |\n| Sam | Fix wrong temperature unit shown after region switch | Before 1.4.0 build, 22/09 |"
+      },
+      "failed": false,
+      "serves": 7,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/P-2unsaid/actions.md has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "closing_note": "Sorted ascending: Today (17) → Fri 19 → this week (~by Sun 21) → before 22/09 build.",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 1,
+    "answered": 4,
+    "replayed": "2026-09-22"
+  }
+}

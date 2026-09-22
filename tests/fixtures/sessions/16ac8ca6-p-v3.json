@@ -1,0 +1,188 @@
+{
+  "tag": "16ac8ca6",
+  "name": "p-v3",
+  "session": "P-V3",
+  "kind": "procedure",
+  "surface": "cli",
+  "checks": [
+    "merge.varied",
+    "detect.one",
+    "detect.review"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T13:39:55.395Z",
+  "procedure": "outline a talk from a doc, recheck it with the developer, build the .pptx only after approval, check it",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "talk-deck-from-docs"
+    ],
+    "subjects": [
+      "architecture"
+    ],
+    "boundary_after": [],
+    "roles": [
+      "explore",
+      "correct",
+      "build",
+      "correct"
+    ],
+    "level": "same-goal"
+  },
+  "why": "Recorded from catalogue.json (P-V3, procedure, cli), truth fixed before recording. One task over several follow-ups: no prompt after the first starts a new task. Review and correction prompts continue the task, they do not start one.",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 9,
+    "prompts": 4,
+    "failed": 0
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Prepare a 5-minute talk for engineers on how skillpp works inside, from docs/architecture.md. Start with an outline of at most 6 slides for me to approve."
+      },
+      "failed": false,
+      "reply": "Draft outline. 6 slides max, ~50s each.\n\n**Slide 1 — What skillpp does**\nTurn Claude Code sessions into reusable skills. Capture → judge → segment → match → ledger → draft.\n\n**Slide 2 — The pipeline**\nASCII diagram from architecture.md. Hooks (UserPromptSubmit/PostToolUse) → session JSON → detached `fold-session` → ledger → `draft` agent → `drafts/<id>/SKILL.md`.\n\n**Slide 3 — Why nothing model-calls in a hook**\nHooks never raise, exit 0. Judge/embeddings/naming all in detached fold worker. Sessions without verdict are **held**, banked next `SessionStart`. No guessing.\n\n**Slide 4 — Module map**\nTour of the boxes: `capture`, `boundary`, `segment`, `matching`, `ledger`, `local`, `sanitize`, `cli/web`. One-line each. Show one rule = one place (`is_read_only`, `DESTRUCTIVE`, `judge_gap`).\n\n**Slide 5 — Rules code keeps**\nHook never raises. Nothing without `--apply`. Nothing self-installs. Scrub before disk. Hold rather than guess. Precision > recall on merge.\n\n**Slide 6 — Measuring a change**\nUnit suite = stubbed, fast, correctness only. Real quality = `score.py`, `recurrence.py`, `judge_replay.py`, `merge_ladder.py` on fixtures + Ollama. One change, compare `expected.json`, log in `benchmarks.md`.\n\nApprove or edit which slide?"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/P-V3/docs/ 2>&1 | head -30",
+        "description": "List docs directory"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "architecture.md",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-V3/docs/architecture.md"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 # Architecture 2 3 How a session becomes a candidate and a candidate becomes a skill, and where 4 each part lives. Read with the code: every module opens with a docstring saying 5 why it exists, and the comments cite the measurement behind each choice. 6 7 ## The pipeline 8 9 ``` 10 Claude Code session 11 │ UserPromptSubmit, PostToolUse capture.handle_prompt / handle_tool 12 ▼ 13 ~/.claude/skill",
+      "closing_note": "Updated outline: **Slide 1 — What skillpp does** Turn Claude Code sessions into reusable skills. Capture → judge → segment → match → ledger → draft. **Slide 2 — The pipeline** ASCII diagram from architecture.md. Hooks → session JSON → detached `fold-session` → ledger → `draft` agent → `drafts/<id>/SKILL.md`. **Slide 3 — Why nothing model-calls in a hook** Hooks never raise, exit 0. Judge/embedding",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Drop the slide on the module map and add one on the design invariants instead."
+      },
+      "failed": false,
+      "reply": "Updated outline:\n\n**Slide 1 — What skillpp does**\nTurn Claude Code sessions into reusable skills. Capture → judge → segment → match → ledger → draft.\n\n**Slide 2 — The pipeline**\nASCII diagram from architecture.md. Hooks → session JSON → detached `fold-session` → ledger → `draft` agent → `drafts/<id>/SKILL.md`.\n\n**Slide 3 — Why nothing model-calls in a hook**\nHooks never raise, exit 0. Judge/embeddings/naming in detached fold worker. No verdict → session **held**, banked next `SessionStart`.\n\n**Slide 4 — Design invariants** *(new, replaces module map)*\n- Hook never raises.\n- Nothing without `--apply` (dry-run default).\n- Nothing self-installs; promotion stays user's call.\n- Scrub before disk (`sanitize.scrub`).\n- Hold rather than guess (guessed boundaries scored worse than none).\n- Precision > recall on merge (dup visible, wrong merge silent).\n\n**Slide 5 — One place for each rule**\nSingle-answer principle: `segment.is_read_only`, `signals.DESTRUCTIVE`, `boundary.judge_gap`, `install.installed_events`, `capture.fold_session`. Reuse, don't rewrite.\n\n**Slide 6 — Measuring a change**\nUnit suite = stubbed, correctness only. Quality = `score.py`, `recurrence.py`, `judge_replay.py`, `merge_ladder.py` on fixtures + Ollama. One change, diff `expected.json`, log `benchmarks.md`.\n\nApprove?"
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Approved — build slides.pptx."
+      },
+      "failed": false,
+      "reply": "Built. `slides.pptx` (35KB, 6 slides, 16:9). Builder script `build_slides.py` kept — edit + rerun to tweak."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -c \"import pptx; print(pptx.__version__)\" 2>&1",
+        "description": "Check python-pptx"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "1.0.2",
+      "end": false
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-V3/build_slides.py",
+        "content": "from pptx import Presentation\nfrom pptx.util import Inches, Pt\nfrom pptx.enum.shapes import MSO_SHAPE\nfrom pptx.dml.color import RGBColor\n\nprs = Presentation()\nprs.slide_width = Inches(13.333)\nprs.slide_height = Inches(7.5)\n\nBLANK = prs.slide_layouts[6]\n\nTITLE_COLOR = RGBColor(0x1F, 0x2A, 0x44)\nBODY_COLOR = RGBColor(0x30, 0x30, 0x30)\nACCENT = RGBColor(0x2E, 0x7D, 0x6B)\n\n\ndef add_title(slide, text):\n    box = slide.shapes.add_textbox(Inches(0.6), Inches(0.35), Inches(12.1), Inches(0.9))\n    tf = box.text_frame\n    tf.word_wrap = True\n    p = tf.paragraphs[0]\n    r = p.add_run()\n    r.text = text\n    r.font.size = Pt(36)\n    r.font.bold = True\n    r.font.color.rgb = TITLE_COLOR\n\n\ndef add_subtitle(slide, text):\n    box = slide.shapes.add_textbox(Inches(0.6), Inches(1.25), Inches(12.1), Inches(0.5))\n    tf = box.text_frame\n    p = tf.paragraphs[0]\n    r = p.add_run()\n    r.text = text\n    r.font.size = Pt(18)\n    r.font.italic = True\n    r.font.color.rgb = ACCENT\n\n\ndef add_bullets(slide, bullets, top=Inches(1.9), left=Inches(0.7), width=Inches(12.0), height=Inches(5.2), size=20):\n    box = slide.shapes.add_textbox(left, top, width, height)\n    tf = box.text_frame\n    tf.word_wrap = True\n    for i, item in enumerate(bullets):\n        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()\n        p.space_after = Pt(8)\n        if isinstance(item, tuple):\n            head, rest = item\n            r1 = p.add_run()\n            r1.text = f\"• {head}\"\n            r1.font.size = Pt(size)\n            r1.font.bold = True\n            r1.font.color.rgb = TITLE_COLOR\n            r2 = p.add_run()\n            r2.text = f\" — {rest}\"\n            r2.font.size = Pt(size)\n            r2.font.color.rgb = BODY_COLOR\n        else:\n            r = p.add_run()\n            r.text = f\"• {item}\"\n            r.font.size = Pt(size)\n            r.font.color.rgb = BODY_COLOR\n\n\ndef add_mono(slide, text, top=Inches(1.9), left=Inches(0.7), width=Inches(12.0), height=Inches(5.2), size=16):\n    box = slide.s… [truncated 4516 chars]"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "File created successfully at: ${HOME}/skillpp-recordings/P-V3/build_slides.py (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 build_slides.py",
+        "description": "Build slides.pptx"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "wrote ${HOME}/skillpp-recordings/P-V3/slides.pptx",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls -la ${HOME}/skillpp-recordings/P-V3/slides.pptx",
+        "description": "Verify file"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "-rw-r--r--@ 1 ${USER} staff 35731 Sep 22 15:41 ${HOME}/skillpp-recordings/P-V3/slides.pptx",
+      "closing_note": "Built. `slides.pptx` (35KB, 6 slides, 16:9). Builder script `build_slides.py` kept — edit + rerun to tweak.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "The title slide should say \"How skillpp works\". Fix it and check the other slides didn't change."
+      },
+      "failed": false,
+      "reply": "Fixed. Slide 1 title now \"How skillpp works\". Slides 2–6 unchanged (titles + subtitles match prior build)."
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-V3/build_slides.py",
+        "old_string": "add_title(s, \"skillpp — from session to skill\")\nadd_subtitle(s, \"How it works inside\")",
+        "new_string": "add_title(s, \"How skillpp works\")\nadd_subtitle(s, \"How it works inside\")"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/P-V3/build_slides.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 build_slides.py",
+        "description": "Rebuild slides.pptx"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "wrote ${HOME}/skillpp-recordings/P-V3/slides.pptx",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 - <<'EOF'\nfrom pptx import Presentation\np = Presentation(\"${HOME}/skillpp-recordings/P-V3/slides.pptx\")\nfor i, s in enumerate(p.slides, 1):\n    texts = []\n    for sh in s.shapes:\n        if sh.has_text_frame:\n            for para in sh.text_frame.paragraphs:\n                t = \"\".join(r.text for r in para.runs)\n                if t.strip():\n                    texts.append(t)\n    print(f\"--- Slide {i} ---\")\n    for t in texts[:2]:\n        print(t)\n    print()\nEOF",
+        "description": "Dump slide titles/subtitles"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "--- Slide 1 --- How skillpp works How it works inside --- Slide 2 --- The pipeline Hooks in, skill draft out --- Slide 3 --- No model calls inside a hook Capture never breaks a session --- Slide 4 --- Design invariants Rules the code keeps --- Slide 5 --- One place for each rule Single-answer principle --- Slide 6 --- Measuring a change Correctness vs. quality — separate answers",
+      "closing_note": "Fixed. Slide 1 title now \"How skillpp works\". Slides 2–6 unchanged (titles + subtitles match prior build).",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 0,
+    "answered": 2,
+    "replayed": "2026-09-22"
+  }
+}

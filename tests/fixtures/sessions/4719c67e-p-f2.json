@@ -1,0 +1,164 @@
+{
+  "tag": "4719c67e",
+  "name": "p-f2",
+  "session": "P-F2",
+  "kind": "procedure",
+  "surface": "cli",
+  "checks": [
+    "merge.fixed",
+    "detect.one",
+    "detect.review"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T13:21:56.998Z",
+  "procedure": "write a LinkedIn post from notes.md within a word limit, count words, check every claim against the notes",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "post-from-source"
+    ],
+    "subjects": [
+      null
+    ],
+    "boundary_after": [],
+    "roles": [
+      "implement",
+      "verify",
+      "review",
+      "correct",
+      "verify"
+    ],
+    "level": "identical"
+  },
+  "why": "Recorded from catalogue.json (P-F2, procedure, cli), truth fixed before recording. One task over several follow-ups: no prompt after the first starts a new task. Review and correction prompts continue the task, they do not start one.",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 6,
+    "prompts": 5,
+    "failed": 0
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Read notes.md and write a LinkedIn post of 120 to 180 words from it into post.md: a hook in the first line, three short takeaways, and a question at the end. Only use facts from the notes."
+      },
+      "failed": false,
+      "reply": "Wrote post.md. ~165 words. Hook line 1, 3 numbered takeaways, question at end. Facts pulled only from notes.md."
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-F2/notes.md"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 # Retro: Skycast 1.0, six weeks after launch 2 3 Team: three people, one Android and iOS app that shows a 7-day forecast. 4 5 - We shipped a beta to 40 users two weeks before launch. They found 11 bugs, 6 and 9 of them were fixed before 1.0. 7 - The crash rate went from 4% of sessions in the beta to 0.5% after launch, 8 mostly by removing a background refresh that ran on low memory. 9 - App star",
+      "end": false
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-F2/post.md",
+        "content": "Six weeks after shipping Skycast 1.0, the numbers taught us more than the launch itself.\n\nWe're a team of three that built a 7-day forecast app for Android and iOS. Before 1.0, we ran a two-week beta with 40 users, who surfaced 11 bugs — 9 were fixed before launch. Three things stood out:\n\n1. Small fixes, big reliability wins. Removing a background refresh that ran on low memory dropped our crash rate from 4% of sessions in beta to 0.5% after launch.\n\n2. Cache before network. Caching the last forecast on the device cut app start time from 3.2 seconds to 1.1 seconds.\n\n3. Cut what users don't touch. Hourly radar maps ate a third of design time in the first month, but only 2 of 40 beta users ever opened them. We cut them from 1.0.\n\nStore rating after six weeks: 4.6 from 310 ratings. Top complaint? No widget.\n\nWhat feature have you cut from a launch that you don't regret?\n"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "File created successfully at: ${HOME}/skillpp-recordings/P-F2/post.md (file state is current in your context — no need to Read it back)",
+      "closing_note": "Wrote post.md. ~165 words. Hook line 1, 3 numbered takeaways, question at end. Facts pulled only from notes.md.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Count the words with wc -w and fix the post if it is outside the limit."
+      },
+      "failed": false,
+      "reply": "163 words. In range [120,180]. No fix needed."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "wc -w ${HOME}/skillpp-recordings/P-F2/post.md",
+        "description": "Count words in post.md"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "163 ${HOME}/skillpp-recordings/P-F2/post.md",
+      "closing_note": "All factual claims backed. Two minor nuances: - Post: \"Removing background refresh... **dropped** crash rate 4%→0.5%\". Notes hedge: \"**mostly by** removing...\". Post drops \"mostly\" — implies sole cause, notes say main cause. - Framing line \"numbers taught us more than launch itself\" — opinion, not in notes. Not a fact claim, but not backed either. Headings (\"Small fixes, big reliability wins\", \"Ca",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Check every claim in the post against notes.md and tell me which ones aren't backed by it."
+      },
+      "failed": false,
+      "reply": "All factual claims backed. Two minor nuances:\n\n- Post: \"Removing background refresh... **dropped** crash rate 4%→0.5%\". Notes hedge: \"**mostly by** removing...\". Post drops \"mostly\" — implies sole cause, notes say main cause.\n- Framing line \"numbers taught us more than launch itself\" — opinion, not in notes. Not a fact claim, but not backed either.\n\nHeadings (\"Small fixes, big reliability wins\", \"Cache before network\", \"Cut what users don't touch\") = framing, not factual claims.\n\nEverything else (team size, platforms, beta size, bug counts, crash %, start time, radar map stats, rating, widget complaint) matches notes exactly."
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Make the hook punchier and fix anything that wasn't backed by the notes."
+      },
+      "failed": false,
+      "reply": "165 words. In range.\n\nChanges:\n- New hook leads with three headline numbers (4.6 stars, 0.5% crash, 1.1s start) — all from notes.\n- Restored \"mostly by\" hedge on crash-rate cause.\n- Dropped unsourced \"numbers taught us more than launch itself\" line."
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/P-F2/post.md",
+        "content": "Skycast 1.0: 4.6 stars, 0.5% crash rate, 1.1-second start. Here's what six weeks post-launch taught us.\n\nWe're a team of three that built a 7-day forecast app for Android and iOS. Before 1.0, we ran a two-week beta with 40 users, who surfaced 11 bugs — 9 were fixed before launch. Three things stood out:\n\n1. Small fixes, big reliability wins. Crash rate went from 4% of sessions in beta to 0.5% after launch — mostly by removing a background refresh that ran on low memory.\n\n2. Cache before network. Caching the last forecast on the device cut app start time from 3.2 seconds to 1.1 seconds.\n\n3. Cut what users don't touch. Hourly radar maps ate a third of design time in the first month, but only 2 of 40 beta users ever opened them. We cut them from 1.0.\n\nRating after six weeks: 4.6 from 310 ratings. Top complaint? No widget.\n\nWhat feature have you cut from a launch that you don't regret?\n"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/P-F2/post.md has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "wc -w ${HOME}/skillpp-recordings/P-F2/post.md",
+        "description": "Count words in updated post"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "165 ${HOME}/skillpp-recordings/P-F2/post.md",
+      "closing_note": "165 words. In range. Changes: - New hook leads with three headline numbers (4.6 stars, 0.5% crash, 1.1s start) — all from notes. - Restored \"mostly by\" hedge on crash-rate cause. - Dropped unsourced \"numbers taught us more than launch itself\" line.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Count the words again."
+      },
+      "failed": false,
+      "reply": "165 words. In [120, 180] range."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "wc -w ${HOME}/skillpp-recordings/P-F2/post.md",
+        "description": "Count words in post.md"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "165 ${HOME}/skillpp-recordings/P-F2/post.md",
+      "closing_note": "165 words. In [120, 180] range.",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 0,
+    "answered": 3,
+    "replayed": "2026-09-22"
+  }
+}

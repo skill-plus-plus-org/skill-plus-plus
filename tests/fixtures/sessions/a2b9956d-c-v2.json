@@ -1,0 +1,235 @@
+{
+  "tag": "a2b9956d",
+  "name": "c-v2",
+  "session": "C-V2",
+  "kind": "code",
+  "surface": "cli",
+  "checks": [
+    "merge.varied",
+    "detect.one"
+  ],
+  "captured": "2026-09-22",
+  "started": "2026-09-22T12:38:59.508Z",
+  "procedure": "explore how to add a feature to textkit, implement it, add tests and run the suite, commit",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "add-feature-with-tests"
+    ],
+    "subjects": [
+      "wordfreq --min-length"
+    ],
+    "boundary_after": [],
+    "roles": [
+      "test",
+      "implement",
+      "test",
+      "commit"
+    ],
+    "level": "same-goal"
+  },
+  "why": "Recorded from catalogue.json (C-V2, code, cli), truth fixed before recording. One task over several follow-ups: no prompt after the first starts a new task.",
+  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "shape": {
+    "steps": 13,
+    "prompts": 4,
+    "failed": 2
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "i want wordfreq to skip words shorter than N letters with a --min-length flag. write the test for it first"
+      },
+      "failed": false,
+      "reply": "Tests first. Add `min_length` param to `top_words` + `--min-length` CLI flag.\n\nRun tests. Expect new ones fail (feature not built yet).\n\nTests written. 4 new tests fail as expected — 3 on missing `min_length` kwarg, 1 on missing `--min-length` CLI flag. Existing 6 still pass. Ready for implementation when you say go."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/C-V2",
+        "description": "List repo root"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "README.md tests textkit",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${HOME}/skillpp-recordings/C-V2/textkit ${HOME}/skillpp-recordings/C-V2/tests",
+        "description": "List subdirs"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "${HOME}/skillpp-recordings/C-V2/tests: __init__.py test_slugify.py test_titlecase.py test_wordfreq.py ${HOME}/skillpp-recordings/C-V2/textkit: __init__.py __pycache__ slugify.py titlecase.py wordfreq.py",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-V2/textkit/wordfreq.py"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 \"\"\"Print the most common words in a text file.\"\"\" 2 3 import argparse 4 5 LETTERS = \"abcdefghijklmnopqrstuvwxyz'\" 6 7 8 def words(text): 9 \"\"\"Split text into lowercase words, dropping punctuation and digits.\"\"\" 10 cleaned = \"\" 11 for char in text.lower(): 12 if char in LETTERS: 13 cleaned = cleaned + char 14 else: 15 cleaned = cleaned + \" \" 16 result = [] 17 for word in cleaned.split(\" \"): 18 wo",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-V2/tests/test_wordfreq.py"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 import io 2 import os 3 import tempfile 4 import unittest 5 from contextlib import redirect_stdout 6 7 from textkit.wordfreq import main, top_words, words 8 9 10 class TestWords(unittest.TestCase): 11 def test_lowercases_and_drops_punctuation(self): 12 self.assertEqual(words(\"Hello, hello! World.\"), [\"hello\", \"hello\", \"world\"]) 13 14 def test_keeps_apostrophes_inside_words(self): 15 self.assertE",
+      "end": false
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-V2/tests/test_wordfreq.py",
+        "old_string": "    def test_at_most_five(self):\n        self.assertEqual(len(top_words(\"a b c d e f g\")), 5)\n\n\nclass TestMain(unittest.TestCase):\n    def test_prints_counts(self):\n        with tempfile.TemporaryDirectory() as tmp:\n            path = os.path.join(tmp, \"t.txt\")\n            with open(path, \"w\", encoding=\"utf-8\") as handle:\n                handle.write(\"sun sun rain\")\n            out = io.StringIO()\n            with redirect_stdout(out):\n                self.assertEqual(main([path]), 0)\n        self.assertEqual(out.getvalue().split(), [\"2\", \"sun\", \"1\", \"rain\"])",
+        "new_string": "    def test_at_most_five(self):\n        self.assertEqual(len(top_words(\"a b c d e f g\")), 5)\n\n    def test_min_length_skips_shorter_words(self):\n        self.assertEqual(\n            top_words(\"a bb ccc dd a\", min_length=2),\n            [(\"bb\", 1), (\"ccc\", 1), (\"dd\", 1)],\n        )\n\n    def test_min_length_zero_keeps_everything(self):\n        self.assertEqual(\n            top_words(\"a bb a\", min_length=0),\n            [(\"a\", 2), (\"bb\", 1)],\n        )\n\n    def test_min_length_can_empty_result(self):\n        self.assertEqual(top_words(\"a b c\", min_length=5), [])\n\n\nclass TestMain(unittest.TestCase):\n    def test_prints_counts(self):\n        with tempfile.TemporaryDirectory() as tmp:\n            path = os.path.join(tmp, \"t.txt\")\n            with open(path, \"w\", encoding=\"utf-8\") as handle:\n                handle.write(\"sun sun rain\")\n            out = io.StringIO()\n            with redirect_stdout(out):\n                self.assertEqual(main([path]), 0)\n        self.assertEqual(out.getvalue().split(), [\"2\", \"sun\", \"1\", \"rain\"])\n\n    def test_min_length_flag_filters(self):\n        with tempfile.TemporaryDirectory() as tmp:\n            path = os.path.join(tmp, \"t.txt\")\n            with open(path, \"w\", encoding=\"utf-8\") as handle:\n                handle.write(\"a bb a ccc bb\")\n            out = io.StringIO()\n            with redirect_stdout(out):\n                self.assertEqual(main([path, \"--min-length\", \"2\"]), 0)\n        self.assertEqual(out.getvalue().split(), [\"2\", \"bb\", \"1\", \"ccc\"])"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-V2/tests/test_wordfreq.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "assistant_note": "Tests first. Add `min_length` param to `top_words` + `--min-length` CLI flag.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python -m unittest tests.test_wordfreq -v 2>&1",
+        "description": "Run wordfreq tests"
+      },
+      "failed": true,
+      "serves": 1,
+      "tool_returned": "Exit code 127 (eval):1: command not found: python",
+      "assistant_note": "Run tests. Expect new ones fail (feature not built yet).",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -m unittest tests.test_wordfreq -v 2>&1",
+        "description": "Run wordfreq tests"
+      },
+      "failed": true,
+      "serves": 1,
+      "tool_returned": "Exit code 1 test_min_length_flag_filters (tests.test_wordfreq.TestMain.test_min_length_flag_filters) ... usage: python3.14 -m unittest [-h] path python3.14 -m unittest: error: unrecognized arguments: --min-length 2 ERROR test_prints_counts (tests.test_wordfreq.TestMain.test_prints_counts) ... ok test_at_most_five (tests.test_wordfreq.TestTopWords.test_at_most_five) ... ok test_min_length_can_empty",
+      "closing_note": "Tests written. 4 new tests fail as expected — 3 on missing `min_length` kwarg, 1 on missing `--min-length` CLI flag. Existing 6 still pass. Ready for implementation when you say go.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "now make it pass"
+      },
+      "failed": false,
+      "reply": "10/10 pass. `top_words` filters by `min_length`; CLI wires `--min-length` (default 0)."
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-V2/textkit/wordfreq.py",
+        "old_string": "def top_words(text):\n    \"\"\"The five most common words, most common first, ties alphabetical.\"\"\"\n    counts = {}\n    for word in words(text):\n        if word in counts:\n            counts[word] = counts[word] + 1\n        else:\n            counts[word] = 1",
+        "new_string": "def top_words(text, min_length=0):\n    \"\"\"The five most common words, most common first, ties alphabetical.\"\"\"\n    counts = {}\n    for word in words(text):\n        if len(word) < min_length:\n            continue\n        if word in counts:\n            counts[word] = counts[word] + 1\n        else:\n            counts[word] = 1"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-V2/textkit/wordfreq.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${HOME}/skillpp-recordings/C-V2/textkit/wordfreq.py",
+        "old_string": "    parser.add_argument(\"path\", help=\"the text file to read\")\n    args = parser.parse_args(argv)\n    with open(args.path, encoding=\"utf-8\") as handle:\n        text = handle.read()\n    for word, count in top_words(text):\n        print(f\"{count:>5}  {word}\")",
+        "new_string": "    parser.add_argument(\"path\", help=\"the text file to read\")\n    parser.add_argument(\n        \"--min-length\",\n        type=int,\n        default=0,\n        help=\"skip words shorter than this many letters\",\n    )\n    args = parser.parse_args(argv)\n    with open(args.path, encoding=\"utf-8\") as handle:\n        text = handle.read()\n    for word, count in top_words(text, min_length=args.min_length):\n        print(f\"{count:>5}  {word}\")"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "The file ${HOME}/skillpp-recordings/C-V2/textkit/wordfreq.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -m unittest tests.test_wordfreq -v 2>&1",
+        "description": "Run wordfreq tests"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "test_min_length_flag_filters (tests.test_wordfreq.TestMain.test_min_length_flag_filters) ... ok test_prints_counts (tests.test_wordfreq.TestMain.test_prints_counts) ... ok test_at_most_five (tests.test_wordfreq.TestTopWords.test_at_most_five) ... ok test_min_length_can_empty_result (tests.test_wordfreq.TestTopWords.test_min_length_can_empty_result) ... ok test_min_length_skips_shorter_words (tests",
+      "closing_note": "10/10 pass. `top_words` filters by `min_length`; CLI wires `--min-length` (default 0).",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "run all tests"
+      },
+      "failed": false,
+      "reply": "17/17 pass. Full suite green."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -m unittest discover -v 2>&1",
+        "description": "Run full test suite"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "test_collapses_spaces (tests.test_slugify.TestSlugify.test_collapses_spaces) ... ok test_drops_punctuation (tests.test_slugify.TestSlugify.test_drops_punctuation) ... ok test_keeps_digits (tests.test_slugify.TestSlugify.test_keeps_digits) ... ok test_lowercases_and_joins_with_hyphens (tests.test_slugify.TestSlugify.test_lowercases_and_joins_with_hyphens) ... ok test_capitalizes_each_word (tests.te",
+      "closing_note": "17/17 pass. Full suite green.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "commit"
+      },
+      "failed": false,
+      "reply": "Committed `a5788ba`. Only source + test staged; `.pyc` cache left out. Consider a `.gitignore` for `__pycache__/` — say word and I add."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git status && echo '---' && git diff && echo '---' && git log --oneline -5",
+        "description": "Check state pre-commit"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "On branch master Changes not staged for commit: (use \"git add <file>...\" to update what will be committed) (use \"git restore <file>...\" to discard changes in working directory) modified: tests/test_wordfreq.py modified: textkit/__pycache__/__init__.cpython-314.pyc modified: textkit/__pycache__/slugify.cpython-314.pyc modified: textkit/__pycache__/titlecase.cpython-314.pyc modified: textkit/__pycac",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git add textkit/wordfreq.py tests/test_wordfreq.py && git commit -m \"$(cat <<'EOF'\nAdd --min-length flag to wordfreq\n\nAdds an optional min_length filter to top_words and a matching\n--min-length CLI flag so callers can skip short words like articles\nwithout changing the tokenizer.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <[REDACTED:email]>\nEOF\n)\" && git status",
+        "description": "Stage src+test, commit, verify"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "[master a5788ba] Add --min-length flag to wordfreq 2 files changed, 35 insertions(+), 2 deletions(-) On branch master Changes not staged for commit: (use \"git add <file>...\" to update what will be committed) (use \"git restore <file>...\" to discard changes in working directory) modified: textkit/__pycache__/__init__.cpython-314.pyc modified: textkit/__pycache__/slugify.cpython-314.pyc modified: tex",
+      "closing_note": "Committed `a5788ba`. Only source + test staged; `.pyc` cache left out. Consider a `.gitignore` for `__pycache__/` — say word and I add.",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "send_description": false,
+    "endings": 0,
+    "answered": 3,
+    "replayed": "2026-09-22"
+  }
+}

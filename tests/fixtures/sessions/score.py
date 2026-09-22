@@ -174,10 +174,15 @@ def cuts_by_role(doc: dict) -> dict[str, dict[str, int]]:
     out: dict[str, dict[str, int]] = {}
     if not roles or not any("end" in s for s in doc["steps"] if not is_prompt(s)):
         return out
-    work, last, prompt_no = 0, None, 0
+    # Prompts with no tool call between them share one gap, and the judge is
+    # asked about it once. It belongs to the first of them: a switch whose
+    # reply only proposed ("don't create it yet") must not hand its cut to the
+    # "implement" that follows.
+    work, last, prompt_no, counted = 0, None, 0, None
     for step in doc["steps"]:
         if is_prompt(step):
-            if prompt_no and work and prompt_no < len(roles):
+            if prompt_no and work and work != counted and prompt_no < len(roles):
+                counted = work
                 cell = out.setdefault(roles[prompt_no], {"asked": 0, "false": 0,
                                                          "cuts": 0, "missed": 0})
                 cell["asked"] += 1

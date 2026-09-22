@@ -4795,6 +4795,16 @@ class TestSessionCatalogue(unittest.TestCase):
             "correct": {"asked": 1, "false": 1, "cuts": 0, "missed": 0},
             "switch": {"asked": 1, "false": 0, "cuts": 1, "missed": 1}})
 
+    def test_a_gap_shared_by_two_prompts_belongs_to_the_first(self):
+        """A switch answered in words alone, then "create it": one gap, the switch's."""
+        import score
+        steps = self._stream("p:start", "a", "b", "p:new job, propose only", "p:create it", "c", "d")
+        steps[2]["end"] = True
+        doc = {"tag": "t", "steps": steps,
+               "truth": {"roles": ["explore", "switch", "implement"], "boundary_after": [2]}}
+        self.assertEqual(score.cuts_by_role(doc),
+                         {"switch": {"asked": 1, "false": 0, "cuts": 1, "missed": 0}})
+
     def test_merged_pairs_are_counted_by_how_alike_the_runs_are(self):
         import recurrence
         rows = [{"family": "f", "entry": "e1", "kind": "code", "level": "identical", "subject": "x"},
