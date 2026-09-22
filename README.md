@@ -1,6 +1,76 @@
-# Skill Plus Plus
+<div align="center">
 
-**Spot the work you keep repeating with Claude Code, and turn it into skills you review.**
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.svg">
+  <img alt="skillpp: repeated work becomes a reviewed skill" src="docs/images/banner-light.svg" width="720">
+</picture>
+
+# Spot the work you keep repeating. Turn it into skills.
+
+**Detection runs on your machine and costs nothing. Your agent writes a skill only when you ask.**
+
+<!-- VIDEO/GIF: the review page, candidate → Promote → Draft Skill → answer a question → Install; at most 880 px wide -->
+
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT license"></a>
+<img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square" alt="Python 3.10+">
+<img src="https://img.shields.io/badge/detection-runs_locally-orange?style=flat-square" alt="Detection runs locally">
+<img src="https://img.shields.io/badge/for-Claude_Code-8A2BE2?style=flat-square" alt="For Claude Code">
+
+⚡ **Three commands, no API key, no account.** **[→ Quick Start](#-quick-start)**
+
+</div>
+
+---
+
+<div align="center">
+
+**[See it](#-see-it) · [Why](#-why-this-exists) · [How it works](#-how-it-works) · [Quick Start](#-quick-start) · [Your first skill](#-your-first-skill) · [The numbers](#-the-numbers) · [When to use](#-when-to-use--when-to-skip) · [Docs](docs/usage.md)**
+
+</div>
+
+---
+
+## 👀 See it
+
+<table>
+<tr>
+<th width="45%">What you typed, in one of three sessions</th>
+<th width="55%">What your agent drafted from it</th>
+</tr>
+<tr>
+<td valign="top">
+
+1. *Look at textkit/wordfreq.py and suggest how to add a --min-length option that skips words shorter than N letters. Don't change anything yet.*
+2. *Go ahead and implement it.*
+3. *Add tests for --min-length and run all the tests.*
+4. *Commit it.*
+
+</td>
+<td valign="top">
+
+**adding-a-cli-flag-to-an-argparse-tool**<br>
+*Use when adding a new flag/option to an existing Python argparse-based CLI: plan the flag, thread it through the call chain, cover it with tests, then commit.*
+
+1. Plan before touching code
+2. Implement on approval
+3. Smoke test
+4. Add tests, then run the whole suite
+5. Commit only when asked
+6. Flag repo hygiene as a heads-up, not a silent fix
+
+</td>
+</tr>
+</table>
+
+Four prompts about one option became a procedure for any option: the plan
+before the code, the approval, the full test run, the commit. That is the
+method you followed, written down once. The example is one of the public
+recordings in [tests/fixtures/sessions/](tests/fixtures/sessions/), and anyone
+can draft it again.
+
+---
+
+## 🌍 Why this exists
 
 Every team has procedures it runs again and again: shipping a small feature with
 its tests, turning a document into a talk, adding an eval case. An agent skill
@@ -9,24 +79,20 @@ time, but almost nobody writes them: by the time a procedure is worth a skill,
 you have done it three times and moved on.
 
 skillpp finds those procedures for you. It watches your Claude Code sessions,
-notices when you repeat the same kind of work, and shows it to you as a
-candidate. Promote one, and your own agent drafts the skill from what you
-actually did. Nothing is installed without you.
-
-**What it costs.** Watching and detecting run entirely on your machine, with
-small local models (Ollama): no API calls, no cost, and nothing leaves your
-laptop. The frontier model is called only at the very end, once per skill:
-after you have promoted a candidate and pressed **Draft Skill**. Only then does
-that one run's conversation go to it.
+notices when you repeat the same kind of work within a project, and shows it to
+you as a candidate. Promote one, and your own agent drafts the skill from what
+you actually did. Nothing is installed without you.
 
 **Where it is going.** The goal is skills shared across a team, so that a
 procedure one person worked out is done the same way by everyone: faster, and
 without the mistakes each person would otherwise make on their own. This first
-version works end to end for one person, from your sessions to a skill in your
-skills folder. Sharing is still by hand: download the skill and pass it on, or
-commit it to your repo's `.claude/skills/` so everyone working in it gets it.
+version works end to end for one person, and its skills already reach a team
+the simple way: install one into the repo's `.claude/skills/`, commit it, and
+everyone working in the repo has it.
 
-## How it works
+---
+
+## 🔧 How it works
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/how-it-works-dark.svg">
@@ -40,26 +106,22 @@ commit it to your repo's `.claude/skills/` so everyone working in it gets it.
    the next time one starts.
 2. **Fold.** A background worker asks a local model, at each point where you
    typed something, whether a new task started there, and splits the session
-   into tasks. Each task is compared with what the ledger already holds: the
-   same procedure again adds to its count, anything else becomes a new
+   into tasks. Each task is compared with the candidates of the same project:
+   the same procedure again adds to its count, anything else becomes a new
    candidate.
 3. **Review and draft.** Seen three times, a candidate is ready on the review
    page, where you promote or dismiss it. **Draft Skill** hands its first run to
    your own agent (`claude -p` by default), with a note from you if you like.
    The agent writes the procedure in its own words, and anything it could not
-   tell from the run becomes an open question. Answer them, revise if needed,
-   then download the skill and unzip it into your skills folder.
+   tell from the run becomes an open question. Answer them, then install the
+   skill into the project or just for you.
 
-## Requirements
+---
 
-- macOS or Linux, Python 3.10 or newer (the standard library only)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), with `claude` on
-  your PATH and logged in (run `claude`, then `/login`)
-- [Ollama](https://ollama.com) installed and running (`brew install ollama` on a
-  Mac). skillpp downloads the two local models it needs while it installs:
-  about 10 GB on disk, and about 10 GB of free memory while it cuts a session.
+## ⚡ Quick Start
 
-## Quickstart
+You need macOS or Linux, Python 3.10+, [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+logged in, and [Ollama](https://ollama.com) running (`brew install ollama` on a Mac).
 
 ```bash
 pipx install git+https://github.com/himanshu096/skill-plus-plus
@@ -67,137 +129,157 @@ skillpp install --project ~/code/my-repo --apply   # hooks, slash commands and t
 skillpp doctor                                     # everything green?
 ```
 
-Start a new Claude Code session in that repo (a new chat in the CLI, or a new
-Code session in the desktop app): hooks load when a session starts. Work as
-usual, then open the review page:
+Then start a new Claude Code session in that repo (a new chat in the CLI, or a
+new Code session in the desktop app) and work as usual.
 
-```bash
-skillpp web
-```
+<details>
+<summary><strong>More ways in</strong> · every project, dry runs, removing it, from a clone</summary>
 
-**A first skill without waiting for three repeats:** `SKILLPP_RECURRENCE=1`
-makes every candidate ready the first time it is seen. **Describing a procedure
-instead of doing it** (work in progress): run `/skillpp-new` in a session and
-describe it; the agent asks what the description leaves out and builds a
-candidate from it.
+<br>
 
-**Install options.** Without `--apply`, `install` only shows what it would do,
-downloads included. `--user` instead of `--project` captures every project;
-`--no-models` leaves Ollama alone; `--remove --apply` takes the hooks and
-commands out again. Your settings file is backed up before it is changed.
+- `install` without `--apply` only shows what it would do, downloads included.
+  Your settings file is backed up before it is changed.
+- `--user` instead of `--project` captures every project on the machine.
+- The two models are about 10 GB on disk, and cutting a session needs about
+  10 GB of free memory. `--no-models` leaves Ollama alone.
+- `skillpp install --project ~/code/my-repo --remove --apply` takes the hooks
+  and slash commands out again.
+- From a clone: `pip install -e .`, or run `python3 bin/skillpp` without
+  installing anything.
 
-### Installing a drafted skill
+</details>
 
-Downloaded skills are zips holding `<name>/SKILL.md`. Unzip into
-`~/.claude/skills/` (every project) or `<repo>/.claude/skills/` (one repo, and
-everyone who works in it), then tell skillpp where it went, so the review page
-shows the candidate as installed:
+---
 
-```bash
-skillpp promote <id> --skill-path ~/.claude/skills/<name>/SKILL.md
-```
+## 🕐 Your first skill
 
-## The review page
+1. **Work as usual.** Each session is cut into tasks when it ends, in the
+   background.
+2. **Open the review page:** `skillpp web`. It is served on `127.0.0.1` and only
+   this machine can reach it.
+3. **Pick the project** in the menu beside the tabs, if you have more than one.
+<!-- SCREENSHOT: docs/images/review-candidates.png, a candidate opened, its steps grouped under the requests they served -->
+4. **Candidates** lists what you repeated, most-seen first, each with a summary
+   and its steps grouped under the requests they served. At three runs, a
+   candidate can be promoted or dismissed.
+5. **Promote** it, then press **Draft Skill**. The optional note tells the agent
+   what the later runs taught you: it reads only the first.
+<!-- SCREENSHOT: docs/images/draft-questions.png, a draft with its open questions to answer -->
+6. **Answer its open questions** on the Drafts tab. Each answer is folded back
+   into the skill; **Revise** sends any other instruction.
+<!-- SCREENSHOT: docs/images/install.png, the Install in <project> / Just for me buttons -->
+7. **Install in your project** (commit `.claude/skills/` to share it), or **just
+   for you**. A later revision reaches it with **Update**.
 
-`skillpp web` serves a page on `127.0.0.1:8765` that only this machine can reach.
+**Faster than three repeats:** `SKILLPP_RECURRENCE=1` makes a candidate ready the
+first time it is seen. **Describing a procedure instead of doing it** (work in
+progress): run `/skillpp-new` in a session and describe it.
 
-- **Candidates** lists what skillpp saw you repeat, most-seen first, with a
-  summary and the steps grouped under the requests they served. Promote or
-  dismiss what reached three; **Draft Skill** a promoted one.
-- **Drafts** shows each finished draft rendered, with its open questions. A draft
-  downloads once every question is answered; **Revise** sends the agent an
-  instruction and updates the draft in place.
+---
 
-## Commands
+## 💸 What it costs
 
-Every command prints its flags with `skillpp <command> --help`. Anything that
-edits settings or spends a model call is a dry run until you add `--apply`.
+Watching and detecting run entirely on your machine, with two local models
+through Ollama: no API calls, no cost, and nothing leaves your laptop. The
+frontier model is called only at the very end, once per skill: after you have
+promoted a candidate and pressed **Draft Skill**. Only then does that one run's
+conversation go to it.
 
-| For | Commands |
-| --- | --- |
-| Setting up | `install`, `doctor` |
-| Reviewing | `web`, `review`, `show`, `search`, `stats` |
-| Deciding | `promote`, `dismiss`, `reopen`, `ignored` |
-| Drafting | `draft`, `revise`, `name`, `scaffold`, `dictate` (work in progress) |
-| Fixing candidates | `split`, `merge`, `retitle`, `sift` |
-| Skills you have | `lifecycle`, `tier`, `check`, `reconcile`, `bundle`, `expire`, `accuracy` |
-| Internal (run by the hooks) | `hook`, `fold-session`, `fold-pending` |
+---
 
-## Configuration
+## 📊 The numbers
 
-All settings are environment variables.
+Measured on 22 public recordings of code and knowledge work, with the defaults
+(`gemma4:e4b`, `nomic-embed-text`). The weak rows stay in the tables.
 
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `SKILLPP_ROOT` | `~/.claude/skillpp` | where the ledger, sessions and drafts live |
-| `SKILLPP_RECURRENCE` | `3` | times a task must repeat before it can be promoted |
-| `SKILLPP_TTL_DAYS` | `14` | how long `skillpp expire` keeps a candidate still collecting |
-| `SKILLPP_OLLAMA` | `http://127.0.0.1:11434` | the Ollama server |
-| `SKILLPP_LOCAL_MODEL` | `gemma4:e4b` | the model that cuts sessions and names candidates |
-| `SKILLPP_EMBED_MODEL` | `nomic-embed-text` | the model that matches repeats |
-| `SKILLPP_MATCH_FLOOR` | `0.93` | similarity at which two runs' commands count as the same procedure |
-| `SKILLPP_MATCH_FLOOR_TURNS` | `0.85` | the same, for runs compared by their conversation |
-| `SKILLPP_AGENT` | `claude -p {PROMPT} …` | how to invoke your agent for drafts; `{PROMPT}` is replaced |
-| `SKILLPP_JUDGE` | `1` | `0` stops judging; sessions are then held until it is back on |
-| `SKILLPP_NAME` | `1` | `0` stops the model naming new candidates |
-| `SKILLPP_MATCH` | `1` | `0` banks every task without comparing it (for measuring detection) |
-| `SKILLPP_DESCRIBE` | `0` | `1` asks the model to describe every tool call, inside the hook (slow) |
-| `SKILLPP_MAX_STEPS` / `SKILLPP_MAX_FIELD` | `500` / `2000` | caps per session and per captured field |
-| `SKILLPP_INTERNAL` | unset | set to anything to make the hooks do nothing, e.g. for one session |
+**Where one task ends**: 19 of 22 sessions right; 6 of 9 task switches caught;
+**0 false cuts over 77 prompts**, reviews, corrections and side questions
+included.
 
-## Privacy
+| Check | Code | Knowledge work |
+|---|---|---|
+| one task, several follow-ups | 6/6 | 6/6 |
+| reviews and corrections stay in the task | 1/1 | 6/6 |
+| a switch nobody announced | 1/1 | 1/1 |
+| an announced switch | **0/1** | 1/1 |
+| three tasks in one chat | **0/1** | 1/1 |
+| a second task of the same kind | **0/1** | – |
 
-Everything skillpp captures stays in `~/.claude/skillpp/` on your machine, and
-the local models run there too. Prompts, tool inputs (up to 2,000 characters
-each), the start of each tool result and the agent's replies are stored after
-scrubbing keys, tokens, connection strings and email addresses. Names, phone
-numbers and the content of your files are **not** recognised, so treat the
-ledger as you would your shell history.
+**Do repeats become one candidate**: 0 wrong merges.
 
-Something leaves your machine only when you press **Draft Skill** or **Revise**:
-the candidate's run is then read by your agent, which uses its own model. Nothing
-expires automatically. See [docs/privacy.md](docs/privacy.md) for exactly what is
-stored where.
+| How alike the runs are | Code | Knowledge work |
+|---|---|---|
+| the same prompts | 3/3 pairs | 3/3 pairs |
+| the same goal, driven differently | 3/3 | 3/3 |
+| the same procedure, another subject | **1/23** | 12/12 |
 
-## Known limits
+> The bold rows are real. Code switches are what the judge misses, and code on
+> a new subject is what matching keeps apart: it prefers a duplicate you can see
+> to a wrong merge that mixes two procedures into one skill.
 
-- **A task continued in a new chat becomes two half-tasks.** Everything is keyed
-  by the chat, and nothing links one chat to the next.
-- **Two tasks with no prompt between them look like one.** The judge only looks
-  where you typed something.
-- **A switch between two coding tasks can be missed**, and the two then become
-  one candidate. On the public sessions the judge caught 6 of 9 task switches;
-  all three misses were between code tasks: one announced, one not, and a
-  second feature right after the first. It cut nothing wrongly: 0 false cuts
-  over 77 prompts, reviews, corrections and side questions included.
-- **Matching is strict on purpose.** A wrong merge would mix two procedures into
-  one skill, so it prefers leaving a duplicate. On the public sessions: 0 wrong
-  merges; repeats with the same prompts or the same goal merge; knowledge work
-  on different material merges; but the same coding procedure on a different
-  feature mostly stays separate (1 of 23 pairs merged).
-- **A draft reads one run**, the first. Use the note on **Draft Skill** to tell
-  the agent what the later runs taught you.
-- Capture works in the Claude Code CLI and the Code tab of the desktop app. The
-  draft agent defaults to Claude Code too, but any agent CLI can be set with
-  `SKILLPP_AGENT`.
+**Drafts**: on four recorded sessions, every draft's method was right. A
+Claude judge checked each one, and every yes it gave quotes the line of the
+draft that backs it. The latest
+change to the draft prompt took the drafts whose description says when to use
+the skill from 2/4 to 4/4, and the drafts that leaked a path from the run from
+1 to 0.
 
-The public sessions behind these numbers, and how to reproduce them, are in
-[tests/fixtures/sessions/](tests/fixtures/sessions/); earlier measurements are in
+Reproduce them from [tests/fixtures/sessions/](tests/fixtures/sessions/): `score.py`,
+`recurrence.py`, `tests/benchmarks/judge_replay.py` and
+`tests/benchmarks/draft_check.py`. The earlier measurements are in
 [docs/research/](docs/research/).
 
-## Documentation
+---
 
-- [docs/usage.md](docs/usage.md): install scopes, daily use, drafting, troubleshooting, uninstalling
-- [docs/privacy.md](docs/privacy.md): what is captured, where it lives, what leaves the machine
-- [docs/architecture.md](docs/architecture.md): the pipeline and the modules, for contributors
-- [docs/design.md](docs/design.md): the original design document
-- [docs/research/](docs/research/): the lab log of every measurement that shaped the defaults
+## 🧭 When to use · when to skip
 
-## Contributing
+**Good fit if you** repeat procedures in Claude Code (the CLI or the desktop
+app's Code tab), on macOS or Linux, with about 10 GB of memory to spare for the
+local model.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The test suite needs no model and runs in
-about ten seconds: `python3 -m unittest discover -s tests`.
+**Skip it if you** mostly do one-off work, run Windows, or use another agent:
+capture is Claude Code only for now. Drafting can use any agent CLI
+(`SKILLPP_AGENT`).
 
-## License
+**Known limits**
+- A task continued in a new chat becomes two half-tasks; nothing links one chat
+  to the next.
+- Two tasks in one prompt look like one: the judge only looks where you typed
+  something.
+- A draft reads one run, the first. The note on **Draft Skill** carries what the
+  later ones taught you.
 
-See [LICENSE](LICENSE).
+---
+
+## 🔒 Privacy
+
+Everything skillpp captures stays in `~/.claude/skillpp/` on your machine,
+scrubbed of keys, tokens, connection strings and email addresses. Names, phone
+numbers and the content of your files are **not** recognised, so treat it like
+your shell history. Something leaves your machine only when you press **Draft
+Skill** or **Revise**. Nothing expires automatically.
+[docs/privacy.md](docs/privacy.md) says exactly what is stored where.
+
+## 🤝 Contributing
+
+The most useful contribution is a recorded session of real, public work,
+especially two tasks in one chat or a task finished in a second chat.
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how to record one, run the tests (no
+model needed, about ten seconds) and measure a change.
+
+## 📜 License
+
+[MIT](LICENSE).
+
+---
+
+<sub>
+<strong>Docs:</strong>
+<a href="docs/usage.md">Usage, commands and settings</a> ·
+<a href="docs/privacy.md">Privacy</a> ·
+<a href="docs/architecture.md">Architecture</a> ·
+<a href="docs/research/">Research log</a> ·
+<a href="CONTRIBUTING.md">Contributing</a> ·
+<a href="SECURITY.md">Security</a> ·
+<a href="CHANGELOG.md">Changelog</a>
+</sub>

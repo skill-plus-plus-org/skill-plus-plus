@@ -71,6 +71,11 @@ with what it has seen before. Two thresholds decide what you see:
   `git status` or a question with no work is not a candidate;
 - a candidate needs to be seen **three times** before you can promote it.
 
+A candidate belongs to one project: the git repo the work was done in (the
+folder itself outside a repo). The same procedure in two repos is two
+candidates, since the skill made from it belongs in that repo. When the page
+holds more than one project, a menu beside the tabs shows one at a time.
+
 ```bash
 skillpp web            # the review page, http://127.0.0.1:8765
 skillpp review --all   # the same queue in the terminal, below-threshold included
@@ -102,12 +107,18 @@ reinstated).
    why, and you can draft again with a note.
 3. In **Drafts**, answer the open questions. The answers go back to the agent,
    which folds each into the skill. **Revise** sends any other instruction.
-4. **Download skill** once no question is left, unzip into `~/.claude/skills/`
-   (or `<repo>/.claude/skills/`), and record it:
+4. **Install** once no question is left:
+   - **Install in `<project>`** writes it to the repo's `.claude/skills/<name>/`.
+     Commit that folder and everyone who works in the repo has the skill.
+   - **Just for me** writes it to `~/.claude/skills/<name>/` (or the folder
+     `skillpp web --skills-dir` names).
 
-   ```bash
-   skillpp promote <id> --skill-path ~/.claude/skills/<name>/SKILL.md
-   ```
+   After a revision, **Update** replaces the installed copy. **Uninstall**
+   removes only the files the page installed, and leaves the skill alone once
+   you have edited it. A folder of the same name that the page did not install
+   is never touched. **Download** gives a zip for anywhere else; a skill you
+   unzip by hand is recorded with
+   `skillpp promote <id> --skill-path <folder>/SKILL.md`.
 
 The same from the terminal:
 
@@ -146,6 +157,43 @@ skillpp reconcile              # promoted skills whose file is gone
 ```
 
 Nothing runs these for you, and nothing a skill depends on is ever deleted.
+
+## Commands
+
+Every command prints its flags with `skillpp <command> --help`. Anything that
+edits settings or spends a model call is a dry run until you add `--apply`.
+
+| For | Commands |
+| --- | --- |
+| Setting up | `install`, `doctor` |
+| Reviewing | `web`, `review`, `show`, `search`, `stats` |
+| Deciding | `promote`, `dismiss`, `reopen`, `ignored` |
+| Drafting | `draft`, `revise`, `name`, `scaffold`, `dictate` (work in progress) |
+| Fixing candidates | `split`, `merge`, `retitle`, `sift` |
+| Skills you have | `lifecycle`, `tier`, `check`, `reconcile`, `bundle`, `expire`, `accuracy` |
+| Internal (run by the hooks) | `hook`, `fold-session`, `fold-pending` |
+
+## Configuration
+
+All settings are environment variables.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `SKILLPP_ROOT` | `~/.claude/skillpp` | where the ledger, sessions and drafts live |
+| `SKILLPP_RECURRENCE` | `3` | times a task must repeat before it can be promoted |
+| `SKILLPP_TTL_DAYS` | `14` | how long `skillpp expire` keeps a candidate still collecting |
+| `SKILLPP_OLLAMA` | `http://127.0.0.1:11434` | the Ollama server |
+| `SKILLPP_LOCAL_MODEL` | `gemma4:e4b` | the model that cuts sessions and names candidates |
+| `SKILLPP_EMBED_MODEL` | `nomic-embed-text` | the model that matches repeats |
+| `SKILLPP_MATCH_FLOOR` | `0.93` | similarity at which two runs' commands count as the same procedure |
+| `SKILLPP_MATCH_FLOOR_TURNS` | `0.85` | the same, for runs compared by their conversation |
+| `SKILLPP_AGENT` | `claude -p {PROMPT} …` | how to invoke your agent for drafts; `{PROMPT}` is replaced |
+| `SKILLPP_JUDGE` | `1` | `0` stops judging; sessions are then held until it is back on |
+| `SKILLPP_NAME` | `1` | `0` stops the model naming new candidates |
+| `SKILLPP_MATCH` | `1` | `0` banks every task without comparing it (for measuring detection) |
+| `SKILLPP_DESCRIBE` | `0` | `1` asks the model to describe every tool call, inside the hook (slow) |
+| `SKILLPP_MAX_STEPS` / `SKILLPP_MAX_FIELD` | `500` / `2000` | caps per session and per captured field |
+| `SKILLPP_INTERNAL` | unset | set to anything to make the hooks do nothing, e.g. for one session |
 
 ## Troubleshooting
 

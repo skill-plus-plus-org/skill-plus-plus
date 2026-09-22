@@ -51,6 +51,9 @@ The first public release.
   is named in the draft; that day's settings become inputs; a result the run
   only stated becomes a check to perform; questions go into Open questions;
   the agent no longer splits candidates.
+- The README leads with what you typed and what your agent drafted from it, a
+  banner, a quick start of three commands, a first-skill tour, and the measured
+  numbers with their weak rows. Commands and settings moved to docs/usage.md.
 - Install from the review page: a finished draft goes into its project's
   `.claude/skills/` (commit it to share it) or into your own skills folder,
   replaces its earlier install after a revision, and uninstalls only the files
