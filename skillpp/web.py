@@ -574,6 +574,7 @@ def _downloaded_at(config: Config, entry_id: str, skill_md: Path) -> str:
 
 def list_drafts(config: Config) -> list[dict]:
     """Every finished draft, with the SKILL.md text to review."""
+    from datetime import datetime, timezone
     drafts = []
     for entry in Ledger(config).all():
         state = row_state(config, entry)
@@ -594,8 +595,13 @@ def list_drafts(config: Config) -> list[dict]:
             "revising": state["state"] == "revising",
             "message": state.get("message", ""),
             "downloaded_at": _downloaded_at(config, entry.id, skill_md),
+            # When SKILL.md was last written, by the draft or a revision. Drafts
+            # are listed newest first: the one just asked for is the one looked
+            # for, and a name alone did not tell drafts apart.
+            "drafted_at": datetime.fromtimestamp(
+                skill_md.stat().st_mtime, timezone.utc).isoformat(),
         })
-    drafts.sort(key=lambda d: d["name"].lower())
+    drafts.sort(key=lambda d: d["drafted_at"], reverse=True)
     return drafts
 
 
@@ -1023,7 +1029,9 @@ PAGE = r"""<!doctype html>
  .draft .row{margin:0;border:0;background:none;cursor:pointer}
  .chev{color:var(--muted);font:12px var(--mono);width:12px;transition:transform .15s}
  .draft.open .chev{transform:rotate(90deg)}
- .draft .desc{padding:0 16px 12px 44px;color:var(--dim);font-size:12.5px;margin:0}
+ .draft .desc{padding:0 16px 4px 44px;color:var(--dim);font-size:12.5px;margin:0}
+ .draft .from{padding:0 16px 12px 44px;color:var(--muted);font-size:12px;margin:0}
+ .draft .ago{color:var(--muted);font-size:12px;white-space:nowrap}
  .draft .body{display:none;border-top:1px solid var(--line);padding:14px 16px}
  .draft.open .body{display:block}
  .md{color:#cbd2e1;font-size:13.5px;line-height:1.6;max-width:760px}
@@ -1267,11 +1275,13 @@ function renderDrafts(list){
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
         <span class="badge ${d.downloaded_at ? "downloaded" : "review"}">${d.downloaded_at ? "Downloaded" : "To review"}</span>
+        <span class="ago" title="${esc(when(d.drafted_at))}">${d.revising ? "revising" : "drafted " + ago(d.drafted_at)}</span>
         <span class="acts">${d.questions.length
           ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
           : `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">${d.downloaded_at ? "Download again" : "Download skill"}</a>`}</span>
       </div>
       <p class="desc">${esc(d.description)}</p>
+      <p class="from">From candidate: ${esc(d.title)}</p>
       <div class="body">
         <p class="files">${d.files.map(esc).join(" · ")}</p>
         ${questionsBlock(d)}
@@ -1365,6 +1375,17 @@ function requestItem(r, g, i){
 // Where the work actually happened. The session id is the link: clicking it
 // reads Claude Code's own transcript and shows the conversation, because the
 // candidate only keeps the turns of the run that created it.
+// "drafted 5 min ago": enough to find the draft just asked for.
+function ago(iso){
+  const s = (Date.now() - new Date(iso)) / 1000;
+  if(isNaN(s)) return "";
+  if(s < 60) return "just now";
+  if(s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if(s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  const days = Math.floor(s / 86400);
+  return days === 1 ? "yesterday" : `${days} days ago`;
+}
+
 function when(iso){
   if(!iso) return "";
   const d = new Date(iso);

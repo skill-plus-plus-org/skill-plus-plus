@@ -3862,6 +3862,18 @@ class TestWeb(TempRoot):
         self.assertEqual(drafts[0]["files"], ["SKILL.md", "references/notes.md"],
                          "status.json is the page's bookkeeping, not the skill")
 
+    def test_drafts_are_listed_newest_first_with_when_they_were_written(self):
+        """Told apart by when, not only by name: the draft just asked for is
+        the one being looked for."""
+        import os
+        from skillpp.web import collect_state
+        self._drafted("old", name="zz-older")
+        self._drafted("new", name="aa-newer")
+        os.utime(self.config.root / "drafts" / "old" / "SKILL.md", (1_000_000, 1_000_000))
+        drafts = collect_state(self.config)["drafts"]
+        self.assertEqual([d["id"] for d in drafts], ["new", "old"])
+        self.assertEqual(drafts[1]["drafted_at"], "1970-01-12T13:46:40+00:00")
+
     def test_a_draft_downloads_as_a_folder_ready_for_the_skills_directory(self):
         import io, zipfile
         from skillpp.web import draft_zip
