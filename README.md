@@ -1,4 +1,4 @@
-# Skill++ (Skill Plus Plus)
+# Skill Plus Plus
 
 **Spot the work you keep repeating with Claude Code, and turn it into skills you review.**
 
@@ -8,7 +8,7 @@ its tests, turning a document into a talk, adding an eval case. An agent skill
 time, but almost nobody writes them: by the time a procedure is worth a skill,
 you have done it three times and moved on.
 
-Skill++ finds those procedures for you. It watches your Claude Code sessions,
+skillpp finds those procedures for you. It watches your Claude Code sessions,
 notices when you repeat the same kind of work, and shows it to you as a
 candidate. Promote one, and your own agent drafts the skill from what you
 actually did. Nothing is installed without you.
@@ -30,7 +30,7 @@ commit it to your repo's `.claude/skills/` so everyone working in it gets it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/how-it-works-dark.svg">
-  <img alt="How Skill++ works: 1, capture while you work: hooks, scrub, session buffer. 2, fold in the background after the session: cut, segment, extract, match. 3, review and draft when you choose: ledger, review page, Draft Skill, you." src="docs/images/how-it-works-light.svg">
+  <img alt="How skillpp works: 1, capture while you work: hooks, scrub, session buffer. 2, fold in the background after the session: cut, segment, extract, match. 3, review and draft when you choose: ledger, review page, Draft Skill, you." src="docs/images/how-it-works-light.svg">
 </picture>
 
 1. **Capture.** While you work, hooks record your prompts, the tools that ran,
@@ -101,7 +101,7 @@ skillpp promote <id> --skill-path ~/.claude/skills/<name>/SKILL.md
 
 `skillpp web` serves a page on `127.0.0.1:8765` that only this machine can reach.
 
-- **Candidates** lists what Skill++ saw you repeat, most-seen first, with a
+- **Candidates** lists what skillpp saw you repeat, most-seen first, with a
   summary and the steps grouped under the requests they served. Promote or
   dismiss what reached three; **Draft Skill** a promoted one.
 - **Drafts** shows each finished draft rendered, with its open questions. A draft
@@ -147,7 +147,7 @@ All settings are environment variables.
 
 ## Privacy
 
-Everything Skill++ captures stays in `~/.claude/skillpp/` on your machine, and
+Everything skillpp captures stays in `~/.claude/skillpp/` on your machine, and
 the local models run there too. Prompts, tool inputs (up to 2,000 characters
 each), the start of each tool result and the agent's replies are stored after
 scrubbing keys, tokens, connection strings and email addresses. Names, phone
