@@ -56,9 +56,13 @@ read the whole run, so you can name it better, and it is cheap.
 the workaround, not the incident that prompted it. Ask what a colleague would
 call this if they had to find it again in six months.
 
-**The description decides whether the skill ever fires.** It is the only thing
-read when choosing what to load, so write the trigger, not a summary: *when* does
-someone need this? 200 characters, hard limit.
+**The description decides whether the skill ever fires.** The field is called
+`description` because the skill format names it so, but it works as a trigger:
+it is the only thing read when choosing what to load. So start it with
+**"Use when"** and say *when* someone needs this, not what the skill does:
+"Use when turning a source document into a short social post that must stay
+accurate to it", not "Turns a notes file into a LinkedIn post". 200 characters,
+hard limit.
 
 ## 3. Write the body
 
@@ -104,6 +108,13 @@ under `## Open questions`.
 **A result the reply states is not a check that ran.** Where the agent reported
 something with no tool call behind it — a word count, "tests pass" — write the
 step as a check to perform, and how.
+
+**Nothing from the run by name, anywhere in the draft.** No paths, file or
+folder names, hosts, people or project names from the session, not even in
+`## Open questions`. A skill is shared; the run's paths are one developer's
+machine. Refer to them by role: "the output folder the user named", "the
+source document". Ask about a location as "where should the file go by
+default?", not by quoting where it went.
 
 Do not paste the shell back in. If the conversation is too thin to write a
 procedure from — the replies are short and the work happened entirely in tool
