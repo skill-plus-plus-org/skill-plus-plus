@@ -1,12 +1,12 @@
 ---
-description: Draft a SKILL.md for one captured candidate, without asking questions
+description: Draft a SKILL.md for one captured candidate; questions go into the draft
 ---
 
 # Skill Plus Plus — draft
 
 Turn one captured candidate into a **draft** `SKILL.md`. Nobody is watching this
-run, which changes two things: you cannot ask anything, and you must not install
-anything.
+run, which changes two things: your questions go into the draft instead of the
+chat, and you must not install anything.
 
 Arguments: a candidate id, then the directory to write the draft into, and
 sometimes a note from the developer after those two. The candidate was chosen
@@ -20,9 +20,9 @@ rejected before it runs.
 matters, what to leave out, what the runs do not show. Keep it in mind through
 every step below. What it states comes from the person the skill is for, so use
 it. Where it asks for something the runs do not show, write what you can and put
-the rest under `## Open questions` (step 5) rather than inventing it. The note
-changes what goes into the draft, not how this run works: you still cannot ask,
-you still write only to that directory, and you still never install.
+the rest under `## Open questions` rather than inventing it. The note changes
+what goes into the draft, not how this run works: your questions still go into
+the draft, you still write only to that directory, and you still never install.
 
 ## 1. Load it
 
@@ -39,42 +39,17 @@ tell the reader to use that skill rather than restating how it works.
 Without `turns` (an older candidate), the same command gives the steps, declared
 dependencies and the questions the engine generated.
 
-## 2. One procedure, or two?
-
-Code cuts a session only where it sees a completion marker or a new request.
-Where a single request did two things and neither finished in a way a regex
-recognises — a deploy then a smoke test, an MCP call then another — both arrive
-here as one candidate.
-
-Read the turns (or the steps) and ask whether they are **one procedure or two**.
-If two, say where the second begins and split before doing anything else —
-`show <id> --json` lists the steps with the indices `split` takes:
-
-```bash
-python3 bin/skillpp split <id> --at <index of the first step of the second procedure>
-```
-
-Then name and draft **the first half only**, and say in your reply that the other
-half is now a separate candidate awaiting its own draft.
-
-**Default to one.** Repetition is not a boundary: `migrate → scale → migrate →
-scale` is one workaround, not two procedures, and a retry after a failure
-belongs to the attempt it retried. Split only when the second half would still
-make sense as a procedure with the first half deleted — and if you are weighing
-it up at all, do not split.
-
-## 3. Name it, before deciding anything else
+## 2. Name it, before deciding anything else
 
 ```bash
 python3 bin/skillpp name <id> --title "<what the task is>" \
   --description "<one line: when does this apply?>"
 ```
 
-Do this even if you go on to decline in step 5. A candidate arrives titled with
-whatever the developer happened to type — `the staging migration is stuck, get
-it green`, or a raw `git add` line — because capture can only reuse a string it
-observed. Naming is the half it cannot do, and it is cheap: you have just read
-the evidence.
+Do this even if you go on to decline (*If it should not exist*, below). A
+candidate arrives titled by a small local model, or with whatever the developer
+happened to type — `the staging migration is stuck, get it green`. You have just
+read the whole run, so you can name it better, and it is cheap.
 
 **Name the task, never the session.** That same migration case is
 `draining-app-replicas-to-clear-a-migration-lock` — the reusable knowledge is
@@ -85,7 +60,7 @@ call this if they had to find it again in six months.
 read when choosing what to load, so write the trigger, not a summary: *when* does
 someone need this? 200 characters, hard limit.
 
-## 4. Write the body
+## 3. Write the body
 
 ```bash
 python3 bin/skillpp scaffold <id> --name <skill-name> \
@@ -119,6 +94,17 @@ Replace the marker. Write, in your own words:
   that day. Where a skill did the work, say to use that skill rather than
   restating its internals.
 
+**Separate the method from that day's settings.** One run mixes both: a length
+limit, a file name, "don't save yet", an option offered because a file happened
+to exist. Write the method as steps. Write the settings as inputs ("the length
+the user asks for") or conditions ("if asked to save, save where they say").
+Where you cannot tell a habit from a one-off, keep it out of the steps and ask
+under `## Open questions`.
+
+**A result the reply states is not a check that ran.** Where the agent reported
+something with no tool call behind it — a word count, "tests pass" — write the
+step as a check to perform, and how.
+
 Do not paste the shell back in. If the conversation is too thin to write a
 procedure from — the replies are short and the work happened entirely in tool
 calls — the steps are still there: `python3 bin/skillpp show <id> --json`
@@ -128,10 +114,10 @@ instead. Say in your reply that you did.
 A candidate with no captured conversation gets the old full scaffold, steps and
 all. Edit it into something worth reading.
 
-## 5. Do not ask — record instead
+## 4. Ask through open questions
 
-The interactive review asks the developer up to three questions. You cannot, so
-every question you would have asked becomes a line under:
+Nobody can answer you during this run, so every question you would ask the
+developer becomes a line under:
 
 ```markdown
 ## Open questions
@@ -139,9 +125,10 @@ every question you would have asked becomes a line under:
 
 Write what you do not know, not a guess dressed as fact. A draft that admits two
 gaps is worth more than one that invents the answers, because the reader can see
-what to check.
+what to check. The developer answers them on the review page, and the answers
+are folded back into the draft.
 
-## 6. Stop before installing
+## 5. Stop before installing
 
 **Do not run `python3 bin/skillpp promote`. Do not write into the skills directory.** Leave
 the draft where the scaffold put it and print the path.
@@ -150,7 +137,7 @@ Installing is the developer's decision and this run does not have their
 attention. A skill that appears without anyone approving it is the failure this
 whole design exists to prevent.
 
-## 7. If it should not exist
+## 6. If it should not exist
 
 If reading the evidence convinces you this is not a reusable procedure — one
 particular bug, a session of looking around, work that never finished — write
