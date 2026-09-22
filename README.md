@@ -13,30 +13,27 @@ model is only asked to write, and only when you press **Draft Skill**.
 
 ## How it works
 
-```mermaid
-flowchart LR
-  A[Claude Code hooks] --> B[session buffer<br/>scrubbed on write]
-  B -->|session ends| C[local model<br/>cuts it into tasks]
-  C --> D[embeddings<br/>same procedure as before?]
-  D --> E[ledger<br/>candidates and counts]
-  E --> F[review page<br/>promote or dismiss]
-  F -->|Draft Skill| G[your agent<br/>writes SKILL.md]
-  G --> H[you answer its open questions,<br/>then download the skill]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/how-it-works-dark.svg">
+  <img alt="How skillpp works: 1, capture while you work: hooks, scrub, session buffer. 2, fold in the background after the session: cut, segment, extract, match. 3, review and draft when you choose: ledger, review page, Draft Skill, you." src="docs/images/how-it-works-light.svg">
+</picture>
 
-1. **Capture.** Four hooks record your prompts, the tools that ran, and the
-   agent's replies. Secrets, tokens and emails are scrubbed before anything is
-   written.
-2. **Cut into tasks.** When a session ends, a detached worker asks a local model,
-   at each point where you typed something, whether a new task started there.
-3. **Recognise repeats.** Each task is compared with what is already in the
-   ledger. Seen three times, it becomes a candidate you can promote.
-4. **Draft.** On the review page, **Draft Skill** hands the candidate's first run
-   to your own agent (`claude -p` by default). You can add a note on what to look
-   out for. The agent writes the procedure in its own words, and anything it
-   could not tell from the run becomes an open question for you.
-5. **Review.** Answer the open questions, revise if needed, then download the
-   skill as a zip and unzip it into your skills folder.
+1. **Capture.** While you work, hooks record your prompts, the tools that ran,
+   and the agent's replies into one file per session. Secrets, tokens and
+   emails are scrubbed before anything is written. When the session ends, it is
+   handed on; a session that could not be (the app was quit, say) is picked up
+   the next time one starts.
+2. **Fold.** A background worker asks a local model, at each point where you
+   typed something, whether a new task started there, and splits the session
+   into tasks. Each task is compared with what the ledger already holds: the
+   same procedure again adds to its count, anything else becomes a new
+   candidate.
+3. **Review and draft.** Seen three times, a candidate is ready on the review
+   page, where you promote or dismiss it. **Draft Skill** hands its first run to
+   your own agent (`claude -p` by default), with a note from you if you like.
+   The agent writes the procedure in its own words, and anything it could not
+   tell from the run becomes an open question. Answer them, revise if needed,
+   then download the skill and unzip it into your skills folder.
 
 ## Requirements
 
