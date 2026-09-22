@@ -23,8 +23,14 @@ result, and the numbers on them will differ.
   real boundaries, so a judge answering "no" everywhere also scores 19 of 21:
   the set cannot tell a better judge from a lucky one.
 - **The default judge is `gemma4:e4b` since 2026-09-22**, with thinking off;
-  the numbers above were measured on `gemma3n:e4b`, the previous default. The
-  public sessions are the first set scored on gemma4 from the start.
+  the numbers above were measured on `gemma3n:e4b`, the previous default.
+- **On the public sessions** (22, `tests/fixtures/sessions/`, gemma4): 19 of 22
+  right, 6 of 9 real task switches caught, 0 false cuts over 77 prompts. The
+  three misses are switches between code tasks. Merging: 0 wrong merges; pairs
+  with identical prompts or the same goal merge (3/3 for code, 3/3 for
+  knowledge work); on different subjects, 12/12 for knowledge work but 1/23 for
+  code. Unlike the private set, these have 9 real switches, so a judge that
+  always says "no" would score 15 of 22.
 - **The reply tail, measured and not adopted.** `gemma4:e4b`, shown the last
   400 characters of the agent's reply before the gap, scored 20 of 21 with no
   false cuts. With thinking on, it caught both real boundaries but cut three

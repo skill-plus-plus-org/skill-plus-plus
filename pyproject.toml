@@ -8,6 +8,7 @@ dynamic = ["version"]
 description = "Turn the work you keep repeating with Claude Code into reviewed skills."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
 # Standard library only, at runtime and in the tests.
 dependencies = []
 keywords = ["claude-code", "agent-skills", "skills", "ollama", "developer-tools"]
@@ -15,6 +16,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",

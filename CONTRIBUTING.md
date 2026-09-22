@@ -72,7 +72,9 @@ python3 tests/benchmarks/judge_replay.py -v     # the judge alone, gap by gap
 ```
 
 Change one thing at a time, and compare against the baseline recorded in the
-set's `expected.json`. For merging, a wrong merge counts for more than a missed
+set's `expected.json`. Three sessions are recorded as known gaps
+(`expected_fail`); the suite fails when one of them starts passing, so a fix is
+noticed, and the fixture's truth and note are then updated. For merging, a wrong merge counts for more than a missed
 one: a missed merge leaves a duplicate you can see, a wrong one mixes two
 procedures into one skill. Write what you measured into
 [docs/research/benchmarks.md](docs/research/benchmarks.md), including what
@@ -84,10 +86,41 @@ improved. Recorded sessions are.
 
 ## Adding a recorded session
 
-[tests/fixtures/sessions/RECORDING.md](tests/fixtures/sessions/RECORDING.md)
-has the kit used for the public set, and the fixtures README the format. Only
-public work goes in this repo, and the ground truth is written before the
-pipeline is run over it.
+The public set is recorded from a plan fixed in advance,
+[tests/fixtures/sessions/catalogue.json](tests/fixtures/sessions/catalogue.json):
+every prompt, where each new task starts, and the family of every task.
+[RECORDING.md](tests/fixtures/sessions/RECORDING.md) is the kit you type from.
+
+```bash
+tests/fixtures/sessions/recording/setup.sh C-F1          # one session's folder
+python3 tests/fixtures/sessions/from_transcript.py --all-sessions
+python3 tests/benchmarks/judge_replay.py --write          # the judge's verdicts (Ollama)
+python3 tests/fixtures/sessions/score.py                  # detection, per check
+python3 tests/fixtures/sessions/recurrence.py             # merging, per level
+```
+
+To test something new, add a session to the catalogue first, with its truth,
+then record it. Only public work goes in this repo, and the ground truth is
+written before the pipeline is run over it. The fixtures README describes the
+format.
+
+## Changing the draft prompt
+
+A change to `skillpp/commands/skillpp-draft.md` is checked on four recorded
+sessions. Drafting and judging are Claude calls, so this is not in the unit
+suite:
+
+```bash
+python3 tests/benchmarks/draft_check.py prepare draft.code.feature   # and the other three
+# run the `skillpp … draft … --apply` line it prints
+python3 tests/benchmarks/draft_check.py judge
+python3 tests/benchmarks/draft_check.py check
+```
+
+Fixed rules check form (name, trigger description, nothing from the run
+leaked). A Claude judge answers the method questions in
+`tests/fixtures/sessions/draft_cases.json`, and a yes counts only with a quote
+found in the draft. Compare against the previous run of the same four cases.
 
 ## Pull requests
 

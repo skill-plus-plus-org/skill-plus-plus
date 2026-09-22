@@ -153,16 +153,25 @@ stored where.
   by the chat, and nothing links one chat to the next.
 - **Two tasks with no prompt between them look like one.** The judge only looks
   where you typed something.
-- **A review request can be cut off as a new task** ("Two things. Check every
-  command…"), which splits one procedure into two candidates.
+- **A switch between two coding tasks can be missed**, and the two then become
+  one candidate. On the public sessions the judge caught 6 of 9 task switches;
+  all three misses were between code tasks: one announced, one not, and a
+  second feature right after the first. It cut nothing wrongly: 0 false cuts
+  over 77 prompts, reviews, corrections and side questions included.
 - **Matching is strict on purpose.** A wrong merge would mix two procedures into
-  one skill, so similar work on different material sometimes stays separate.
+  one skill, so it prefers leaving a duplicate. On the public sessions: 0 wrong
+  merges; repeats with the same prompts or the same goal merge; knowledge work
+  on different material merges; but the same coding procedure on a different
+  feature mostly stays separate (1 of 23 pairs merged).
 - **A draft reads one run**, the first. Use the note on **Draft Skill** to tell
   the agent what the later runs taught you.
-- Capture works in the Claude Code CLI. The draft agent defaults to Claude Code
-  too, but any agent CLI can be set with `SKILLPP_AGENT`.
+- Capture works in the Claude Code CLI and the Code tab of the desktop app. The
+  draft agent defaults to Claude Code too, but any agent CLI can be set with
+  `SKILLPP_AGENT`.
 
-The measurements behind these are in [docs/research/](docs/research/).
+The public sessions behind these numbers, and how to reproduce them, are in
+[tests/fixtures/sessions/](tests/fixtures/sessions/); earlier measurements are in
+[docs/research/](docs/research/).
 
 ## Documentation
 

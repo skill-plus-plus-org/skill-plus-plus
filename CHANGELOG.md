@@ -31,3 +31,18 @@ The first public release.
 - `install` copies all three slash commands, and `--remove` takes them out again.
 - More git commands that discard uncommitted work count as destructive.
 - The test suite needs no model and runs in about ten seconds.
+- The local judge is `gemma4:e4b`, with thinking off.
+- Public test sessions: 22 recorded from a fixed catalogue, code and knowledge
+  work, with a detection report per check and a merging report by how alike
+  the runs are. The baseline is in `tests/fixtures/sessions/expected.json`.
+- A draft check: four recorded sessions drafted, checked for form by fixed
+  rules and for their method by a Claude judge whose answers must quote the
+  draft.
+- The draft prompt: descriptions start with "Use when"; nothing from the run
+  is named in the draft; that day's settings become inputs; a result the run
+  only stated becomes a check to perform; questions go into Open questions;
+  the agent no longer splits candidates.
+- The review page shows when each draft was written, lists the newest first,
+  and marks drafts written since you last looked.
+- A description's dashes and accents are kept, instead of reaching the review
+  page as `\u2014`.
