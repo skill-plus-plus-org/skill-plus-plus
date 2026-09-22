@@ -948,6 +948,10 @@ PAGE = r"""<!doctype html>
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
  .cand.ready{border-left:3px solid #fbbf24;background:linear-gradient(90deg,rgba(251,191,36,.07),var(--panel) 40%)}
  .cand.accepted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
+ .new{font:600 10.5px var(--mono);color:var(--go);white-space:nowrap}
+ .new::before{content:"\25CF";margin-right:4px}
+ nav .new{margin-left:6px}
+ .draft.fresh{border-color:var(--goline)}
  .badge{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;
    border-radius:4px;white-space:nowrap;border:1px solid}
  .badge.ready{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.1)}
@@ -1151,10 +1155,40 @@ async function startDraft(id){
   } finally { busy.delete(id); await load(); }
 }
 
+// Which drafts this viewer has looked at, per version: a finished revision is
+// news again. Kept in the browser, because it is one viewer's attention and
+// nothing the ledger needs. On a first visit what already exists is not news.
+const SEEN_KEY = "skillpp.seen-drafts";
+let seen = null;
+const stamp = iso => Date.parse(iso) || 0;
+function saveSeen(){ try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch(e){} }
+function syncSeen(){
+  if(seen) return;
+  try { seen = JSON.parse(localStorage.getItem(SEEN_KEY)); } catch(e){ seen = null; }
+  if(seen && seen.cards) return;
+  seen = {cards: {}, tab: 0};
+  S.drafts.forEach(d => { seen.cards[d.id] = d.drafted_at; seen.tab = Math.max(seen.tab, stamp(d.drafted_at)); });
+  saveSeen();
+}
+const isNew = d => !d.revising && seen && seen.cards[d.id] !== d.drafted_at;
+const newSinceTab = () => S.drafts.filter(d => isNew(d) && stamp(d.drafted_at) > seen.tab).length;
+function markTabSeen(){
+  const top = Math.max(seen.tab, ...S.drafts.map(d => stamp(d.drafted_at)));
+  if(top !== seen.tab){ seen.tab = top; saveSeen(); }
+}
+function markCardSeen(id){
+  const d = S.drafts.find(x => x.id === id);
+  if(d && seen.cards[id] !== d.drafted_at){ seen.cards[id] = d.drafted_at; saveSeen(); }
+}
+
 function renderNav(){
   const nav = document.getElementById("nav");
   nav.innerHTML = [["candidates","Candidates",S.rows.filter(r => !inDrafts(r)).length],["drafts","Drafts",S.drafts.length]]
-    .map(([k,l,n]) => `<button data-view="${k}" aria-selected="${view===k}">${l} (${n})</button>`).join("");
+    .map(([k,l,n]) => {
+      const fresh = k === "drafts" ? newSinceTab() : 0;
+      return `<button data-view="${k}" aria-selected="${view===k}">${l} (${n})${fresh
+        ? `<span class="new" title="${fresh} new draft${fresh===1?"":"s"} since you last looked">${fresh} new</span>` : ""}</button>`;
+    }).join("");
   nav.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { view = b.dataset.view; render(); });
 }
 
@@ -1270,10 +1304,11 @@ function reviseBlock(d){
 }
 
 function renderDrafts(list){
-  const card = d => `<div class="draft ${d.downloaded_at ? "downloaded" : "review"} ${open.has(d.id)?"open":""}">
+  const card = d => `<div class="draft ${d.downloaded_at ? "downloaded" : "review"} ${open.has(d.id)?"open":""} ${isNew(d)?"fresh":""}">
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
+        ${isNew(d) ? `<span class="new" title="Written since you last opened it">New</span>` : ""}
         <span class="badge ${d.downloaded_at ? "downloaded" : "review"}">${d.downloaded_at ? "Downloaded" : "To review"}</span>
         <span class="ago" title="${esc(when(d.drafted_at))}">${d.revising ? "revising" : "drafted " + ago(d.drafted_at)}</span>
         <span class="acts">${d.questions.length
@@ -1331,6 +1366,9 @@ function renderDrafts(list){
     const id = h.dataset.toggle;
     open.has(id) ? open.delete(id) : open.add(id);
     h.parentElement.classList.toggle("open");
+    markCardSeen(id);
+    h.parentElement.classList.remove("fresh");
+    h.querySelector(".new")?.remove();
   });
 }
 
@@ -1440,6 +1478,8 @@ async function fetchSummary(id){
 // list, which took the cursor out of whatever box was being typed in — a note
 // for the next draft, an answer, a revision. Put it back where it was.
 function render(){
+  syncSeen();
+  if(view === "drafts") markTabSeen();
   const t = document.activeElement;
   const typing = t && t.tagName === "TEXTAREA" ? {
     at: [...t.attributes].filter(a => a.name.startsWith("data-"))
@@ -1513,7 +1553,7 @@ function paint(){
     render();
   });
   list.querySelectorAll("[data-goto]").forEach(a => a.onclick = () => {
-    view = "drafts"; open.add(a.dataset.goto); render();
+    view = "drafts"; open.add(a.dataset.goto); markCardSeen(a.dataset.goto); render();
   });
 }
 
