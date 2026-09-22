@@ -86,7 +86,8 @@ reinstated).
 ### Shortcuts
 
 - **`/skillpp-keep`** in a session, or `skillpp keep`, saves the work so far as a
-  candidate without ending the session. It is the shortest way to a first skill.
+  candidate without ending the session. *Work in progress: how it works may
+  change.*
 - **`/skillpp-new`**, or `skillpp dictate`, describes a procedure instead of
   performing it. Dictated candidates skip the three-times rule.
 - **`SKILLPP_RECURRENCE=1`** makes every candidate ready at once.

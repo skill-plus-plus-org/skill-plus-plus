@@ -1743,8 +1743,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_merge)
 
     p = sub.add_parser("keep",
-                       help="save the work so far as a candidate, without "
-                            "ending the session")
+                       help="(work in progress) save the work so far as a "
+                            "candidate, without ending the session")
     p.add_argument("--session-id", help="which session; defaults to the newest")
     p.set_defaults(func=cmd_keep)
 

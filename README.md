@@ -75,10 +75,10 @@ usual, then open the review page:
 skillpp web
 ```
 
-**A first skill without waiting for three repeats:** run `/skillpp-keep` in a
-session (or `skillpp keep`) to save the work so far as a candidate, then
-`skillpp draft <id> --apply`. `SKILLPP_RECURRENCE=1` makes every candidate ready
-at once.
+**A first skill without waiting for three repeats** (work in progress): run
+`/skillpp-keep` in a session (or `skillpp keep`) to save the work so far as a
+candidate, then `skillpp draft <id> --apply`. `SKILLPP_RECURRENCE=1` makes every
+candidate ready at once.
 
 **Install options.** Without `--apply`, `install` only shows what it would do,
 downloads included. `--user` instead of `--project` captures every project;
@@ -117,7 +117,7 @@ edits settings or spends a model call is a dry run until you add `--apply`.
 | Setting up | `install`, `doctor` |
 | Reviewing | `web`, `review`, `show`, `search`, `stats` |
 | Deciding | `promote`, `dismiss`, `reopen`, `ignored` |
-| Drafting | `draft`, `revise`, `name`, `scaffold`, `keep`, `dictate` |
+| Drafting | `draft`, `revise`, `name`, `scaffold`, `keep` (work in progress), `dictate` |
 | Fixing candidates | `split`, `merge`, `retitle`, `sift` |
 | Skills you have | `lifecycle`, `tier`, `check`, `reconcile`, `bundle`, `expire`, `accuracy` |
 | Internal (run by the hooks) | `hook`, `fold-session`, `fold-pending` |

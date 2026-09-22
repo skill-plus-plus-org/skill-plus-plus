@@ -1,5 +1,5 @@
 ---
-description: Save the work just done as a skill candidate, without ending the session
+description: (Work in progress) Save the work just done as a skill candidate, without ending the session
 ---
 
 # Skill Plus Plus — keep
