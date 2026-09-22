@@ -82,6 +82,19 @@ def find(tag: str) -> Path:
     return matches[0]
 
 
+def started(path: Path) -> str:
+    """When the session began: `recurrence.py` folds sessions in this order."""
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                stamp = json.loads(line).get("timestamp")
+            except ValueError:
+                continue
+            if stamp:
+                return stamp
+    return ""
+
+
 def extract(path: Path) -> list[dict]:
     rows = [_template(json.loads(line)) for line in path.open(errors="ignore")
             if line.strip()]
@@ -195,7 +208,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--must-contain", action="append", default=[])
     args = ap.parse_args(argv)
 
-    steps = extract(find(args.tag))
+    transcript = find(args.tag)
+    steps = extract(transcript)
     blob = json.dumps(steps)
     hits = SECRETS.findall(blob)
     if hits:
@@ -216,6 +230,7 @@ def main(argv: list[str]) -> int:
         "tag": args.tag[:8],
         "name": args.name,
         "captured": __import__("datetime").date.today().isoformat(),
+        "started": started(transcript),
         "procedure": "",
         "truth": {"episodes": args.episodes, "markers": args.markers,
                   "title": args.title, "must_contain": args.must_contain},

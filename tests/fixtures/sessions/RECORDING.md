@@ -76,16 +76,19 @@ else supplies runs of this family, so all three are needed. Family
 
 ### C. Two tasks in one chat, said out loud (CLI)
 
-Two episodes. The task changes at prompt 2. Families `write-makefile`,
-`write-gitignore`.
+Two tasks; the task changes at prompt 2. Family `write-makefile`, and
+`write-gitignore` if the second task takes two or more steps: a one-step task is
+not banked (`truth.episodes` counts candidates banked), but the cut is still
+scored.
 
 1. `Create a Makefile for a Python project in this folder with the targets test and clean.`
 2. `Separate job: write a .gitignore for a Python project.`
 
 ### D. Two tasks in one chat, not said (CLI)
 
-Two episodes. The task changes at prompt 3. Families `add-function-with-tests`,
-`write-haiku`. The first task is the third run of family A.
+Two tasks; the task changes at prompt 3. Family `add-function-with-tests`, and
+`write-haiku` under the same two-step rule as C. The first task is the third
+run of family A.
 
 1. `Create is_palindrome.py with a function is_palindrome(text) that ignores case and spaces. Add test_is_palindrome.py with unittest tests, then run them.`
 2. `Add a docstring with two examples to is_palindrome.`
@@ -133,11 +136,14 @@ Each file name is the session tag. Build a fixture from each with
 `truth.boundary_after` from the table below, and run `score.py` and
 `recurrence.py` to record the first baseline in `expected.json`.
 
+The C and D rows are as recorded: in both, the second task was a single
+`Write`.
+
 | session | where | episodes | boundary at prompt | families |
 | --- | --- | --- | --- | --- |
 | A1, A2 | CLI, Desktop | 1 each | | `add-function-with-tests` |
 | B1, B2, B3 | Desktop, CLI, Desktop | 1 each | | `write-linkedin-post` |
-| C | CLI | 2 | 2 | `write-makefile`, `write-gitignore` |
-| D | CLI | 2 | 3 | `add-function-with-tests`, `write-haiku` |
-| E | Desktop | 1 | | `write-checklist` |
+| C | CLI | 1 banked (2 tasks) | 2 | `write-makefile` |
+| D | CLI | 1 banked (2 tasks) | 3 | `add-function-with-tests` |
+| E | Desktop | 1 | none (pinned) | `write-checklist` |
 | F | Desktop | 0 | | |
