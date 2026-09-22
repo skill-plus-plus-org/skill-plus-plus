@@ -216,22 +216,50 @@ def find_concept(steps: list[str], spec: dict, found: dict[str, int | None]) -> 
     return None
 
 
-def case_checks(text: str, case: dict, hedge: str) -> list[dict]:
+def _norm(s: str) -> str:
+    """For finding a quoted line: no markdown emphasis or code ticks, one space."""
+    return " ".join(re.sub(r"[*`_]", "", s).lower().split())
+
+
+def judged_rows(text: str, case: dict, answers: list[dict]) -> list[dict]:
+    """The judge's answers as rows. A yes counts only with a quote that is
+    really in the draft: an answer the judge cannot point at is not evidence."""
+    by_id = {a.get("id"): a for a in answers if isinstance(a, dict)}
+    draft = _norm(text)
+    out = []
+    for q in case.get("judge", []):
+        a = by_id.get(q["id"]) or {}
+        quote = str(a.get("quote") or "").strip()
+        yes = str(a.get("answer", "")).lower() == "yes"
+        if not a:
+            out.append(result(q["id"], q["question"][:38], False, "not answered"))
+        elif yes and not (quote and _norm(quote) in draft):
+            out.append(result(q["id"], q["question"][:38], False, f"quote not in draft: {quote}"))
+        else:
+            out.append(result(q["id"], q["question"][:38], yes, quote or "no"))
+    return out
+
+
+def case_checks(text: str, case: dict, hedge: str, judged: list[dict] | None = None) -> list[dict]:
     out = []
     steps = procedure_steps(text)
     body = without_questions(text)
     found: dict[str, int | None] = {}
-    for cid, spec in case.get("concepts", {}).items():
+    # What the method is and in what order is meaning, which the judge reads;
+    # the word lists below stand in only where it has not run.
+    if judged is not None:
+        out += judged_rows(text, case, judged)
+    for cid, spec in ({} if judged is not None else case.get("concepts", {})).items():
         found[cid] = n = find_concept(steps, spec, found)
         out.append(result(cid, spec["label"], n is not None,
                           f"step {n}: {steps[n - 1].splitlines()[0]}" if n else "not found"))
 
-    for a, op, b in case.get("order", []):
+    for a, op, b in ([] if judged is not None else case.get("order", [])):
         na, nb = found.get(a), found.get(b)
         ok = na is not None and nb is not None and (na < nb if op == "<" else na <= nb)
         out.append(result(f"order {a}{op}{b}", "step order", ok, f"{a} at {na}, {b} at {nb}"))
 
-    for spec in case.get("absent", []):
+    for spec in ([] if judged is not None else case.get("absent", [])):
         hits = [s for s in sentences(body) if re.search(spec["pattern"], s, re.I)
                 and not NEGATED.search(s)]
         out.append(result(spec["id"], spec["label"], not hits, hits[0] if hits else ""))
@@ -247,7 +275,7 @@ def case_checks(text: str, case: dict, hedge: str) -> list[dict]:
     named = [t for t in case.get("meta_forbid", []) if t.lower() in meta]
     out.append(result("meta", "about the procedure, not this run", not named, ", ".join(named)))
 
-    if case.get("body_limit"):
+    if case.get("body_limit") and judged is None:
         lim = case["body_limit"]
         hits = [s for s in sentences(body) if re.search(lim["pattern"], s, re.I)]
         loose = [s for s in hits if not re.search(hedge, s, re.I)]
@@ -257,8 +285,58 @@ def case_checks(text: str, case: dict, hedge: str) -> list[dict]:
 
 
 def evaluate(text: str, log: str, entry_id: str, fixture: dict | None,
-             case: dict, hedge: str) -> list[dict]:
-    return general_checks(text, log, entry_id, fixture) + case_checks(text, case, hedge)
+             case: dict, hedge: str, judged: list[dict] | None = None) -> list[dict]:
+    return general_checks(text, log, entry_id, fixture) + case_checks(text, case, hedge, judged)
+
+
+# -- the judge -------------------------------------------------------------
+
+def judge_prompt(text: str, case: dict, data: dict) -> str:
+    questions = "\n".join(f"{q['id']}: {q['question']}" for q in case["judge"])
+    return f"{data['judge_prompt']}\n\nQuestions:\n{questions}\n\nSKILL.md:\n<<<\n{body_of(text)}\n>>>\n"
+
+
+def parse_judge(output: str) -> list[dict]:
+    """The JSON array in the judge's reply, or [] if there is none."""
+    start, end = output.find("["), output.rfind("]")
+    if start == -1 or end <= start:
+        return []
+    try:
+        answers = json.loads(output[start:end + 1])
+    except ValueError:
+        return []
+    return answers if isinstance(answers, list) else []
+
+
+def _digest(text: str) -> str:
+    import hashlib
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def run_judge(name: str, skill: Path, case: dict, data: dict, timeout: int = 300) -> dict:
+    """One Claude call, from an empty folder so no project instructions leak
+    in, and marked internal so skillpp's own hooks do not capture it."""
+    import subprocess
+    import tempfile
+    text = skill.read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as tmp:
+        proc = subprocess.run(
+            ["claude", "-p", judge_prompt(text, case, data), "--no-session-persistence"],
+            cwd=tmp, capture_output=True, text=True, timeout=timeout,
+            env=dict(os.environ, SKILLPP_INTERNAL="1"))
+    return {"case": name, "skill_sha256": _digest(text), "exit": proc.returncode,
+            "answers": parse_judge(proc.stdout), "raw": proc.stdout[-4000:]}
+
+
+def load_judged(here: Path, skill: Path) -> list[dict] | None:
+    """The judge's answers for exactly this SKILL.md, if it has run on it."""
+    path = here / "judge.json"
+    if not path.exists():
+        return None
+    record = json.loads(path.read_text())
+    if record.get("skill_sha256") != _digest(skill.read_text(encoding="utf-8")):
+        return None
+    return record.get("answers") or []
 
 
 # -- the two commands ------------------------------------------------------
@@ -340,14 +418,37 @@ def check(out: Path, only: list[str]) -> int:
         log_path = draft_dir / "agent.log"
         log = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
         fixture = json.loads(Path(meta["fixture"]).read_text()) if Path(meta["fixture"]).exists() else None
+        judged = load_judged(out / name, skill)
         rows = evaluate(skill.read_text(encoding="utf-8"), log, meta["entry"], fixture,
-                        data["cases"][name], data["hedge"])
+                        data["cases"][name], data["hedge"], judged)
         bad = [r for r in rows if not r["ok"]]
         failed += bool(bad)
-        print(f"\n{'PASS' if not bad else 'FAIL'}  {name}  ({len(rows) - len(bad)}/{len(rows)})")
+        how = "judged" if judged is not None else "word lists"
+        print(f"\n{'PASS' if not bad else 'FAIL'}  {name}  ({len(rows) - len(bad)}/{len(rows)}, method by {how})")
         for r in rows:
             print(f"   {'ok ' if r['ok'] else 'XX '} {r['id']:<14} {r['label']:<38} {r['evidence']}")
     return 1 if failed else 0
+
+
+def judge(out: Path, only: list[str]) -> int:
+    """Run the judge over every prepared draft, in parallel."""
+    from concurrent.futures import ThreadPoolExecutor
+    data = load_cases()
+    jobs = []
+    for name in only or list(data["cases"]):
+        meta_path = out / name / "case.json"
+        if not meta_path.exists():
+            continue
+        entry = json.loads(meta_path.read_text())["entry"]
+        skill = out / name / "skillpp" / "drafts" / entry / "SKILL.md"
+        if skill.exists():
+            jobs.append((name, skill))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        records = list(pool.map(lambda j: run_judge(j[0], j[1], data["cases"][j[0]], data), jobs))
+    for record in records:
+        (out / record["case"] / "judge.json").write_text(json.dumps(record, indent=1) + "\n")
+        print(f"judged {record['case']}: exit {record['exit']}, {len(record['answers'])} answer(s)")
+    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -357,12 +458,17 @@ def main(argv: list[str]) -> int:
     p.add_argument("case")
     p.add_argument("--out", type=Path, default=DEFAULT_OUT)
     p.add_argument("--force", action="store_true")
+    j = sub.add_parser("judge", help="have Claude answer the rubric for every prepared draft")
+    j.add_argument("cases", nargs="*")
+    j.add_argument("--out", type=Path, default=DEFAULT_OUT)
     c = sub.add_parser("check", help="check every prepared draft")
     c.add_argument("cases", nargs="*")
     c.add_argument("--out", type=Path, default=DEFAULT_OUT)
     args = ap.parse_args(argv)
     if args.cmd == "prepare":
         return prepare(args.case, args.out.expanduser(), args.force)
+    if args.cmd == "judge":
+        return judge(args.out.expanduser(), args.cases)
     return check(args.out.expanduser(), args.cases)
 
 

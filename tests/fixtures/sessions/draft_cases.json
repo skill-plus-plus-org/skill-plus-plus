@@ -1,5 +1,5 @@
 {
- "about": "What a drafted SKILL.md must contain, per case. Fixed before the first draft runs (tests/benchmarks/draft_check.py). A concept is present when every pattern in `all` matches inside one numbered step of the procedure; `after` searches only steps after that concept's step; `max_step` caps where it may first appear. Order rules compare first-step numbers. Settings are one-off values from the run that may appear only hedged. Patterns are case-insensitive regexes. Revised 2026-09-22 after the first four drafts, for how drafts are written, not what they must contain: steps may be ### subheadings; a question item may wrap; settings asked about under Open questions are not rules; `affirmative` concepts skip negated sentences; word boundaries on the explore and read verbs (\"reader\" had matched \"read\"), with \"assess\" added. Also: affirmative concepts join wrapped lines before splitting sentences; F1 is a plan before code (reading is implied, and F1 < F3 keeps it first); F2 accepts the same waiting words as D4.",
+ "about": "What a drafted SKILL.md must contain, per case. Fixed before the first draft runs (tests/benchmarks/draft_check.py). A concept is present when every pattern in `all` matches inside one numbered step of the procedure; `after` searches only steps after that concept's step; `max_step` caps where it may first appear. Order rules compare first-step numbers. Settings are one-off values from the run that may appear only hedged. Patterns are case-insensitive regexes. Revised 2026-09-22 after the first four drafts, for how drafts are written, not what they must contain: steps may be ### subheadings; a question item may wrap; settings asked about under Open questions are not rules; `affirmative` concepts skip negated sentences; word boundaries on the explore and read verbs (\"reader\" had matched \"read\"), with \"assess\" added. Also: affirmative concepts join wrapped lines before splitting sentences; F1 is a plan before code (reading is implied, and F1 < F3 keeps it first); F2 accepts the same waiting words as D4. From the second round, the method and its order are judged by a Claude call against the `judge` questions (fixed before the judge first ran); a yes counts only if its quote is found verbatim in the draft. The word lists still judge form, and stand in for the judge where it has not run.",
  "hedge": "e\\.g\\.|for example|such as|if the user|the user'?s|given|asked|requested",
  "cases": {
   "draft.code.feature": {
@@ -81,7 +81,41 @@
     "label": "about a feature, not this one",
     "pattern": "min-length|min_length|wordfreq|textkit",
     "max": 2
-   }
+   },
+   "judge": [
+    {
+     "id": "F1",
+     "question": "Before any code is written, does the procedure have the agent propose a plan or approach?"
+    },
+    {
+     "id": "F2",
+     "question": "Does it tell the agent to wait for the user's agreement before editing?"
+    },
+    {
+     "id": "F3",
+     "question": "Does it tell the agent to implement the change?"
+    },
+    {
+     "id": "F4",
+     "question": "Does it tell the agent to add tests for the new behaviour?"
+    },
+    {
+     "id": "F5",
+     "question": "Does it tell the agent to run the whole test suite, not only the new tests?"
+    },
+    {
+     "id": "F6",
+     "question": "Does it tell the agent to commit the change?"
+    },
+    {
+     "id": "F7",
+     "question": "Is the order: propose a plan, then implement after agreement, then add tests, then run the whole suite, then commit?"
+    },
+    {
+     "id": "F8",
+     "question": "Is the procedure about adding a feature in general, with any specific option from the recorded run given only as an example?"
+    }
+   ]
   },
   "draft.code.refactor": {
    "session": "C-N1",
@@ -135,6 +169,32 @@
    "meta_forbid": [
     "slugify",
     "textkit"
+   ],
+   "judge": [
+    {
+     "id": "R1",
+     "question": "Does the procedure start by reading the code and proposing simplifications before editing anything?"
+    },
+    {
+     "id": "R2",
+     "question": "Does it require that the code's behaviour stays unchanged?"
+    },
+    {
+     "id": "R3",
+     "question": "Does it require running the tests after the change to show nothing changed?"
+    },
+    {
+     "id": "R4",
+     "question": "Does it tell the agent to commit the change?"
+    },
+    {
+     "id": "R5",
+     "question": "Does it keep new features, options or behaviour out of the goal?"
+    },
+    {
+     "id": "R6",
+     "question": "Is the order: propose, then change, then run the tests, then commit?"
+    }
    ]
   },
   "draft.procedure.deck": {
@@ -213,6 +273,36 @@
    "meta_forbid": [
     "skillpp",
     "readme"
+   ],
+   "judge": [
+    {
+     "id": "D1",
+     "question": "Does the procedure start by reading the source document?"
+    },
+    {
+     "id": "D2",
+     "question": "Does it have the agent propose an outline before building anything?"
+    },
+    {
+     "id": "D3",
+     "question": "Does it have the agent check the outline's claims against the source?"
+    },
+    {
+     "id": "D4",
+     "question": "Does it require the user's explicit approval of the outline before the deck is built?"
+    },
+    {
+     "id": "D5",
+     "question": "Does it have the agent build the deck file?"
+    },
+    {
+     "id": "D6",
+     "question": "After building, does it have the agent open or inspect the built file to verify it against the outline?"
+    },
+    {
+     "id": "D7",
+     "question": "Is the order: outline, then check against the source, then approval, then build, then verify, with the build never before approval?"
+    }
    ]
   },
   "draft.procedure.post": {
@@ -270,7 +360,30 @@
     "weather",
     "notes.md",
     "skycast"
+   ],
+   "judge": [
+    {
+     "id": "P1",
+     "question": "Does the procedure start by reading the source the post is drawn from?"
+    },
+    {
+     "id": "P2",
+     "question": "Does it keep the post within a length limit?"
+    },
+    {
+     "id": "P3",
+     "question": "Does it require measuring the word count with a tool or command rather than estimating it?"
+    },
+    {
+     "id": "P4",
+     "question": "Does it have the agent check every claim in the post against the source?"
+    },
+    {
+     "id": "P5",
+     "question": "Is the order: read the source, then draft, then measure the length and check the claims?"
+    }
    ]
   }
- }
+ },
+ "judge_prompt": "You are checking a drafted SKILL.md against a fixed rubric. Answer each question about what the SKILL.md below instructs, not about what would be good practice. For each question give \"yes\" or \"no\" and quote the one line of the SKILL.md that decides it, copied exactly. If the answer is no because something is missing, quote nothing (an empty string). Reply with only a JSON array, one object per question: [{\"id\": \"...\", \"answer\": \"yes\"|\"no\", \"quote\": \"...\"}]."
 }

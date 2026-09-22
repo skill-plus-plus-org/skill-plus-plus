@@ -4966,6 +4966,27 @@ Someone asks for slides drawn from a document they point at.
         self.assertIsNone(self.dc.find_concept(["1. Propose it so the reader sees why."], spec, {}))
         self.assertEqual(self.dc.find_concept(["1. Read the file and propose it."], spec, {}), 1)
 
+    def test_the_judge_reply_is_read_from_its_json(self):
+        reply = 'Here you go:\n[{"id": "D1", "answer": "yes", "quote": "x"}]\nDone.'
+        self.assertEqual(self.dc.parse_judge(reply), [{"id": "D1", "answer": "yes", "quote": "x"}])
+        self.assertEqual(self.dc.parse_judge("no json here"), [])
+
+    def test_a_judged_yes_counts_only_with_a_quote_from_the_draft(self):
+        answers = [{"id": "D4", "answer": "yes", "quote": "4. Wait for the user to approve the outline before building anything."},
+                   {"id": "D5", "answer": "yes", "quote": "Build the slides at once without asking."},
+                   {"id": "D6", "answer": "no", "quote": ""}]
+        rows = {r["id"]: r for r in self.dc.judged_rows(self.GOOD, self.case, answers)}
+        self.assertTrue(rows["D4"]["ok"])
+        self.assertFalse(rows["D5"]["ok"], "an invented quote is not evidence")
+        self.assertFalse(rows["D6"]["ok"])
+        self.assertFalse(rows["D1"]["ok"], "an unanswered question fails")
+
+    def test_a_quote_matches_despite_markdown_emphasis(self):
+        text = self.GOOD.replace("5. Build the deck as a .pptx file.", "5. **Build** the deck as a `.pptx` file.")
+        rows = self.dc.judged_rows(text, self.case,
+                                   [{"id": "D5", "answer": "yes", "quote": "5. Build the deck as a .pptx file."}])
+        self.assertTrue(next(r for r in rows if r["id"] == "D5")["ok"])
+
     def test_an_open_question_that_is_a_statement_fails(self):
         self.assertIn("G10", self._failed(self.GOOD + "\n## Open questions\n\n- The limit is unclear.\n"))
 
