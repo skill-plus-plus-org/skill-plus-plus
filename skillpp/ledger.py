@@ -115,7 +115,7 @@ class Entry:
     # the mark there is nothing to measure from.
     parked_at_occurrences: int = 0
     # Banked without being compared to anything, because no embedding model
-    # answered — only an explicit `skillpp keep` or dictation does that, since a
+    # answered — only dictation does that, since a
     # captured session with no model is held instead. `skillpp merge` checks
     # these first.
     unmatched: bool = False

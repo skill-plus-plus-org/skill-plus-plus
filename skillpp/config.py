@@ -70,7 +70,7 @@ class Config:
         # detached after the session ends, so nobody waits on it. Off, nothing
         # is judged, and an unjudged session is held rather than cut by guess:
         # guessing from git verbs measured worse than making no cuts at all.
-        # Only an explicit `skillpp keep` still banks.
+        # Held sessions are banked once judging is back on.
         self.judge_boundaries = _bool_env("SKILLPP_JUDGE", True)
         # Ask the same model, inside every PostToolUse hook, for one sentence
         # saying what the step did (`skillpp.boundary.describe`). Off by

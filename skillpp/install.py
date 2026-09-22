@@ -24,7 +24,7 @@ MARKER = "skillpp hook"
 # The slash commands ship inside the package, so an installed copy has them too.
 COMMANDS = Path(__file__).resolve().parent / "commands"
 # The ones a developer types. `skillpp-draft.md` is read by `skillpp draft`.
-INTERACTIVE_COMMANDS = ("skillpp-review.md", "skillpp-new.md", "skillpp-keep.md")
+INTERACTIVE_COMMANDS = ("skillpp-review.md", "skillpp-new.md")
 
 
 def hook_command(python: str | None = None, package_root: Path | None = None,
@@ -272,8 +272,8 @@ def build_upload_bundle(skill_md: Path, out_dir: Path) -> str:
 def install_command_files(target_dir: Path) -> list[Path]:
     """Copy the slash commands a developer types into ``.claude/commands/``.
 
-    Only `/skillpp-review` used to be copied, so `/skillpp-new` and
-    `/skillpp-keep` had to be found and copied by hand. `/skillpp-draft` is not
+    Only `/skillpp-review` used to be copied, so `/skillpp-new` had to be
+    found and copied by hand. `/skillpp-draft` is not
     among them: nobody types it, `skillpp draft` hands it to its own agent.
     """
     target_dir.mkdir(parents=True, exist_ok=True)

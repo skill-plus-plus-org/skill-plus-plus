@@ -40,8 +40,8 @@ skillpp install --user --apply                     # every project: ~/.claude/se
 skillpp install --settings path/to/settings.json --apply
 ```
 
-It also copies three slash commands into the matching `commands/` folder:
-`/skillpp-review`, `/skillpp-new` and `/skillpp-keep`, and downloads the two
+It also copies two slash commands into the matching `commands/` folder,
+`/skillpp-review` and `/skillpp-new`, and downloads the two
 Ollama models detection needs (`gemma4:e4b` and `nomic-embed-text`, about 10 GB)
 if they are missing. The dry run lists what it would download. Ollama itself
 has to be installed and running first (https://ollama.com); without it the
@@ -85,11 +85,10 @@ reinstated).
 
 ### Shortcuts
 
-- **`/skillpp-keep`** in a session, or `skillpp keep`, saves the work so far as a
-  candidate without ending the session. *Work in progress: how it works may
-  change.*
 - **`/skillpp-new`**, or `skillpp dictate`, describes a procedure instead of
-  performing it. Dictated candidates skip the three-times rule.
+  performing it: the agent asks what the description leaves out, and the
+  candidate skips the three-times rule. *Work in progress: how it works may
+  change.*
 - **`SKILLPP_RECURRENCE=1`** makes every candidate ready at once.
 
 ## From a candidate to a skill

@@ -75,10 +75,11 @@ usual, then open the review page:
 skillpp web
 ```
 
-**A first skill without waiting for three repeats** (work in progress): run
-`/skillpp-keep` in a session (or `skillpp keep`) to save the work so far as a
-candidate, then `skillpp draft <id> --apply`. `SKILLPP_RECURRENCE=1` makes every
-candidate ready at once.
+**A first skill without waiting for three repeats:** `SKILLPP_RECURRENCE=1`
+makes every candidate ready the first time it is seen. **Describing a procedure
+instead of doing it** (work in progress): run `/skillpp-new` in a session and
+describe it; the agent asks what the description leaves out and builds a
+candidate from it.
 
 **Install options.** Without `--apply`, `install` only shows what it would do,
 downloads included. `--user` instead of `--project` captures every project;
@@ -117,7 +118,7 @@ edits settings or spends a model call is a dry run until you add `--apply`.
 | Setting up | `install`, `doctor` |
 | Reviewing | `web`, `review`, `show`, `search`, `stats` |
 | Deciding | `promote`, `dismiss`, `reopen`, `ignored` |
-| Drafting | `draft`, `revise`, `name`, `scaffold`, `keep` (work in progress), `dictate` |
+| Drafting | `draft`, `revise`, `name`, `scaffold`, `dictate` (work in progress) |
 | Fixing candidates | `split`, `merge`, `retitle`, `sift` |
 | Skills you have | `lifecycle`, `tier`, `check`, `reconcile`, `bundle`, `expire`, `accuracy` |
 | Internal (run by the hooks) | `hook`, `fold-session`, `fold-pending` |
@@ -137,7 +138,7 @@ All settings are environment variables.
 | `SKILLPP_MATCH_FLOOR` | `0.93` | similarity at which two runs' commands count as the same procedure |
 | `SKILLPP_MATCH_FLOOR_TURNS` | `0.85` | the same, for runs compared by their conversation |
 | `SKILLPP_AGENT` | `claude -p {PROMPT} …` | how to invoke your agent for drafts; `{PROMPT}` is replaced |
-| `SKILLPP_JUDGE` | `1` | `0` stops judging; sessions are then held, and only `keep` banks |
+| `SKILLPP_JUDGE` | `1` | `0` stops judging; sessions are then held until it is back on |
 | `SKILLPP_NAME` | `1` | `0` stops the model naming new candidates |
 | `SKILLPP_MATCH` | `1` | `0` banks every task without comparing it (for measuring detection) |
 | `SKILLPP_DESCRIBE` | `0` | `1` asks the model to describe every tool call, inside the hook (slow) |

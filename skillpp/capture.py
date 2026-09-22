@@ -864,7 +864,7 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
                 "reason": (f"no verdicts: {config.local_model} did not answer"
                            if config.judge_boundaries else
                            "no verdicts: judging is off (SKILLPP_JUDGE=0); "
-                           "`skillpp keep` still banks")}
+                           "sessions wait until it is back on")}
 
     episodes = segment(session.get("steps", []), config.min_episode_steps)
 
@@ -1472,68 +1472,3 @@ def _name_from_model(config: Config, entry: Entry) -> None:
         entry.title, entry.title_source = name, "model"
     if sentence:
         store_summary(config, entry, sentence)
-
-
-def keep_current(config: Config, session_id: str | None = None) -> dict:
-    """Fold the in-flight session now, instead of waiting for it to end.
-
-    `SessionEnd` is otherwise the only thing that folds, so without this there
-    is no way to say "that thing I just did is worth keeping" without closing
-    the session. That matters more than it looks: recurrence is the automatic
-    route to a candidate and it has never fired on real work, which leaves an
-    explicit save as the only path from work to skill.
-
-    Guards are bypassed — an explicit save is not noise — and the buffer is
-    cleared afterwards so the rest of the session accumulates fresh rather than
-    being folded twice.
-    """
-    if session_id:
-        path = _session_file(config, session_id)
-        if not path.exists():
-            return {"status": "no-session"}
-    else:
-        newest = sorted(config.sessions_dir.glob("*.json"),
-                        key=lambda p: p.stat().st_mtime, reverse=True)
-        if not newest:
-            return {"status": "no-session"}
-        path = newest[0]
-        session_id = path.stem
-
-    session = _load_session(config, session_id)
-    # `handle_prompt` writes a UserPrompt sentinel into the step stream, so the
-    # raw list is never empty once anything has been said. Count the work.
-    from .segment import is_prompt
-    if not [s for s in session.get("steps", []) if not is_prompt(s)]:
-        return {"status": "nothing-yet"}
-    _attach_reply(session, session.get("transcript"))
-    # Boundaries are normally found at `SessionEnd`; this folds mid-session, so
-    # ask now for whatever gaps the buffer already holds — unless a held fold
-    # already fixed them (see `handle_session_end`).
-    if config.judge_boundaries and "folded" not in session:
-        try:
-            from .boundary import judge_session
-            judge_session(config, session)
-        except Exception as exc:  # noqa: BLE001 - never raise at a developer
-            log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
-    # Still unjudged means no model answered. An explicit keep is a person
-    # saying "save this", so it banks the work as one task rather than nothing —
-    # the offline rule exists to stop a *detector* guessing, not to overrule
-    # someone who has read the work and asked for it. Same reasoning as `force`.
-    if not was_judged(session.get("steps", [])):
-        for step in session.get("steps", []):
-            if not is_prompt(step):
-                step["end"] = False
-
-    # The same lock the worker and the sweep take: this folds and unlinks
-    # mid-session, so without it an explicit keep can race a fold of the very
-    # same session and bank its episodes twice.
-    with _locked(_lock_file(config, session_id), _FOLD_LOCK_SECONDS,
-                 "keep") as got:
-        if not got:
-            return {"status": "folding", "session": session_id}
-        result = fold_session(config, session, force=True, source="kept")
-        try:
-            path.unlink()
-        except OSError:
-            pass
-    return result

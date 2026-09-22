@@ -3080,8 +3080,8 @@ class TestCaptureMatchesByEmbedding(TempRoot):
         self.assertIn("embed", result["reason"])
         self.assertEqual(list(Ledger(self.config).all()), [])
 
-    def test_an_explicit_keep_with_no_model_banks_unmatched(self):
-        """A person said "save this"; it is kept, and marked for `skillpp merge`."""
+    def test_a_forced_fold_with_no_model_banks_unmatched(self):
+        """Forced, it is banked anyway, and marked for `skillpp merge`."""
         self._down()
         result = fold_session(self.config, self._session("s1"), force=True)
         self.assertEqual(result["status"], "created")
@@ -3426,64 +3426,6 @@ class TestDecisionLog(TempRoot):
         with self.config.decisions_file.open("a") as fh:
             fh.write("{not json\n")
         self.assertEqual(len(decisions.read(self.config)), 1)
-
-
-class TestKeep(TempRoot):
-    """Saving work without ending the session.
-
-    `SessionEnd` is otherwise the only thing that folds, so there was no way to
-    say "that thing I just did is worth keeping" while still working. That is a
-    larger gap than it sounds: recurrence is the automatic route to a candidate
-    and it has never fired on real work.
-    """
-
-    def _work(self, sid="live", cmds=(), prompt="fail over staging"):
-        from skillpp.capture import handle_prompt, handle_tool
-        handle_prompt(self.config, {"session_id": sid, "cwd": "/r",
-                                    "prompt": prompt})
-        for c in cmds:
-            handle_tool(self.config, {"session_id": sid, "cwd": "/r",
-                                      "tool_name": "Bash",
-                                      "tool_input": {"command": c}})
-
-    def test_it_banks_the_work_so_far(self):
-        from skillpp.capture import keep_current
-        self._work(cmds=("./scripts/failover.sh staging", "curl -sI https://staging"))
-        result = keep_current(self.config)
-        self.assertEqual(result.get("status"), "created")
-        self.assertEqual(len(list(Ledger(self.config).all())), 1)
-
-    def test_the_buffer_is_cleared_so_nothing_folds_twice(self):
-        from skillpp.capture import keep_current
-        self._work(cmds=("./scripts/failover.sh staging", "curl -sI https://staging"))
-        keep_current(self.config)
-        self.assertEqual(list(self.config.sessions_dir.glob("*.json")), [])
-
-    def test_what_is_kept_is_marked_as_kept(self):
-        """Provenance matters: this was asked for, not inferred."""
-        from skillpp.capture import keep_current
-        self._work(cmds=("./scripts/failover.sh staging", "curl -sI https://staging"))
-        keep_current(self.config)
-        self.assertEqual([e.source for e in Ledger(self.config).all()], ["kept"])
-
-    def test_an_explicit_keep_overrides_the_guards(self):
-        """A guard exists to stop a detector banking noise, not to overrule a
-        person who has read the work and asked for it."""
-        from skillpp.capture import keep_current
-        # Read-only throughout: at SessionEnd this is discarded as exploration.
-        self._work(cmds=("git log --oneline -5", "git diff", "cat README.md"))
-        self.assertEqual(keep_current(self.config).get("status"), "created")
-
-    def test_no_session_is_reported_not_guessed(self):
-        from skillpp.capture import keep_current
-        self.assertEqual(keep_current(self.config)["status"], "no-session")
-
-    def test_an_empty_buffer_is_not_a_candidate(self):
-        from skillpp.capture import keep_current
-        from skillpp.capture import handle_prompt
-        handle_prompt(self.config, {"session_id": "live", "cwd": "/r",
-                                    "prompt": "thinking about it"})
-        self.assertEqual(keep_current(self.config)["status"], "nothing-yet")
 
 
 class TestReconcile(TempRoot):
@@ -4368,16 +4310,6 @@ class TestFoldResumesAfterOutage(TempRoot):
         self.assertEqual(self.calls, [], "the judge was asked again on retry")
         self.assertFalse(_session_file(self.config, "two").exists())
 
-    def test_an_explicit_keep_banks_the_rest_unmatched(self):
-        from skillpp.capture import keep_current
-        self._capture()
-        self.down = True
-        result = keep_current(self.config, "two")
-
-        self.assertNotEqual(result["status"], "offline")
-        self.assertEqual(self._occurrences(),
-                         [("npm test", 1, False), ("pytest -q", 1, True)])
-
 
 class TestTurns(TempRoot):
     """A candidate keeps its run as a conversation: prompt, reply, what it used.
@@ -5057,7 +4989,7 @@ class TestShippedCommands(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             written = install_command_files(Path(tmp) / "commands")
             self.assertEqual(sorted(p.name for p in written),
-                             ["skillpp-keep.md", "skillpp-new.md", "skillpp-review.md"])
+                             ["skillpp-new.md", "skillpp-review.md"])
             self.assertTrue(all(p.read_text(encoding="utf-8").strip() for p in written))
 
     def test_remove_keeps_a_command_the_developer_edited(self):
@@ -5067,8 +4999,7 @@ class TestShippedCommands(unittest.TestCase):
             install_command_files(target)
             (target / "skillpp-new.md").write_text("mine now", encoding="utf-8")
             removed = remove_command_files(target)
-            self.assertEqual(sorted(p.name for p in removed),
-                             ["skillpp-keep.md", "skillpp-review.md"])
+            self.assertEqual(sorted(p.name for p in removed), ["skillpp-review.md"])
             self.assertEqual((target / "skillpp-new.md").read_text(), "mine now")
 
     def test_an_installed_package_hooks_through_its_console_script(self):
@@ -5954,12 +5885,6 @@ class TestFoldLock(TempRoot):
             fold_session_now(self.config, "s1")
         self.assertFalse(_lock_file(self.config, "s1").exists())
 
-    def test_keep_takes_the_same_lock(self):
-        from skillpp.capture import keep_current
-        self._session()
-        self._lock()
-        self.assertEqual(keep_current(self.config, "s1")["status"], "folding")
-        self.assertEqual(list(Ledger(self.config).all()), [])
 
 
 class TestTranscriptExtract(TempRoot):

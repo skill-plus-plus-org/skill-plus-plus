@@ -28,7 +28,11 @@ The first public release.
 - The review page refuses requests made by other pages in the same browser.
 - Describing every tool call with the local model is off by default; it cost
   2-11 seconds a call and nothing read it.
-- `install` copies all three slash commands, and `--remove` takes them out again.
+- `install` copies both slash commands a developer types, and `--remove` takes
+  them out again.
+- `keep`, which saved a session's work so far as a candidate, is removed.
+  Describing a procedure (`/skillpp-new`) is the way to a skill without
+  repeating the work, and is work in progress.
 - `install` also downloads the two Ollama models when they are missing
   (`--no-models` to skip); without Ollama it says how to get it.
 - More git commands that discard uncommitted work count as destructive.

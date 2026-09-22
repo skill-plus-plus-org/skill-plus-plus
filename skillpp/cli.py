@@ -744,34 +744,6 @@ def cmd_fold_pending(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_keep(args: argparse.Namespace) -> int:
-    """Save the work so far as a candidate, without ending the session."""
-    from .capture import keep_current
-
-    config = Config(args.root)
-    config.ensure_dirs()
-    result = keep_current(config, args.session_id)
-    status = result.get("status")
-    if status == "no-session":
-        print("No session buffer to keep. Hooks record one as you work, so run "
-              "this from inside a Claude Code session.", file=sys.stderr)
-        return 1
-    if status == "nothing-yet":
-        print("Nothing recorded yet in this session.", file=sys.stderr)
-        return 1
-    episodes = result.get("episodes") or [result]
-    kept = [e for e in episodes if e.get("status") in ("created", "merged")]
-    if not kept:
-        print("Nothing substantial enough to keep — a workflow needs at least "
-              f"{config.min_episode_steps} steps.")
-        return 1
-    print(f"kept {len(kept)} candidate(s):")
-    for e in kept:
-        print(f"  {e.get('id')}  seen {e.get('occurrences', 1)}x")
-    print("Name and draft one with: skillpp draft <id> --apply")
-    return 0
-
-
 def cmd_web(args: argparse.Namespace) -> int:
     """Serve the ledger as a local page. Loopback only; there is no auth."""
     from .config import default_skills_dir
@@ -1742,11 +1714,6 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default: SKILLPP_MATCH_FLOOR)")
     p.set_defaults(func=cmd_merge)
 
-    p = sub.add_parser("keep",
-                       help="(work in progress) save the work so far as a "
-                            "candidate, without ending the session")
-    p.add_argument("--session-id", help="which session; defaults to the newest")
-    p.set_defaults(func=cmd_keep)
 
     p = sub.add_parser("fold-session",
                        help="bank one session that has ended; spawned by the "
@@ -1815,7 +1782,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_review)
 
-    p = sub.add_parser("dictate", help="describe a workflow instead of performing it")
+    p = sub.add_parser("dictate", help="(work in progress) describe a workflow instead of performing it")
     p.add_argument("--text", help="the description (reads stdin if omitted)")
     p.add_argument("--title")
     p.add_argument("--json", action="store_true")

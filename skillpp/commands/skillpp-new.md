@@ -1,5 +1,5 @@
 ---
-description: Turn a described workflow into a skill, after asking what the description leaves out
+description: (Work in progress) Turn a described workflow into a skill, after asking what the description leaves out
 ---
 
 # Skill Plus Plus — new skill from a description
