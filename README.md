@@ -1,21 +1,36 @@
-# Skill Plus Plus
+# Skill++ (Skill Plus Plus)
 
-**Turn the work you keep repeating with Claude Code into skills you review.**
+**Spot the work you keep repeating with Claude Code, and turn it into skills you review.**
 
-Agent skills make an agent reliable at a procedure, but almost nobody writes
-them: by the time a procedure is worth a skill, you have already done it three
-times and moved on. skillpp watches your Claude Code sessions, notices when you
-repeat the same kind of work, and when you say so, has your own agent draft the
-`SKILL.md` from what you actually did. Nothing is installed without you.
+Every team has procedures it runs again and again: shipping a small feature with
+its tests, turning a document into a talk, adding an eval case. An agent skill
+(`SKILL.md`) makes an agent follow such a procedure the same reliable way every
+time, but almost nobody writes them: by the time a procedure is worth a skill,
+you have done it three times and moved on.
 
-Detection runs on your machine with small local models (Ollama). The frontier
-model is only asked to write, and only when you press **Draft Skill**.
+Skill++ finds those procedures for you. It watches your Claude Code sessions,
+notices when you repeat the same kind of work, and shows it to you as a
+candidate. Promote one, and your own agent drafts the skill from what you
+actually did. Nothing is installed without you.
+
+**What it costs.** Watching and detecting run entirely on your machine, with
+small local models (Ollama): no API calls, no cost, and nothing leaves your
+laptop. The frontier model is called only at the very end, once per skill:
+after you have promoted a candidate and pressed **Draft Skill**. Only then does
+that one run's conversation go to it.
+
+**Where it is going.** The goal is skills shared across a team, so that a
+procedure one person worked out is done the same way by everyone: faster, and
+without the mistakes each person would otherwise make on their own. This first
+version works end to end for one person, from your sessions to a skill in your
+skills folder. Sharing is still by hand: download the skill and pass it on, or
+commit it to your repo's `.claude/skills/` so everyone working in it gets it.
 
 ## How it works
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/how-it-works-dark.svg">
-  <img alt="How skillpp works: 1, capture while you work: hooks, scrub, session buffer. 2, fold in the background after the session: cut, segment, extract, match. 3, review and draft when you choose: ledger, review page, Draft Skill, you." src="docs/images/how-it-works-light.svg">
+  <img alt="How Skill++ works: 1, capture while you work: hooks, scrub, session buffer. 2, fold in the background after the session: cut, segment, extract, match. 3, review and draft when you choose: ledger, review page, Draft Skill, you." src="docs/images/how-it-works-light.svg">
 </picture>
 
 1. **Capture.** While you work, hooks record your prompts, the tools that ran,
@@ -86,7 +101,7 @@ skillpp promote <id> --skill-path ~/.claude/skills/<name>/SKILL.md
 
 `skillpp web` serves a page on `127.0.0.1:8765` that only this machine can reach.
 
-- **Candidates** lists what skillpp saw you repeat, most-seen first, with a
+- **Candidates** lists what Skill++ saw you repeat, most-seen first, with a
   summary and the steps grouped under the requests they served. Promote or
   dismiss what reached three; **Draft Skill** a promoted one.
 - **Drafts** shows each finished draft rendered, with its open questions. A draft
@@ -132,7 +147,7 @@ All settings are environment variables.
 
 ## Privacy
 
-Everything skillpp captures stays in `~/.claude/skillpp/` on your machine, and
+Everything Skill++ captures stays in `~/.claude/skillpp/` on your machine, and
 the local models run there too. Prompts, tool inputs (up to 2,000 characters
 each), the start of each tool result and the agent's replies are stored after
 scrubbing keys, tokens, connection strings and email addresses. Names, phone
