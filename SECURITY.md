@@ -7,6 +7,10 @@ Please report security problems privately, through the repository's
 attacker can do, what they need first, and how to reproduce it. The
 maintainers aim to reply within a week.
 
+If it is a vulnerability, you get a fix or a mitigation, and a line in the
+changelog crediting you by whatever name you choose, or none. If it is not, you
+get the reasoning, and you are free to write about it publicly.
+
 Only the latest release is supported.
 
 ## What skillpp can touch
@@ -19,7 +23,11 @@ Useful context for judging whether something is a vulnerability:
 - **The review page** (`skillpp web`) listens on `127.0.0.1` only and has no
   login, because only processes on your machine can reach it. It refuses a
   request whose `Host` is not that address, and a POST that is not JSON or comes
-  from another page's `Origin`, because a POST can start your agent.
+  from another page's `Origin`, because a POST can start your agent or write a
+  skill into a repository. **Install** writes one folder, the skill's, into the
+  project the candidate belongs to or into your own skills folder; that path is
+  built from the ledger, never from the request. **Uninstall** removes only the
+  files it recorded installing.
 - **The drafting agent** (`skillpp draft`, **Draft Skill**) is whatever
   `SKILLPP_AGENT` names, by default `claude -p` allowed `Read`, `Write`, `Edit`
   and `python3 bin/skillpp`. It runs in a temporary folder and reads one
