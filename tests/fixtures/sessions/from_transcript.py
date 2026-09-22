@@ -210,6 +210,17 @@ def catalogue() -> dict[str, dict]:
     return {s["id"]: s for s in doc["sessions"]}
 
 
+def _has_conversation(path: Path) -> bool:
+    with path.open(encoding="utf-8", errors="ignore") as fh:
+        for line in fh:
+            try:
+                if json.loads(line).get("type") in ("user", "assistant"):
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
 def find_session(session_id: str) -> Path | None:
     """The transcript recorded in `~/skillpp-recordings/<session_id>/`.
 
@@ -219,7 +230,10 @@ def find_session(session_id: str) -> Path | None:
     """
     suffix = "-skillpp-recordings-" + session_id
     dirs = [d for d in Path.home().glob(".claude/projects/*") if d.name.endswith(suffix)]
-    chats = sorted(f for d in dirs for f in d.glob("*.jsonl"))
+    # The desktop app also leaves files holding only a session's title and a
+    # pointer to its last prompt. They have no conversation, so they are not a
+    # second chat.
+    chats = sorted(f for d in dirs for f in d.glob("*.jsonl") if _has_conversation(f))
     if len(chats) > 1:
         raise SystemExit(f"{session_id}: {len(chats)} chats were recorded in its folder; "
                          "keep the one to use and delete the others:\n  "
