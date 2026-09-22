@@ -106,7 +106,15 @@ def parse_frontmatter(text: str) -> dict:
                 parsed = json.loads(value)
             except json.JSONDecodeError:
                 parsed = [v.strip().strip("\"'") for v in value.strip("[]").split(",") if v.strip()]
-        elif value.startswith(('"', "'")):
+        elif value.startswith('"'):
+            # A double-quoted YAML scalar escapes like JSON. The scaffold wrote
+            # `\u2014` for a dash before it kept characters as they are, and
+            # slicing the quotes off left those escapes on the review page.
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                parsed = value[1:-1]
+        elif value.startswith("'"):
             parsed = value[1:-1]
         else:
             parsed = value

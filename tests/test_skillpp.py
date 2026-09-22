@@ -4713,6 +4713,21 @@ class TestFoldPending(TempRoot):
         popen.return_value.wait.assert_not_called()
 
 
+class TestFrontmatterCharacters(unittest.TestCase):
+    """A description with a dash or an accent survives the scaffold and the
+    reader, instead of reaching the review page as `\\u2014`."""
+
+    def test_an_escaped_description_reads_as_its_characters(self):
+        text = '---\nname: x\ndescription: "Use when a \\u2014 b"\n---\n'
+        self.assertEqual(parse_frontmatter(text)["description"], "Use when a \u2014 b")
+
+    def test_the_scaffold_writes_characters_as_they_are(self):
+        entry = Entry(id="e1", title="t", steps=[{"tool": "Bash", "input": {"command": "ls"}}])
+        text = scaffold_skill(entry, name="x", description="Use when café \u2014 ok")
+        self.assertIn('description: "Use when café \u2014 ok"', text)
+        self.assertEqual(parse_frontmatter(text)["description"], "Use when café \u2014 ok")
+
+
 class TestSessionCatalogue(unittest.TestCase):
     """The public sessions' ground truth, the kit that records them, and the
     builder that turns a recording into a fixture against that truth."""

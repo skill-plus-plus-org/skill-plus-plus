@@ -224,7 +224,7 @@ def questions_for(entry: Entry, config: Config) -> list[Question]:
 
 
 def _yaml_list(items: list[str]) -> str:
-    return "[" + ", ".join(json.dumps(i) for i in items) + "]"
+    return "[" + ", ".join(json.dumps(i, ensure_ascii=False) for i in items) + "]"
 
 
 # Readable answer keys, so callers need not memorise internal question kinds.
@@ -340,7 +340,7 @@ def scaffold_skill(
     lines = [
         "---",
         f"name: {name}",
-        f"description: {json.dumps(desc)}",
+        f"description: {json.dumps(desc, ensure_ascii=False)}",
         "metadata:",
         '  source: "skill-plus-plus"',
         f'  provenance: "ledger:{entry.id}"',
