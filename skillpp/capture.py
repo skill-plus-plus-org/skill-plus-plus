@@ -23,6 +23,7 @@ import os
 import re
 import socket
 import time
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +34,7 @@ from .normalize import parameterize
 from .sanitize import scrub, scrub_obj
 from .segment import (PROMPT_TOOL, feeds_a_write, is_prompt, segment,
                       was_judged)
+from .summary import clip_title
 
 # Tool inputs worth keeping. Anything else is recorded by name only.
 #
@@ -192,6 +194,31 @@ def _reply_text(response, limit: int | None = _RESPONSE_CHARS) -> str:
     return flat if limit is None else flat[:limit]
 
 
+# A hook fires just after the call it reports, so the last rows of the
+# transcript hold everything it looks for. Reading the whole file on every
+# tool call would cost more the longer the session runs.
+_TRANSCRIPT_TAIL = 40
+
+
+def _transcript_rows(path: str | None, tail: int | None = None) -> Iterator[dict]:
+    """The transcript's rows, parsed; with *tail*, only the last that many.
+
+    Best effort: no path or an unreadable file is no rows, and a line that is
+    not JSON is skipped.
+    """
+    if not path:
+        return
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as fh:
+            for line in (fh.readlines()[-tail:] if tail else fh):
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return
+
+
 def _narration(payload: dict) -> tuple[str, str]:
     """What the assistant said around this step: `(lead_in, closes_previous)`.
 
@@ -211,14 +238,6 @@ def _narration(payload: dict) -> tuple[str, str]:
     The hook payload carries `transcript_path`. Everything here is best effort:
     a missing or unreadable transcript costs the narration and nothing else.
     """
-    path = payload.get("transcript_path")
-    if not path:
-        return "", ""
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as fh:
-            rows = fh.readlines()[-40:]
-    except OSError:
-        return "", ""
     # The text *preceding* the most recent tool call, which is this one — the
     # hook fires after the call, so the transcript already holds it. Taking the
     # text that follows instead returns nothing live, and on a finished
@@ -229,11 +248,7 @@ def _narration(payload: dict) -> tuple[str, str]:
     # separately so it can be attributed backwards rather than to this step.
     closing: list[str] = []
     closes_previous: list[str] = []
-    for line in rows:
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for row in _transcript_rows(payload.get("transcript_path"), _TRANSCRIPT_TAIL):
         message = row.get("message") or {}
         # A real prompt, not an envelope the harness injected. Everything said
         # before it belongs to the step that preceded it.
@@ -277,20 +292,8 @@ def _trailing_narration(payload: dict) -> str:
     `transcript_path` at all, in which case this costs the note and nothing
     else.
     """
-    path = payload.get("transcript_path")
-    if not path:
-        return ""
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as fh:
-            rows = fh.readlines()[-40:]
-    except OSError:
-        return ""
     pending: list[str] = []
-    for line in rows:
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for row in _transcript_rows(payload.get("transcript_path"), _TRANSCRIPT_TAIL):
         message = row.get("message") or {}
         if row.get("type") != "assistant" or not isinstance(
                 message.get("content"), list):
@@ -363,28 +366,18 @@ def _transcript_turns(path: str | None) -> list[tuple[str, list[str]]]:
     `text` blocks only, never `thinking`: the reply is what the person read.
     Best effort — no path or an unreadable file is no turns.
     """
-    if not path:
-        return []
     turns: list[tuple[str, list[str]]] = []
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as fh:
-            for line in fh:
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                content = (row.get("message") or {}).get("content")
-                if row.get("type") == "user" and isinstance(content, str):
-                    text = content.strip()
-                    if text and not text.startswith(_ENVELOPE_PREFIXES + _NOT_A_PROMPT):
-                        turns.append((text, []))
-                elif row.get("type") == "assistant" and turns and isinstance(content, list):
-                    turns[-1][1].extend(
-                        block["text"] for block in content
-                        if isinstance(block, dict) and block.get("type") == "text"
-                        and (block.get("text") or "").strip())
-    except OSError:
-        return []
+    for row in _transcript_rows(path):
+        content = (row.get("message") or {}).get("content")
+        if row.get("type") == "user" and isinstance(content, str):
+            text = content.strip()
+            if text and not text.startswith(_ENVELOPE_PREFIXES + _NOT_A_PROMPT):
+                turns.append((text, []))
+        elif row.get("type") == "assistant" and turns and isinstance(content, list):
+            turns[-1][1].extend(
+                block["text"] for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+                and (block.get("text") or "").strip())
     return turns
 
 
@@ -565,29 +558,25 @@ def handle_session_end(config: Config, payload: dict) -> dict:
         if work:
             work[-1].setdefault("closing_note", trailing)
             _save_session(config, session)
-    try:
-        result = fold_session(config, session, persist=True)
-    except Exception:
-        raise
+    result = fold_session(config, session, persist=True)
+    # Offline: the session was never folded, so this file is the only copy of
+    # the work. Losing the step is the one thing capture exists to prevent —
+    # being offline costs the candidate, never the record.
+    #
+    # Stamped rather than merely left behind: a live session has a file too, and
+    # counting those as held would report work lost from a session still being
+    # written. `skillpp stats` reads this key, not the glob.
+    if result.get("status") == "offline":
+        session["held"] = {
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "reason": result.get("reason", ""),
+        }
+        _save_session(config, session)
     else:
-        # Offline: the session was never folded, so this file is the only copy
-        # of the work. Losing the step is the one thing capture exists to
-        # prevent — being offline costs the candidate, never the record.
-        #
-        # Stamped rather than merely left behind: a live session has a file too,
-        # and counting those as held would report work lost from a session still
-        # being written. `skillpp stats` reads this key, not the glob.
-        if result.get("status") == "offline":
-            session["held"] = {
-                "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "reason": result.get("reason", ""),
-            }
-            _save_session(config, session)
-        else:
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        try:
+            path.unlink()
+        except OSError:
+            pass
     return result
 
 
@@ -1434,27 +1423,24 @@ def _subject_of(steps: list[dict]) -> str:
     return ""
 
 
-def _clip_title(text: str) -> str:
-    return (text[:70] + "…") if len(text) > 70 else text
-
-
 def _title_for(intents: list[str], steps: list[dict]) -> tuple[str, str]:
     """A title and where it came from, without asking a model.
 
     Only the commit subject is a name of the work; the rest are strings capture
     observed and has to reuse, which is what `_name_from_model` replaces when a
-    local model answers.
+    local model answers. Cut the way a model's name is (`summary.clip_title`),
+    so every title on the review page ends at a word.
     """
     subject = _subject_of(steps)
     if subject:
-        return _clip_title(subject), "commit"
+        return clip_title(subject), "commit"
     if intents:
-        return _clip_title(intents[0].strip().splitlines()[0]), "prompt"
+        return clip_title(intents[0].strip().splitlines()[0]), "prompt"
     for step in steps:
         if step.get("tool") == "Bash":
             cmd = str((step.get("input") or {}).get("command", "")).strip()
             if cmd:
-                return _clip_title(cmd), "command"
+                return clip_title(cmd), "command"
     return "captured workflow", "command"
 
 

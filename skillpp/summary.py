@@ -80,7 +80,7 @@ def _clean(line: str) -> str:
 # A name is listed on every row, so it is cut at a word rather than mid-word:
 # `Crafting and refining LinkedIn announcements for a new article and l` is
 # what a hard 70-character clip produced.
-def _clip(text: str, limit: int = 70) -> str:
+def clip_title(text: str, limit: int = 70) -> str:
     if len(text) <= limit:
         return text.rstrip(" .,-")
     head = text[:limit]
@@ -123,7 +123,7 @@ def name_and_sentence(config: Config, entry: Entry) -> tuple[str, str]:
     # questions in the wrong shape; the name is the half before the colon.
     if not sentence and ": " in name:
         name, sentence = name.split(": ", 1)
-    return _clip(name), sentence
+    return clip_title(name), sentence
 
 
 def render_proposal(entry: Entry, config: Config) -> str:
