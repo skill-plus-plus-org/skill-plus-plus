@@ -395,6 +395,27 @@ def summarise(config: Config, entry_id: str) -> dict:
     return {"ok": True, "summary": text}
 
 
+def _projects(entry) -> list[str]:
+    """The projects an entry belongs to: one, or several for an entry banked
+    before candidates were bound to a project (`capture.projects_of`)."""
+    from .capture import projects_of
+    return sorted(projects_of(entry))
+
+
+def project_list(rows: list[dict], drafts: list[dict]) -> list[dict]:
+    """Every project on the page, for the switcher: its folder name, its path,
+    and how many candidates and drafts it holds. "No project" last."""
+    counts: dict[str, dict] = {}
+    for kind, items in (("candidates", rows), ("drafts", drafts)):
+        for item in items:
+            for key in item["projects"]:
+                cell = counts.setdefault(key, {"candidates": 0, "drafts": 0})
+                cell[kind] += 1
+    return [{"key": key, "name": Path(key).name if key else "No project", "path": key, **cell}
+            for key, cell in sorted(counts.items(),
+                                    key=lambda kv: (kv[0] == "", Path(kv[0]).name.lower(), kv[0]))]
+
+
 def collect_state(config: Config) -> dict:
     """The rows the page lists. Reads files only: no model, no agent.
 
@@ -415,6 +436,7 @@ def collect_state(config: Config) -> dict:
                      "seen": seen_runs(entry),
                      "outline": step_outline(entry.steps),
                      "groups": step_groups(entry),
+                     "projects": _projects(entry),
                      "summary": _cached_summary(summaries, entry)})
     # Expired last of all. Otherwise most-recognized first; at the same count,
     # the one closest to expiring first, then rows that never expire.
@@ -423,8 +445,9 @@ def collect_state(config: Config) -> dict:
                              r["days_left"] is None,
                              r["days_left"] if r["days_left"] is not None else 0,
                              (r["title"] or "").lower()))
+    drafts = list_drafts(config)
     return {"threshold": threshold, "ttl": config.candidate_ttl_days,
-            "rows": rows, "drafts": list_drafts(config)}
+            "rows": rows, "drafts": drafts, "projects": project_list(rows, drafts)}
 
 
 def seen_runs(entry) -> list[dict]:
@@ -600,6 +623,7 @@ def list_drafts(config: Config) -> list[dict]:
             # for, and a name alone did not tell drafts apart.
             "drafted_at": datetime.fromtimestamp(
                 skill_md.stat().st_mtime, timezone.utc).isoformat(),
+            "projects": _projects(entry),
         })
     drafts.sort(key=lambda d: d["drafted_at"], reverse=True)
     return drafts
@@ -921,6 +945,8 @@ PAGE = r"""<!doctype html>
    padding:14px 24px;border-bottom:1px solid var(--line);background:var(--panel);
    font-size:12px;color:var(--dim)}
  header b{font:600 14px var(--mono);color:var(--fg)}
+ header select{font:12px var(--mono);color:var(--fg);background:var(--bg);
+   border:1px solid var(--line);border-radius:6px;padding:4px 8px;max-width:260px}
  main{max-width:1000px;margin:0 auto;padding:24px 16px 48px}
  .row{display:flex;align-items:center;gap:16px;padding:14px 16px;margin-bottom:8px;
    background:var(--panel);border:1px solid var(--line);border-radius:8px}
@@ -1088,6 +1114,7 @@ PAGE = r"""<!doctype html>
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
 </style></head><body>
 <header><span style="display:flex;align-items:center;gap:18px"><b>skillpp</b>
+<select id="project" aria-label="Project" hidden></select>
 <nav id="nav"></nav></span><span id="where"></span></header>
 <main id="list"></main>
 <script>
@@ -1154,6 +1181,31 @@ async function startDraft(id){
   } finally { busy.delete(id); await load(); }
 }
 
+// Which project the page shows, remembered in this browser: `null` is every
+// project, "" the entries that have none. A candidate belongs to one project
+// (`capture.project_of`); older ones may list several and show under each.
+const PROJECT_KEY = "skillpp.project";
+let ALL = null, project = null;
+try { const v = localStorage.getItem(PROJECT_KEY); if (v !== null) project = JSON.parse(v); } catch (e) {}
+const inProject = x => project === null || (x.projects || [""]).includes(project);
+function applyProject(){
+  S = {...ALL, rows: ALL.rows.filter(inProject), drafts: ALL.drafts.filter(inProject)};
+}
+function renderProjects(){
+  const sel = document.getElementById("project");
+  const list = ALL.projects || [];
+  if (project !== null && !list.some(p => p.key === project)) project = null;   // gone since
+  sel.hidden = list.length < 2;          // one project: nothing to choose
+  sel.innerHTML = `<option value="*">All projects</option>` + list.map(p =>
+    `<option value="${esc(p.key)}" title="${esc(p.path || "sessions recorded without a folder")}">${esc(p.name)} (${p.candidates})</option>`).join("");
+  sel.value = project === null ? "*" : project;
+  sel.onchange = () => {
+    project = sel.value === "*" ? null : sel.value;
+    try { localStorage.setItem(PROJECT_KEY, JSON.stringify(project)); } catch (e) {}
+    applyProject(); render();
+  };
+}
+
 // Which drafts this viewer has looked at, per version: a finished revision is
 // news again. Kept in the browser, because it is one viewer's attention and
 // nothing the ledger needs. On a first visit what already exists is not news.
@@ -1166,7 +1218,7 @@ function syncSeen(){
   try { seen = JSON.parse(localStorage.getItem(SEEN_KEY)); } catch(e){ seen = null; }
   if(seen && seen.cards) return;
   seen = {cards: {}, tab: 0};
-  S.drafts.forEach(d => { seen.cards[d.id] = d.drafted_at; seen.tab = Math.max(seen.tab, stamp(d.drafted_at)); });
+  (ALL || S).drafts.forEach(d => { seen.cards[d.id] = d.drafted_at; seen.tab = Math.max(seen.tab, stamp(d.drafted_at)); });
   saveSeen();
 }
 const isNew = d => !d.revising && seen && seen.cards[d.id] !== d.drafted_at;
@@ -1564,10 +1616,13 @@ async function act(what, id){
 }
 
 async function load(){
-  S = await (await fetch("/api/state")).json();
+  ALL = await (await fetch("/api/state")).json();
+  applyProject();
+  renderProjects();
   render();
   clearTimeout(timer);
-  if(S.rows.some(r => r.state === "creating" || r.state === "revising")) timer = setTimeout(load, 5000);
+  // Every project's rows: a draft running in another project still finishes.
+  if(ALL.rows.some(r => r.state === "creating" || r.state === "revising")) timer = setTimeout(load, 5000);
 }
 load();
 </script>

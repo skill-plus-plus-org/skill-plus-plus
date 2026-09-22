@@ -3859,6 +3859,52 @@ class TestWeb(TempRoot):
         self._save("i", status=STATUS_PROMOTED, skill_path=str(skill))
         self.assertEqual(self._rows()["i"]["state"], "installed")
 
+    def test_the_page_lists_each_project_with_its_counts(self):
+        """The switcher's menu: every project on the page, "No project" last."""
+        from skillpp.web import collect_state
+        a, b = self.root / "repo-a", self.root / "repo-b"
+        for repo in (a, b):
+            (repo / ".git").mkdir(parents=True)
+        self._save("x", projects=[str(a)])
+        self._save("y", projects=[str(a / "web")])          # a subfolder: still repo-a
+        self._save("z", projects=[str(b)])
+        self._save("w")                                     # recorded without a folder
+        state = collect_state(self.config)
+        self.assertEqual([(p["name"], p["candidates"]) for p in state["projects"]],
+                         [("repo-a", 2), ("repo-b", 1), ("No project", 1)])
+        rows = {r["id"]: r["projects"] for r in state["rows"]}
+        self.assertEqual(rows["y"], [str(a)])
+        self.assertEqual(rows["w"], [""])
+
+    def test_a_draft_carries_its_project(self):
+        from skillpp.web import collect_state
+        repo = self.root / "repo"
+        (repo / ".git").mkdir(parents=True)
+        self._drafted("x")
+        entry = self.ledger.get("x")
+        entry.projects = [str(repo)]
+        self.ledger.save(entry)
+        state = collect_state(self.config)
+        self.assertEqual(state["drafts"][0]["projects"], [str(repo)])
+        self.assertEqual(state["projects"][0]["drafts"], 1)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_the_page_filters_by_the_chosen_project(self):
+        """All projects, one project, and the entries with none."""
+        import json, subprocess
+        from skillpp.web import PAGE
+        script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
+        state = {"rows": [{"id": "a", "projects": ["/r/a"]}, {"id": "b", "projects": ["/r/b"]},
+                          {"id": "n", "projects": [""]}, {"id": "old", "projects": ["/r/a", "/r/b"]}],
+                 "drafts": [{"id": "a", "projects": ["/r/a"]}], "projects": []}
+        program = script + f"""
+ALL = {json.dumps(state)};
+const shown = p => {{ project = p; applyProject(); return S.rows.map(r => r.id).join(","); }};
+process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.drafts.length]));"""
+        out = json.loads(subprocess.run(["node", "-e", program], capture_output=True,
+                                        text=True, check=True).stdout)
+        self.assertEqual(out, ["a,b,n,old", "a,old", "n", 0])
+
     def test_loading_the_page_runs_nothing(self):
         import subprocess
         self._save("a")

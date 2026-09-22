@@ -51,6 +51,8 @@ The first public release.
   is named in the draft; that day's settings become inputs; a result the run
   only stated becomes a check to perform; questions go into Open questions;
   the agent no longer splits candidates.
+- The review page has a project menu: it shows one project's candidates and
+  drafts at a time, and remembers the choice.
 - The review page shows when each draft was written, lists the newest first,
   and marks drafts written since you last looked.
 - A description's dashes and accents are kept, instead of reaching the review
