@@ -1033,8 +1033,7 @@ PAGE = r"""<!doctype html>
  .draft .row{margin:0;border:0;background:none;cursor:pointer}
  .chev{color:var(--muted);font:12px var(--mono);width:12px;transition:transform .15s}
  .draft.open .chev{transform:rotate(90deg)}
- .draft .desc{padding:0 16px 4px 44px;color:var(--dim);font-size:12.5px;margin:0}
- .draft .from{padding:0 16px 12px 44px;color:var(--muted);font-size:12px;margin:0}
+ .draft .desc{padding:0 16px 12px 44px;color:var(--dim);font-size:12.5px;margin:0}
  .draft .ago{color:var(--muted);font-size:12px;white-space:nowrap}
  .draft .body{display:none;border-top:1px solid var(--line);padding:14px 16px}
  .draft.open .body{display:block}
@@ -1309,14 +1308,13 @@ function renderDrafts(list){
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
         ${isNew(d) ? `<span class="new" title="Written since you last opened it">New</span>` : ""}
-        <span class="badge ${d.downloaded_at ? "downloaded" : "review"}">${d.downloaded_at ? "Downloaded" : "To review"}</span>
         <span class="ago" title="${esc(when(d.drafted_at))}">${d.revising ? "revising" : "drafted " + ago(d.drafted_at)}</span>
+        <span class="badge ${d.downloaded_at ? "downloaded" : "review"}">${d.downloaded_at ? "Downloaded" : "To review"}</span>
         <span class="acts">${d.questions.length
           ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
           : `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">${d.downloaded_at ? "Download again" : "Download skill"}</a>`}</span>
       </div>
       <p class="desc">${esc(d.description)}</p>
-      <p class="from">From candidate: ${esc(d.title)}</p>
       <div class="body">
         <p class="files">${d.files.map(esc).join(" · ")}</p>
         ${questionsBlock(d)}
