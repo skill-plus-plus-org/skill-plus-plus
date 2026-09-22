@@ -4,6 +4,13 @@ Division of labour: this CLI does everything deterministic. The
 ``/skillpp-review`` slash command drives an agent through the parts that need
 judgement — reading the proposal, resolving what the repo can answer, asking
 the developer at most three questions, and writing the final prose.
+
+skillpp's own modules are mostly imported inside the command that needs them,
+to keep them off the hook's path: the hook runs on every prompt. Over five cold
+processes, `import skillpp.cli` took 55-68 ms, with `matching`, `similar`,
+`decisions`, `install`, `web`, `boundary` and `episode` all left unloaded;
+importing `matching` alone costs about as much again. No import cycle requires
+this, so a move back to the top is only a startup cost, not a breakage.
 """
 
 from __future__ import annotations
@@ -13,19 +20,36 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
-from .capture import (fold_dictation, handle_prompt, handle_session_end,
-                      handle_tool, log_error, mark_ending)
+from .capture import (fold_dictation, handle_prompt, handle_tool,
+                      log_error, mark_ending)
 from .config import Config, default_skills_dir
-from .ledger import Ledger, STATUS_DISMISSED, STATUS_PROMOTED
+from .ledger import Entry, Ledger, STATUS_DISMISSED, STATUS_PROMOTED
 from .lifecycle import move_tier, scan
 from .signals import detect
 from .summary import (check_dependencies, questions_for, render_proposal,
                       scaffold_skill)
+
+
+class _NoEntry(Exception):
+    """`--id` matched nothing. Raised by `_entry` and caught in `main`, so the
+    nine commands that start by resolving an id do not each repeat the message.
+    """
+
+
+def _entry(args: argparse.Namespace) -> tuple[Config, Ledger, Entry]:
+    """The config, the ledger and the entry `--id` names."""
+    config = Config(args.root)
+    ledger = Ledger(config)
+    entry = ledger.get(args.id)
+    if not entry:
+        raise _NoEntry(args.id)
+    return config, ledger, entry
 
 
 # --------------------------------------------------------------------------
@@ -104,21 +128,14 @@ def _agent_argv(config: Config, prompt: str) -> list[str]:
 
 
 def _agent_workspace(entry_id: str) -> Path:
-    """A directory the drafting agent is actually allowed to write to.
+    """A temp directory the drafting agent is allowed to write to.
 
-    The draft belongs under `<root>/drafts/<id>/`, which on a default install
-    is inside `~/.claude` — and the agent's sandbox refuses `Write` and `Edit`
-    on anything under there. Measured, not guessed: the first run after the
-    agent's output was kept said so in as many words, having spent 93 seconds
-    composing a draft it could not save. Only `skillpp scaffold` got through,
-    because that write happens inside an allowed `Bash` subprocess, so every
-    draft was the scaffold and nothing else.
-
-    The lab that produced a good draft wrote into a temp directory, which is
-    the difference nobody could see. So the agent works in temp and the result
-    is moved into place afterwards by this process, which has no such limit.
+    `<root>/drafts/<id>/` is inside `~/.claude` on a default install, where the
+    agent's sandbox refuses `Write` and `Edit`, so a draft composed there cannot
+    be saved — every run came back as the bare scaffold. The agent writes to
+    temp and this process moves the result into place.
+    (docs/research/benchmarks.md, "Five defects, all found by running it")
     """
-    import tempfile
     return Path(tempfile.mkdtemp(prefix=f"skillpp-{entry_id[:8]}-"))
 
 
@@ -126,14 +143,12 @@ def _agent_home(entry_id: str) -> Path:
     """Where the drafting agent runs: a directory holding the two things its
     prompt relies on, `/skillpp-draft` and `python3 bin/skillpp`.
 
-    It used to run from this checkout, where both happen to exist. An installed
-    package has neither beside it, so a `pipx` install could draft nothing.
-    `bin/skillpp` here runs the skillpp that started the agent, whichever way it
-    was installed. Kept apart from the draft workspace, because everything
-    beside a written SKILL.md is collected into the draft.
+    An installed package has neither beside it, so the agent cannot run from
+    this checkout: a `pipx` install could draft nothing. The `bin/skillpp`
+    written here runs whichever skillpp started the agent. Kept apart from the
+    draft workspace, because everything beside a written SKILL.md is collected
+    into the draft.
     """
-    import shutil
-    import tempfile
     from .install import COMMANDS
     home = Path(tempfile.mkdtemp(prefix=f"skillpp-agent-{entry_id[:8]}-"))
     commands = home / ".claude" / "commands"
@@ -155,7 +170,6 @@ def _agent_home(entry_id: str) -> Path:
 
 def _collect(work: Path, out_dir: Path) -> list[Path]:
     """Move what the agent wrote into the draft directory."""
-    import shutil
     written = sorted(work.rglob("SKILL.md"))
     landed = []
     for source in written:
@@ -210,11 +224,7 @@ def cmd_draft(args: argparse.Namespace) -> int:
     import shlex
     import subprocess
 
-    config = Config(args.root)
-    entry = Ledger(config).get(args.id)
-    if not entry:
-        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
-        return 1
+    config, _, entry = _entry(args)
 
     out_dir = config.root / "drafts" / (args.name or entry.id)
     # The directory goes in the prompt as a literal, not as an environment
@@ -239,7 +249,6 @@ def cmd_draft(args: argparse.Namespace) -> int:
         print(f"SKILLPP_AGENT is not a valid command: {exc}", file=sys.stderr)
         return 1
 
-    import shutil
     found = shutil.which(argv[0])
     print(f"candidate  {entry.id}  x{entry.occurrences}  {entry.title[:60]}")
     print(f"draft dir  {out_dir}")
@@ -370,13 +379,8 @@ def cmd_revise(args: argparse.Namespace) -> int:
     """
     import hashlib
     import subprocess
-    from datetime import datetime, timezone
 
-    config = Config(args.root)
-    entry = Ledger(config).get(args.id)
-    if not entry:
-        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
-        return 1
+    config, _, entry = _entry(args)
     instruction = (args.instruction or "").strip()
     if not instruction:
         print("Say what to change with --instruction.", file=sys.stderr)
@@ -438,7 +442,6 @@ def cmd_revise(args: argparse.Namespace) -> int:
         return 1
     finally:
         if home:
-            import shutil
             shutil.rmtree(home, ignore_errors=True)
 
     if proc.returncode != 0:
@@ -478,12 +481,7 @@ def cmd_name(args: argparse.Namespace) -> int:
     candidate carries whatever the developer typed — and a skill named after a
     greeting never fires, however correct its steps are.
     """
-    config = Config(args.root)
-    ledger = Ledger(config)
-    entry = ledger.get(args.id)
-    if not entry:
-        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
-        return 1
+    config, ledger, entry = _entry(args)
     if args.title:
         if len(args.title) > _MAX_TITLE:
             print(f"Title is {len(args.title)} characters; keep it under "
@@ -524,12 +522,7 @@ def cmd_split(args: argparse.Namespace) -> int:
     """
     from .ledger import STATUS_CANDIDATE, STATUS_SPLIT, Entry, new_id
 
-    config = Config(args.root)
-    ledger = Ledger(config)
-    entry = ledger.get(args.id)
-    if not entry:
-        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
-        return 1
+    config, ledger, entry = _entry(args)
 
     at = args.at
     head, tail = entry.steps[:at], entry.steps[at:]
@@ -1056,11 +1049,7 @@ def cmd_dictate(args: argparse.Namespace) -> int:
 
 
 def cmd_show(args: argparse.Namespace) -> int:
-    config = Config(args.root)
-    entry = Ledger(config).get(args.id)
-    if not entry:
-        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
-        return 1
+    config, _, entry = _entry(args)
     if args.json and args.draft and entry.turns:
         # What a draft is written from: the conversation, not the raw steps or
         # the questions generated from them, which buried the procedure under
@@ -1311,11 +1300,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------
 
 def cmd_scaffold(args: argparse.Namespace) -> int:
-    config = Config(args.root)
-    entry = Ledger(config).get(args.id)
-    if not entry:
-        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
-        return 1
+    config, _, entry = _entry(args)
     answers = json.loads(args.answers) if args.answers else {}
     text = scaffold_skill(entry, args.name, args.description, answers,
                           args.tier, body=args.body,
@@ -1342,12 +1327,7 @@ def cmd_scaffold(args: argparse.Namespace) -> int:
 def cmd_promote(args: argparse.Namespace) -> int:
     """Mark a candidate promoted. The SKILL.md itself is written by the agent."""
     from . import decisions
-    config = Config(args.root)
-    ledger = Ledger(config)
-    entry = ledger.get(args.id)
-    if not entry:
-        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
-        return 1
+    config, ledger, entry = _entry(args)
     skill_path = Path(args.skill_path).expanduser() if args.skill_path else None
     if skill_path and not skill_path.exists():
         print(f"Skill file does not exist: {skill_path}", file=sys.stderr)
@@ -1366,12 +1346,7 @@ def cmd_promote(args: argparse.Namespace) -> int:
 
 def cmd_dismiss(args: argparse.Namespace) -> int:
     from . import decisions
-    config = Config(args.root)
-    ledger = Ledger(config)
-    entry = ledger.get(args.id)
-    if not entry:
-        print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
-        return 1
+    config, ledger, entry = _entry(args)
     decisions.record(config, entry, decisions.DISMISSED, args.note or "")
     entry.status = STATUS_DISMISSED
     entry.parked_at_occurrences = entry.occurrences
@@ -1435,10 +1410,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     """Dependency check at pull time."""
     config = Config(args.root)
     if args.id:
-        entry = Ledger(config).get(args.id)
-        if not entry:
-            print(f"No ledger entry matching '{args.id}'", file=sys.stderr)
-            return 1
+        _, _, entry = _entry(args)
         deps_cli, deps_mcp, label = entry.deps_cli, entry.deps_mcp, entry.id
     else:
         skills_dir = Path(args.skills_dir).expanduser() if args.skills_dir else default_skills_dir()
@@ -1548,14 +1520,12 @@ def _usable_interpreter(python: str | None) -> str:
 
     Checked before writing, because a hook whose command cannot start fails
     silently: Claude Code runs it, it exits non-zero, and nothing is captured
-    with nothing said. That is the failure this whole change exists to remove,
-    so the installer must not reintroduce it.
+    with nothing said. The installer must not reintroduce that silence.
     """
-    import shutil as _shutil
     import subprocess
 
     name = python or "python3"
-    if not python and not _shutil.which("python3"):
+    if not python and not shutil.which("python3"):
         return "no `python3` on PATH — pass --python /path/to/python3"
     try:
         out = subprocess.run(
@@ -1896,4 +1866,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "check" and not args.name and not args.id:
         print("check requires --name or --id", file=sys.stderr)
         return 1
-    return args.func(args)
+    try:
+        return args.func(args)
+    except _NoEntry as missing:
+        print(f"No ledger entry matching '{missing}'", file=sys.stderr)
+        return 1
