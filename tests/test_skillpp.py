@@ -1553,10 +1553,10 @@ class TestEpisodeSampler(unittest.TestCase):
 
 
 class TestReadThatFeedsAWrite(unittest.TestCase):
-    """`_NOISE_TOOLS` dropped every `Read`. Measured over 621 real ones, 38.5%
-    are immediately followed by a write to the same file and only 18.2% sit in
-    a run of reads — so the rule discarded twice as much procedure input as
-    exploration, and the step it discarded named the file being operated on."""
+    """`_NOISE_TOOLS` dropped every `Read`, including the one that names the
+    file a procedure then changes. On the recorded sessions that read is about
+    twice as common as a read inside a run of reads, so the rule discarded more
+    procedure input than exploration."""
 
     def _keep(self, steps):
         from skillpp.capture import _substantive

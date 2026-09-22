@@ -1110,7 +1110,7 @@ constant on all 357 judgements ever made.
 
 ```
 - TITLES in page.py can stage tutorial cards whose body has no matching key
-  in toolWalkthroughs.ts … Work out which ones, and tell me before changing
+  in toolTutorials.ts … Work out which ones, and tell me before changing
   anything.                                    <- inserted: forbids an artifact
 
 Just now, they read the file `… page.py`       <- inserted

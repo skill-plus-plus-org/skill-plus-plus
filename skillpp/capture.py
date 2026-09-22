@@ -72,24 +72,27 @@ _KEEP_INPUT = {
 # downstream. Short on purpose: the head of a reply says what happened, and the
 # tail is usually payload.
 _RESPONSE_CHARS = 400
-# Pure exploration: recorded, but never the reason a workflow is proposed.
-# UserPrompt is the segmentation sentinel written by handle_prompt — a task
-# boundary, never a step of the workflow itself.
+# Steps that are never the reason a workflow is proposed: looking around, the
+# agent's own bookkeeping (`TodoWrite`, `Task`), and `PROMPT_TOOL`, the
+# sentinel `handle_prompt` writes at a task boundary. `_substantive` keeps a
+# `Read` from this set when it feeds a write.
+#
+# Deliberately not `segment.is_read_only`, which also counts read-only shell
+# commands: those are often the check a procedure exists to perform. On the
+# recorded P-F sessions, writing a post to a word limit, it would drop every
+# `wc -w`; on C-F1, the `git diff` before the commit.
 _NOISE_TOOLS = {"Read", "Glob", "Grep", "TodoWrite", "Task", "WebFetch", "WebSearch",
                 PROMPT_TOOL}
 
 
 def _substantive(steps: list[dict]) -> list[dict]:
-    """The steps that are the work, keeping a `Read` that fed a write.
+    """The steps that are the work: everything outside `_NOISE_TOOLS`, plus a
+    `Read` that feeds a write (`segment.feeds_a_write`).
 
-    `_NOISE_TOOLS` drops every `Read` as pure exploration. Measured over 621
-    real `Read` calls, that is backwards: 38.5% are immediately followed by a
-    write to the *same file* and only 18.2% sit inside a run of reads. So the
-    rule discards twice as many procedure inputs as exploration — and the step
-    it discards is the one that says which file the procedure operates on.
-
-    Read-then-edit stays. A read that leads nowhere still goes, which is the
-    case the original rule was written for.
+    That read names the file the procedure operates on. On the recorded
+    sessions it is about twice as common as a read inside a run of reads, so
+    dropping it would discard more of the procedure than of the exploration. A
+    read that leads nowhere still goes.
     """
     keep: list[dict] = []
     for index, step in enumerate(steps):
@@ -97,8 +100,8 @@ def _substantive(steps: list[dict]) -> list[dict]:
         if tool not in _NOISE_TOOLS:
             keep.append(step)
             continue
-        # One predicate, shared with `trim_leading_exploration`, which used to
-        # cut these again whenever one opened an episode.
+        # The same predicate `trim_leading_exploration` asks, so a read kept
+        # here is not cut again for opening an episode.
         if feeds_a_write(steps, index):
             keep.append(step)
     return keep
