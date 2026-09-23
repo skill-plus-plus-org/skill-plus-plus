@@ -107,12 +107,11 @@ _THINK_RESERVE = 4096
 # to spare.
 _THINK_CTX = 8192
 
-# The section showing what the assistant did after the developer spoke. With
-# thinking on, the model read the question's "that" as these steps and judged
-# them: at the review prompt it agreed the instruction continued the task, then
-# called `pytest` and `npm test` "a shift from content review to code testing"
-# and answered "new job". Both settings exist to measure whether the section
-# helps, hurts, or only needs saying differently.
+# The section showing what the assistant did after the developer spoke, and its
+# label. On. A model can take the question's "that" to mean these steps rather
+# than the instruction (it did with thinking on), so both are settings: whether
+# the section helps, hurts or only needs another label is measured with
+# `tests/benchmarks/judge_replay.py --no-next` and `--next-label`.
 SHOW_NEXT = True
 NEXT_LABEL = "What they do next:"
 
@@ -475,27 +474,16 @@ def describe_in_session(config, session: dict, step: dict,
 def window(steps: list[dict]) -> tuple[str, list[str]]:
     """The task in progress: what was asked for, and what has been done since.
 
-    The span runs from the last step judged an ending to now. That is causal —
-    it reads verdicts already recorded, never a later one — so it means the same
-    thing live in the hook as it does replaying a stored session.
+    The span runs from the last step judged an ending to now. It reads only
+    verdicts already recorded, never a later one, so a session is judged the same
+    at its end as when a stored one is replayed.
 
-    **The goal is every prompt in that span, in order.** Three shapes measured,
-    on the live sessions at 20 steps of context:
-
-    * the *latest* prompt alone — 0/5. A task is often stated across several
-      prompts, so the last is a sub-step, and a sub-step is satisfied by one
-      edit. It read 54 steps as 27 endings.
-    * the *first* prompt of the span — 0/5 live, though 4/5 on the synthetic
-      multi-task class against 0/5 for this one. Real sessions run 20+ steps
-      under a handful of prompts, so once that first ask is satisfied every
-      later span re-supplies it and the model keeps answering yes: 54 steps,
-      17 episodes.
-    * *every* prompt in the span — 4/5. It carries a known cost, a ratchet:
-      miss one ending and the next prompt joins the same goal, so the question
-      becomes "is every part done" over two tasks and is harder to answer yes
-      than the first was. That is why its failures are all `got 1`. It is still
-      the best measured, and the synthetic corpus cannot see its advantage
-      because every task there is 3-4 steps long.
+    **The goal is every prompt in that span, in order.** A task is often stated
+    across several prompts, so any one of them is only part of it: cut to the
+    latest prompt, a recorded session splits into three
+    (docs/research/benchmarks.md, "The question moved"). The known cost is a
+    ratchet: miss one ending and the next task's prompts join the same goal, so
+    the next gap is compared against two tasks at once.
     """
     from .segment import is_prompt
 
@@ -512,8 +500,8 @@ def window(steps: list[dict]) -> tuple[str, list[str]]:
         # An ending fired part-way through a task, so the span opens with no
         # prompt — the developer has not said anything new and the previous ask
         # still governs. Without this the goal renders "(not stated)" and the
-        # model is asked whether a request it cannot see is finished; it says
-        # yes, which fires another ending, which opens another promptless span.
+        # model is asked about a request it cannot see; it says yes, which fires
+        # another ending, which opens another promptless span.
         earlier = [text(s) for s in steps[:start] if is_prompt(s) and text(s)]
         asked = earlier[-1:]
     done = [render_step(s) for s in span if not is_prompt(s)]
