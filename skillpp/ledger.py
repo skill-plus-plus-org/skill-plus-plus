@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import secrets
 import re
-import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -121,10 +120,6 @@ class Entry:
     unmatched: bool = False
 
     # -- derived ---------------------------------------------------------
-    @property
-    def age_days(self) -> float:
-        return (datetime.now(timezone.utc) - _parse_ts(self.created)).total_seconds() / 86400
-
     def recurrences_since_parked(self) -> int:
         """How often this work happened again after someone said no."""
         if not self.parked_at_occurrences:

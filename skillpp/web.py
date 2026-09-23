@@ -477,7 +477,7 @@ def _by_prefix(session_id: str) -> str | None:
     """A transcript whose name *starts* with this id, when exactly one does.
 
     Entries banked from the live-session fixtures carry the short tag the
-    fixture is filed under (`f32d548f`) rather than the full uuid, and the
+    fixture is filed under (`0dfd6eb1` for `0dfd6eb1-p-v1.json`) rather than the full uuid, and the
     fixtures are real sessions whose transcripts are still on disk. Accepted
     only when the prefix picks out a single file: a match that is ambiguous is
     not provenance.

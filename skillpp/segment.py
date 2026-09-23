@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 import re
 
-from .normalize import normalize_command, normalize_links
+from .normalize import normalize_links
 
 # What ends a task.
 #
@@ -325,7 +325,7 @@ def segment(steps: list[dict], min_steps: int = 2) -> list[Episode]:
     looked at things used to be flagged outright, on the reasoning that looking
     contains no method. Its only justification was `reading-around` in
     `tests/benchmarks/cases.py` — five hand-authored steps written alongside the
-    detector, exercised by no live session — while a real one, `95b6bde7`, lost
+    detector, exercised by no live session — while a real one, a recorded session, lost
     the MCP retrieval its procedure exists for. Reading that ends a session is
     still caught by the trailing rule above. Noise is filtered without guessing
     at content: a one-off never reaches `recurrence_threshold`.

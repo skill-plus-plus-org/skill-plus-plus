@@ -82,12 +82,10 @@ def cmd_hook(args: argparse.Namespace) -> int:
         elif event == "PostToolUse":
             handle_tool(config, payload)
         elif event == "SessionEnd":
-            # Stamp and hand off. The judge and the embeddings used to run
-            # here, inside the hook: one cold model call can reach
-            # `boundary.DEFAULT_TIMEOUT`, Claude Code's hook budget is about a
-            # minute, and quitting the app gives less — so the hook was killed
-            # and the session waited out `PENDING_IDLE_HOURS` before anything
-            # banked it.
+            # Stamp and hand off. Nothing slow runs in the hook: one cold model
+            # call can reach `boundary.DEFAULT_TIMEOUT`, Claude Code gives a hook
+            # about a minute and less when the app quits, and a killed hook
+            # leaves the session waiting out `PENDING_IDLE_HOURS`.
             #
             # `Stop` is deliberately not handled. It fires at the end of every
             # agent turn, not at the end of a session, so folding there would

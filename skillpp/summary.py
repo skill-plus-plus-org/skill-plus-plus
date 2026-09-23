@@ -1,6 +1,6 @@
 """The review surface and the skill scaffold.
 
-Effect summaries, not purpose summaries (docs/design.md §3.4): the proposal leads with
+Effect summaries, not purpose summaries (docs/design.md §3, step 5): the proposal leads with
 what the skill will *do*, because a purpose summary can be perfectly accurate
 while the steps underneath are wrong.
 """

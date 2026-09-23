@@ -3,7 +3,7 @@
 Two jobs, both run *after* :mod:`skillpp.sanitize`:
 
 * :func:`parameterize` turns machine-specific values into template variables,
-  so a captured trace can run on somebody else's laptop (docs/design.md §3.5).
+  so a captured trace can run on somebody else's laptop (docs/design.md §3, step 6).
 * :func:`step_shape` reduces one step to a token describing what it *did*,
   throwing away arguments, so ``pytest -k auth`` and ``pytest -k billing`` are
   the same kind of step. `signals.py` compares these across a candidate's runs.

@@ -204,15 +204,6 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
-def cached_vector(entry: Entry, config, cache: dict) -> list[float] | None:
-    """The entry's vector if the cache still has a current one; never embeds."""
-    hit = cache.get(entry.id)
-    if (hit and hit.get("model") == config.embed_model
-            and hit.get("hash") == _digest(entry_text(entry))):
-        return hit["vector"]
-    return None
-
-
 def _log_truncation(config, what: str):
     """A callback for `embed` that records a match made on a cut text."""
     def note(tokens: int) -> None:

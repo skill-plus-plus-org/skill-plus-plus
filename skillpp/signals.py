@@ -339,7 +339,7 @@ def _first_match(pattern: re.Pattern[str], text: str) -> str:
 
 
 def effects(steps: list[dict]) -> dict:
-    """What the skill will *do* — the review surface (docs/design.md §3.4).
+    """What the skill will *do* — the review surface (docs/design.md §3, step 5).
 
     Effects, not purpose: a purpose summary can be accurate while the steps
     underneath are wrong. That is why the command itself is what this returns
