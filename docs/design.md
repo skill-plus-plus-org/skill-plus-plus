@@ -107,7 +107,7 @@ A boundary that would leave an episode of fewer than two substantive steps is ig
 Raw traces are **never persisted**. At capture time each observation is compressed into a compact markdown ledger entry and scrubbed in the same pass:
 
 * **Compression** keeps the ledger the same order of magnitude as the skill library itself, rather than the tens of megabytes raw MCP payloads and file diffs would consume.
-* **Sanitization happens once, on write.** An AST/regex scan strips API keys, tokens, credentials, internal URLs, and customer PII before anything touches disk — so the ledger is never a liability sitting in a buffer waiting to be cleaned later.
+* **Sanitization happens once, on write.** A regex scan strips API keys, tokens, credentials, internal URLs and email addresses before anything touches disk — so the ledger is never a liability sitting in a buffer waiting to be cleaned later.
 * **Searchability comes for free**, because entries are already text.
 
 ### Step 4 — Candidate Surfacing (two entry points)

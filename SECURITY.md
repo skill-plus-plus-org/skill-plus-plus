@@ -34,8 +34,9 @@ Useful context for judging whether something is a vulnerability:
   candidate. What it can reach beyond that is decided by the agent and its
   permissions, not by skillpp.
 - **Scrubbing** removes credential-shaped strings and email addresses from
-  everything captured. It is a net, not a guarantee; what it does not catch is
-  listed in [docs/privacy.md](docs/privacy.md). A secret that gets past it and
+  prompts, tool calls and replies; the working directory is kept as it is. It is
+  a net, not a guarantee; what it does not catch is listed in
+  [docs/privacy.md](docs/privacy.md). A secret that gets past it and
   into the ledger is worth reporting.
 
 ## Out of scope

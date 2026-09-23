@@ -1,12 +1,15 @@
 """Secret and PII scrubbing, applied on write.
 
-The engine never persists a raw trace. Every string captured from a hook goes
-through :func:`scrub` before it reaches disk, so the ledger is never a
-liability sitting in a buffer waiting to be cleaned up later (docs/design.md §3.2).
+What a hook captures — prompts, tool inputs and results, the agent's words —
+goes through :func:`scrub` before it reaches disk. Identifiers are kept as they
+are: the working directory, the transcript's path and the session id, because
+the project and the conversation are found from them. docs/privacy.md lists
+what is and is not recognised, and changes with ``_PATTERNS``.
 
-Redactions keep a stable type label — ``[REDACTED:github-token]`` rather than
-``***`` — so that scrubbing does not disturb recurrence matching: the same
-workflow run twice still produces the same signature.
+A redaction is a type label that never depends on the value —
+``[REDACTED:github-token]`` — so two runs of one workflow with different
+secrets still embed alike (`skillpp.matching`) and keep the same step shapes
+(`skillpp.signals`).
 """
 
 from __future__ import annotations
@@ -101,10 +104,12 @@ def _looks_like_secret(token: str) -> bool:
     """Conservative high-entropy fallback for credentials we have no rule for."""
     if any(sep in token for sep in "/-_"):
         # A name is words joined by separators; a credential is one long run of
-        # entropy. Two things have to hold, and segment *length* alone is not
-        # enough — a base64 blob containing a `/` splits into short pieces too,
-        # which is how an earlier version of this guard let a real secret past.
-        # The pieces of a name also *look* like words.
+        # entropy. Each condition stops a different secret passing as a name:
+        # pieces of one or two characters do not count, since a random run split
+        # at its `-`s is full of them; two pieces are too few; a base64 blob
+        # split at its `/`s has pieces that are not words; and a key glued onto
+        # a path is one piece of 40 or more, which the path's words would
+        # otherwise outvote.
         pieces = [x for x in re.split(r"[/\-_]", token) if len(x) > 2]
         wordlike = sum(1 for x in pieces if _WORDLIKE.match(x))
         if (len(pieces) >= 3 and wordlike >= 0.6 * len(pieces)

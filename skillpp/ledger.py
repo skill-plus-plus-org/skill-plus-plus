@@ -5,7 +5,7 @@ lossless JSON payload in a trailing HTML comment so the engine has a single
 authoritative source of truth. Frontmatter is *regenerated* from the payload on
 every write, so the two can never drift.
 
-Entries hold summaries, never raw traces (docs/design.md §3.2).
+Entries hold summaries, never raw traces (docs/design.md §3, step 3).
 """
 
 from __future__ import annotations

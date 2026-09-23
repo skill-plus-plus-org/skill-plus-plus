@@ -254,9 +254,9 @@ capture is Claude Code only for now. Drafting can use any agent CLI
 ## 🔒 Privacy
 
 Everything skillpp captures stays in `~/.claude/skillpp/` on your machine,
-scrubbed of keys, tokens, connection strings and email addresses. Names, phone
-numbers and the content of your files are **not** recognised, so treat it like
-your shell history. Something leaves your machine only when you press **Draft
+scrubbed of keys, tokens, cookies, connection strings and email addresses.
+Names, phone numbers and the content of your files are **not** recognised, and
+the folder you work in is kept as it is, so treat it like your shell history. Something leaves your machine only when you press **Draft
 Skill** or **Revise**. Nothing expires automatically.
 [docs/privacy.md](docs/privacy.md) says exactly what is stored where.
 
