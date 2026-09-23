@@ -296,10 +296,11 @@ class Ledger:
         return results
 
     def expire(self, now: datetime | None = None) -> list[str]:
-        """Delete unapproved candidates past their TTL.
+        """Delete candidates not recognized for `candidate_ttl_days`.
 
-        Promoted entries are never touched — expiry applies to the ledger, not
-        to the skill library (docs/design.md §6).
+        Pending ones too: a candidate at the threshold that nobody decides on
+        is not kept forever. Promoted entries are never touched — expiry
+        applies to the ledger, not to the skill library (docs/design.md §6).
         """
         now = now or datetime.now(timezone.utc)
         cutoff = now - timedelta(days=self.config.candidate_ttl_days)
@@ -307,8 +308,6 @@ class Ledger:
         for entry in self.all():
             if entry.status != STATUS_CANDIDATE:
                 continue
-            if entry.ready(self.config.recurrence_threshold):
-                continue  # proposal is pending review; keep it
             if _parse_ts(entry.last_seen) < cutoff:
                 if self.delete(entry.id):
                     removed.append(entry.id)

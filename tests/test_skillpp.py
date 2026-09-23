@@ -678,8 +678,8 @@ class TestLedger(TempRoot):
         ledger.save(Entry(id="kept", signature="c", last_seen=old, occurrences=1,
                           status="promoted"))
         removed = ledger.expire()
-        self.assertEqual(removed, ["old1"])
-        self.assertIsNotNone(ledger.get("ready"), "pending proposals survive")
+        self.assertEqual(sorted(removed), ["old1", "ready"],
+                         "a pending candidate left undecided expires too")
         self.assertIsNotNone(ledger.get("kept"), "approved entries are never deleted")
 
     def test_search_finds_by_intent(self):
@@ -3972,8 +3972,8 @@ class TestWeb(TempRoot):
         self.assertEqual(days_left(self.config, entry(10), now), 4)
         self.assertEqual(days_left(self.config, entry(13.9), now), 1)
         self.assertEqual(days_left(self.config, entry(20), now), 0)
-        self.assertIsNone(days_left(self.config, entry(30, n=3), now),
-                          "a candidate at the threshold is kept for review")
+        self.assertEqual(days_left(self.config, entry(10, n=3), now), 4,
+                         "a candidate at the threshold counts down too")
         self.assertIsNone(days_left(self.config, entry(30, status=STATUS_PROMOTED), now))
 
     def test_closest_to_expiring_first_at_the_same_count_and_expired_last(self):

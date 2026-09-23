@@ -138,13 +138,13 @@ def row_state(config: Config, entry) -> dict:
 
 def days_left(config: Config, entry, now=None) -> int | None:
     """Days until `skillpp expire` would delete this candidate, or None if it
-    never would. Mirrors `Ledger.expire`: only a candidate still collecting
-    expires, `candidate_ttl_days` after it was last recognized — so every new
-    recognition resets the clock, and one that reaches the threshold keeps."""
+    never would. Mirrors `Ledger.expire`: a candidate, pending or still
+    collecting, expires `candidate_ttl_days` after it was last recognized, so
+    every new recognition resets the clock."""
     from datetime import datetime, timedelta, timezone
     from .ledger import _parse_ts
 
-    if entry.status != STATUS_CANDIDATE or entry.ready(config.recurrence_threshold):
+    if entry.status != STATUS_CANDIDATE:
         return None
     now = now or datetime.now(timezone.utc)
     seconds = (_parse_ts(entry.last_seen) + timedelta(days=config.candidate_ttl_days)
@@ -1745,7 +1745,7 @@ function paint(){
       ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Promoted", drafted: "Drafted", declined: "Dismissed"}[highlight(r)]}</span>` : ""}
       <span class="acts">${actions(r)}</span>
       ${r.days_left === null ? `<span class="clock"></span>` : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
-        title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless it reaches ${S.threshold}× first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
+        title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless you promote it first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
       <span class="seen count ${r.occurrences >= S.threshold ? "reached" : ""}" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
       ${noteBlock(r)}
       <div class="body">${candidateBody(r)}</div></div>`;

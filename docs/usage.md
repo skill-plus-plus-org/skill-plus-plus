@@ -149,7 +149,7 @@ writes a Claude Code plugin folder instead.
 ## Housekeeping
 
 ```bash
-skillpp expire                 # delete candidates still collecting past SKILLPP_TTL_DAYS
+skillpp expire                 # delete candidates not promoted, past SKILLPP_TTL_DAYS
 skillpp lifecycle -v           # your skills: tiers, use, references that went stale
 skillpp tier <name> cold       # move a skill out of the loaded index, without deleting it
 skillpp check --name <name>    # are the programs and MCP servers it needs present?
@@ -181,7 +181,7 @@ All settings are environment variables.
 | --- | --- | --- |
 | `SKILLPP_ROOT` | `~/.claude/skillpp` | where the ledger, sessions and drafts live |
 | `SKILLPP_RECURRENCE` | `3` | times a task must repeat before it can be promoted |
-| `SKILLPP_TTL_DAYS` | `14` | how long `skillpp expire` keeps a candidate still collecting |
+| `SKILLPP_TTL_DAYS` | `14` | how long `skillpp expire` keeps a candidate that is not promoted, counted from its last recognition |
 | `SKILLPP_OLLAMA` | `http://127.0.0.1:11434` | the Ollama server |
 | `SKILLPP_LOCAL_MODEL` | `gemma4:e4b` | the model that cuts sessions and names candidates |
 | `SKILLPP_EMBED_MODEL` | `nomic-embed-text` | the model that matches repeats |

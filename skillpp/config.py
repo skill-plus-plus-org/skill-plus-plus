@@ -57,8 +57,9 @@ class Config:
 
         # A workflow must recur this many times before it is proposed.
         self.recurrence_threshold = _int_env("SKILLPP_RECURRENCE", 3)
-        # How long `skillpp expire` keeps a candidate that is still collecting,
-        # counted from the last time it was recognized. Nothing runs it for you.
+        # How long `skillpp expire` keeps a candidate that is not promoted,
+        # pending ones included, counted from the last time it was recognized.
+        # Nothing runs it for you.
         self.candidate_ttl_days = _int_env("SKILLPP_TTL_DAYS", 14)
         # Hard caps so a runaway session cannot bloat the ledger.
         self.max_steps_per_session = _int_env("SKILLPP_MAX_STEPS", 500)
