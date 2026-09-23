@@ -902,7 +902,7 @@ below.
 ### Reading is not evidence that nothing happened
 
 `95b6bde7` is a real session: pull the ADK reference docs through MCP, compare
-them against `cases.json` and `generate_evalset.py`, report. It banked **one
+them against `cases.json` and `generate_fixtures.py`, report. It banked **one
 candidate — the right count — containing none of the retrieval the procedure
 exists for.** The count being right is what hid it; only `must_contain` could
 see it.
@@ -998,7 +998,7 @@ production would never produce.
 What closed:
 
 - `5c7b0f81` and `fb505861` — the same procedure recorded twice. The prompt rule
-  cut at *"Write that list to COVERAGE.md"*, severing the deliverable from the
+  cut at *"Write that list to REPORT.md"*, severing the deliverable from the
   investigation that produced it. Two symptoms from one cut, decided only by how
   many steps followed the prompt: one banked a single episode missing the file,
   the other banked two and `must_contain` read the larger one.
@@ -1096,7 +1096,7 @@ banks 1, because the judge marks no ending anywhere.
 
 Every step was replayed through `gemma3n:e4b` at `_VALUE_CHARS=80`,
 `CONTEXT_STEPS=20`. **0 endings in 24 steps**, including step 24, which is
-`git add …cases.json …evalset.json && git commit -m "$(cat <<'EOF'`.
+`git add …cases.json …fixtures.json && git commit -m "$(cat <<'EOF'`.
 
 The boundary the judge has to find is after step 6, the last step of task one.
 
@@ -1195,8 +1195,8 @@ Two of the three endings it has ever marked across the whole corpus are the same
 command shape as the one it refuses here:
 
 ```
-a7be1ef5  end=True    git add …cases.json …evalset.json && git commit -m "$(cat <<'EOF'
-241955c7  end=False   git add …cases.json …evalset.json && git commit -m "$(cat <<'EOF'
+a7be1ef5  end=True    git add …cases.json …fixtures.json && git commit -m "$(cat <<'EOF'
+241955c7  end=False   git add …cases.json …fixtures.json && git commit -m "$(cat <<'EOF'
 ```
 
 Trimming `241955c7`'s goal to just "Commit both changes together." still gives
@@ -1233,7 +1233,7 @@ asking, when the next prompt arrives, whether it starts a new task — needs
 information that does not exist yet at step 6.
 
 **A first, untuned prompt-pair form scored 5/11**, over-firing on continuations:
-it cut `fb505861` at "Write that list to COVERAGE.md" and shattered `263d65ce`
+it cut `fb505861` at "Write that list to REPORT.md" and shattered `263d65ce`
 into nine. That was the starting point, not the answer.
 
 **Whether an ending must be closable only by the judge** never had to be
@@ -1280,7 +1280,7 @@ Ablated across all eleven sessions:
 
 The signal is a conjunction. The instruction says what the developer *intends*;
 the following steps say what actually *happened*. Without the instruction,
-`241955c7` cuts at "Regenerate the evalset" as well as at "Separate job:" — it
+`241955c7` cuts at "Regenerate the fixtures" as well as at the announced switch — it
 cannot tell which gap matters. Without the steps, it fires in 25 of 33 gaps.
 
 An empty `{PRIOR}` must render `(nothing yet)` rather than a blank block: on
@@ -1308,9 +1308,9 @@ counting pre-fold episodes, the harness printing `ok` with Ollama down, and a
 in the corpus holding two, and it was the only gap that failed:
 
 ```
-1. "did you call MCP for this?"
-2. "Use the adk-docs MCP tool to look up how ADK eval cases and evalsets are
-    structured — don't answer from memory, actually fetch the docs first."
+1. a question about how the agent had gone about it
+2. the opening request, restated: look the format up in the docs rather than
+   answer from memory
 ```
 
 Only the first reached the model, which read it as a new job. Measured on that
@@ -1426,7 +1426,7 @@ changes for the .md files") kept at "no". On the whole corpus it is not:
 | `698c7529` step 4, "Two things. Check every command…" | ✗ | yes | yes | — |
 | `698c7529` step 5, "Looks good. What's next? go" | ✗ | yes | yes | — |
 | `2095a8af` step 35, "Before you commit — check the docstring" | ✗ | yes | yes | — |
-| `95b6bde7` step 1, "No Confluence then — use the adk-docs MCP…" | ✗ | — | yes | — |
+| `95b6bde7` step 1, a prompt redirecting the lookup to a docs tool | ✗ | — | yes | — |
 | sessions | | 19/21 | 19/21 | **20/21** |
 
 With thinking on, the same three false cuts appear whether the tail is shown or
@@ -1534,7 +1534,7 @@ Card and fact cases were two families for a while. Compared step by step
 (`d5fd2e59` against `241955c7`'s chart case) they are the same work — read
 `cases.json`, edit it, check the JSON, regenerate, commit — and the steps that
 differ do the same job with other commands (`ls` and `head` against `find` and
-`grep`, both locating `generate_evalset.py`). What tells them apart is only in
+`grep`, both locating `generate_fixtures.py`). What tells them apart is only in
 the prompt and in the JSON written, and two fact runs were too few to hold a
 family only the prompt could separate.
 
@@ -1547,8 +1547,8 @@ family's size, so the eval-case family was most of every number.
 
 The first shipped text was `as_text`: the first prompt, then each step's command.
 The prompt was the problem. `_intents_for` puts first the last prompt before any
-work, which in three card-case sessions was the same scripted sentence, "Use the
-adk-docs MCP tool to look up how ADK eval cases…". That sentence held those three
+work, which in three card-case sessions was the same scripted sentence, an
+instruction to look the format up with a docs tool. That sentence held those three
 together at 0.97 and pulled `95b6bde7` — a docs comparison that edits nothing,
 opening with the same lookup — to 0.914, six thousandths under the floor.
 
@@ -1630,8 +1630,8 @@ the coverage write-ups in one entry for the first time, an eval-case entry at 3.
 
 ### One change at a time: what the conversation text keeps
 
-Five more live runs (two talk decks, three LinkedIn posts, over ARTICLE.md,
-HANDOFF.md and LEARNINGS.md) made the failure measurable: **two procedures over
+Five more live runs (two talk decks, three LinkedIn posts, over three of the
+project's documents) made the failure measurable: **two procedures over
 one document scored higher against each other (0.852) than two runs of one
 procedure over different documents (0.831).** The text was following the
 material.

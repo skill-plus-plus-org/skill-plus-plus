@@ -622,14 +622,14 @@ class TestNormalize(unittest.TestCase):
         `step_shape` is compared across a candidate's runs to find the steps
         every run shares (`signals.recurring_steps`), so it is built to be
         stable. A `description` is the opposite: free text the agent rewrites
-        every run — the same `./assemble.sh` was described "Assemble after tone
+        every run — the same `./build.sh` was described "Build after the style
         pass" once and "Assemble and measure section 6" the next time. If that
         reached `step_shape`, two runs of one procedure would share no steps.
         """
         plain = [bash("pytest -k auth"), bash("git push")]
         described = [
             {"tool": "Bash", "input": {"command": "pytest -k auth",
-                                       "description": "Assemble after tone pass"},
+                                       "description": "Build after the style pass"},
              "failed": False},
             {"tool": "Bash", "input": {"command": "git push",
                                        "description": "Ship it"}, "failed": False}]
@@ -756,12 +756,12 @@ class TestSignals(unittest.TestCase):
     def test_effects_keep_the_first_description_for_a_repeated_command(self):
         """Must agree with the deduped command list, which keeps the first."""
         eff = effects([
-            {"tool": "Bash", "input": {"command": "./assemble.sh",
-                                       "description": "Assemble after tone pass"}},
-            {"tool": "Bash", "input": {"command": "./assemble.sh",
+            {"tool": "Bash", "input": {"command": "./build.sh",
+                                       "description": "Build after the style pass"}},
+            {"tool": "Bash", "input": {"command": "./build.sh",
                                        "description": "Assemble and measure"}}])
-        self.assertEqual(eff["commands"], ["./assemble.sh"])
-        self.assertEqual(eff["describes"]["./assemble.sh"], "Assemble after tone pass")
+        self.assertEqual(eff["commands"], ["./build.sh"])
+        self.assertEqual(eff["describes"]["./build.sh"], "Build after the style pass")
 
     def test_effects_flag_destructive_and_writes(self):
         eff = effects([bash("rm -rf build"), bash("echo hi > out.txt"),
@@ -837,7 +837,7 @@ class TestCapture(TempRoot):
                       intents=["add an eval case",
                                "did you call MCP for this?",
                                "use the adk-docs MCP tool",
-                               "regenerate the evalset",
+                               "regenerate the fixtures",
                                "check the docstring in page.py",
                                "confirm TITLES is still the single source of truth"])
         ask, _ = render(entry)
@@ -1176,7 +1176,7 @@ class TestScaffold(unittest.TestCase):
         """An episode is one occurrence wrapped in that day's particulars. On a
         real entry seen 11x the method was 3 steps and the episode held 14."""
         from skillpp.signals import recurring_steps
-        core = [bash("./review.sh"), bash("./assemble.sh --force"),
+        core = [bash("./review.sh"), bash("./build.sh --force"),
                 bash("wc -w sections/*.md")]
         entry = Entry(id="abc", signature="s", title="article loop",
                       occurrences=3, steps=core + [bash("mv 11-close.md 12-close.md")],
@@ -1563,8 +1563,8 @@ class TestSegmentBoundaries(unittest.TestCase):
                  self._prompt("now write the case"),
                  {"tool": "Edit", "input": {"file_path": "eval/cases.json"}, "failed": False},
                  bash("python3 -c 'json.load(...)'"),
-                 self._prompt("regenerate the evalset from that"),
-                 bash("python3 eval/generate_evalset.py"),
+                 self._prompt("regenerate the fixtures from that"),
+                 bash("python3 tools/generate_fixtures.py"),
                  self._prompt("check the docstring in page.py first"),
                  bash("grep -n TITLES page.py"),
                  self._prompt("looks good — commit"),
@@ -3243,57 +3243,57 @@ class TestMatching(TempRoot):
 
     def test_the_closest_entry_above_the_floor_is_the_match(self):
         self.vectors = {"regenerate": [1.0, 0.0, 0.0], "restart": [0.0, 1.0, 0.0]}
-        a = self._entry("a", "regenerate evalset")
+        a = self._entry("a", "regenerate fixtures")
         b = self._entry("b", "restart servers")
-        match = self.matching.find_same([bash("regenerate evalset")], [a, b],
+        match = self.matching.find_same([bash("regenerate fixtures")], [a, b],
                                         self.config)
         self.assertEqual(match[0].id, "a")
         self.assertAlmostEqual(match[1], 1.0)
 
     def test_nothing_above_the_floor_is_no_match(self):
         self.vectors = {"regenerate": [1.0, 0.0, 0.0], "restart": [0.6, 0.8, 0.0]}
-        a = self._entry("a", "regenerate evalset")
+        a = self._entry("a", "regenerate fixtures")
         self.assertIsNone(self.matching.find_same(
             [bash("restart servers")], [a], self.config))
 
     def test_a_parked_entry_is_still_compared(self):
         """Otherwise its next occurrence would rebuild it and undo the parking."""
         self.vectors = {"regenerate": [1.0, 0.0, 0.0]}
-        a = self._entry("a", "regenerate evalset", status="dismissed")
-        match = self.matching.find_same([bash("regenerate evalset")], [a],
+        a = self._entry("a", "regenerate fixtures", status="dismissed")
+        match = self.matching.find_same([bash("regenerate fixtures")], [a],
                                         self.config)
         self.assertEqual(match[0].id, "a")
 
     def test_an_entry_is_embedded_once_and_again_only_when_it_changes(self):
         self.vectors = {"regenerate": [1.0, 0.0, 0.0]}
-        a = self._entry("a", "regenerate evalset")
+        a = self._entry("a", "regenerate fixtures")
         for _ in range(3):
-            self.matching.find_same([bash("regenerate evalset")], [a], self.config)
+            self.matching.find_same([bash("regenerate fixtures")], [a], self.config)
         # Every call embeds the episode; only the entry's own embeds are counted.
         self.assertEqual(len(self.calls), 3 + 1, "entry cached after the first time")
 
-        a.steps = [bash("regenerate evalset --force")]
-        self.matching.find_same([bash("regenerate evalset")], [a], self.config)
+        a.steps = [bash("regenerate fixtures --force")]
+        self.matching.find_same([bash("regenerate fixtures")], [a], self.config)
         self.assertEqual(len(self.calls), 4 + 2, "a changed text is embedded again")
 
     def test_a_different_embedding_model_is_not_served_from_the_cache(self):
         self.vectors = {"regenerate": [1.0, 0.0, 0.0]}
-        a = self._entry("a", "regenerate evalset")
-        self.matching.find_same([bash("regenerate evalset")], [a], self.config)
+        a = self._entry("a", "regenerate fixtures")
+        self.matching.find_same([bash("regenerate fixtures")], [a], self.config)
         before = len(self.calls)
         self.config.embed_model = "some-other-embedder"
-        self.matching.find_same([bash("regenerate evalset")], [a], self.config)
+        self.matching.find_same([bash("regenerate fixtures")], [a], self.config)
         self.assertEqual(len(self.calls) - before, 2, "episode and entry both re-embedded")
 
     def test_an_unreachable_model_raises_rather_than_guessing(self):
         from skillpp.local import LocalModelUnavailable
-        a = self._entry("a", "regenerate evalset")
+        a = self._entry("a", "regenerate fixtures")
 
         def down(text, **kw):
             raise LocalModelUnavailable("down")
         self.matching.embed = down
         with self.assertRaises(LocalModelUnavailable):
-            self.matching.find_same([bash("regenerate evalset")], [a], self.config)
+            self.matching.find_same([bash("regenerate fixtures")], [a], self.config)
 
     def test_no_entries_is_no_match_and_no_model_call(self):
         self.assertIsNone(self.matching.find_same([bash("x")], [], self.config))
