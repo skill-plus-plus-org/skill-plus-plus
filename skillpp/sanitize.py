@@ -38,14 +38,14 @@ _PATTERNS: list[tuple[str, re.Pattern[str], int]] = [
     ("openai-key", re.compile(r"\bsk-[A-Za-z0-9]{20,}\b", re.ASCII), 0),
     ("google-key", re.compile(r"\bAIza[A-Za-z0-9_-]{30,}\b", re.ASCII), 0),
     ("prefixed-token", re.compile(
-        r"\b(?:(?:whsec_|hf_|[rs]k_(?:live|test)_)[A-Za-z0-9]{16,}"
-        r"|glpat-[A-Za-z0-9_-]{20,})", re.ASCII), 0),
+        r"\b(?:(?:whsec_|[rs]k_(?:live|test)_)(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{16,}"
+        r"|hf_[A-Za-z0-9]{30,}|glpat-[A-Za-z0-9_-]{20,})", re.ASCII), 0),
     ("jwt", re.compile(
         r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", re.ASCII), 0),
     # `bearer` alone; `Basic` and `Token` only after an Authorization header.
     ("bearer-token", re.compile(
         r"(?i)(?<![A-Za-z0-9_])((?:bearer|authorization['\"]?:\s*['\"]?(?:basic|token))\s+)"
-        r"([A-Za-z0-9._~+/=-]{16,})"), 2),
+        r"(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])([A-Za-z0-9._~+/=-]{16,})"), 2),
     ("connection-string", re.compile(
         r"(?i)(?<![A-Za-z0-9_])(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp)"
         r"://[^\s'\"]+"), 0),
@@ -57,27 +57,44 @@ _PATTERNS: list[tuple[str, re.Pattern[str], int]] = [
     # Keyed on the context, not the name, because `session =` is code.
     ("cookie", re.compile(
         r"(?i)((?<![A-Za-z0-9_])cookie['\"]?:\s*['\"]?|(?<!\S)(?:-b|--cookie)\s+['\"]?)"
-        r"([^\s'\";=:]+=[^\s'\";]*(?:;\s*[^\s'\";=:]+=[^\s'\";]*)*)"), 2),
+        r"([^\s'\";=:-][^\s'\";=:]*=[^\s'\";]*(?:;\s*[^\s'\";=:]+=[^\s'\";]*)*)"), 2),
     # key = value / key: "value" in commands, env files and config blobs. The
-    # key may carry a prefix (`DB_PASSWORD`), quotes or brackets (`"password":`,
-    # `user[password]=`); a quoted value may hold spaces but not start with one,
-    # so `grep "token=" src/` is not read as a value. A value that is already a
-    # placeholder keeps the label an earlier rule gave it.
+    # key may carry quotes or brackets (`"password":`, `user[password]=`); a
+    # quoted value may hold spaces but not start with one, so `grep "token="
+    # src/` is not read as a value. A value that is already a placeholder keeps
+    # the label an earlier rule gave it, and one that reads as code
+    # (`parse(resp)`, `os.environ[...]`) is not a secret.
     ("credential", re.compile(
-        r"(?i)(?:(?<![A-Za-z0-9])|(?<=%5b))"
+        r"(?i)(?:(?<![A-Za-z0-9_])|(?<=%5b))"
         r"((?:api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|auth[_-]?token"
         r"|csrf[_-]?token|token|password|passwd|pwd|credential|private[_-]?key)"
-        r"(?:['\"\]]|%5d)?\s*[=:]\s*['\"]?)(?!\[REDACTED:)"
+        r"(?:['\"\]]|%5d)?\s*[=:]\s*['\"]?)(?!\[REDACTED:)(?![A-Za-z_]\w*[.(\[])"
         r"((?<=['\"])[^\s'\"][^'\"\n]{5,}(?=['\"])|[^\s'\"&;|]{6,})"), 2),
+    # A key with a prefix counts in two forms only, because `next_token =
+    # parse(r)` is code: an environment variable, in capitals (`DB_PASSWORD=`),
+    # whose value is not a bare number; or any key whose value is quoted, as
+    # config files write it (`"client_secret": "..."`).
+    ("credential", re.compile(
+        r"(?<![A-Za-z0-9_])((?:[A-Z0-9]+_)+(?:API_?KEY|SECRET(?:_?KEY)?|ACCESS_?TOKEN"
+        r"|AUTH_?TOKEN|CSRF_?TOKEN|TOKEN|PASSWORD|PASSWD|PWD|CREDENTIAL|PRIVATE_?KEY)"
+        r"['\"]?\s*[=:]\s*['\"]?)(?!\[REDACTED:)(?![A-Za-z_]\w*[.(\[])"
+        r"(?=[^\s'\"&;|]*[A-Za-z])"
+        r"((?<=['\"])[^\s'\"][^'\"\n]{5,}(?=['\"])|[^\s'\"&;|]{6,})"), 2),
+    ("credential", re.compile(
+        r"(?i)(?<![A-Za-z0-9_])((?:[a-z0-9]+_)+(?:api_?key|secret(?:_?key)?|access_?token"
+        r"|auth_?token|csrf_?token|token|password|passwd|pwd|credential|private_?key)"
+        r"['\"]?\s*[=:]\s*['\"])(?!\[REDACTED:)([^\s'\"][^'\"\n]{5,})(?=['\"])"), 2),
     # Not an SCP remote: `git@github.com:acme/api.git` names nobody. A remote is
     # the host, `:` and a path with a `/`; `jane@example.com:token` is still an
     # address. The lookahead skips the rest of the host, or the regex backtracks
     # to a shorter one and redacts half of `git@gitlab.example.com:team/r.git`.
-    # A match starts only where a run of address characters starts: `\b` would
-    # retry from every `%xx` of a URL-encoded blob, quadratic in its length.
+    # The local part is bounded at 64 characters and the host at 253, their
+    # limits, so every start costs a bounded amount and the rule stays linear;
+    # an unbounded one retries from every `%xx` of a URL-encoded blob, and
+    # starting only where a run starts misses a second address glued on by `-`.
     ("email", re.compile(
-        r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
-        r"(?![A-Za-z0-9_])(?![A-Za-z0-9.-]*:[\w.~-]*/)"), 0),
+        r"[A-Za-z0-9._%+-]{1,64}(?:@|%40)[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,}"
+        r"(?![A-Za-z0-9_])(?![A-Za-z0-9.-]{0,253}:[\w.~-]*/)"), 0),
     ("internal-host", re.compile(
         r"(?i)(?<![A-Za-z0-9_])https?://(?:[^/\s@]+@)?[A-Za-z0-9.-]+"
         r"\.(?:internal|corp|intranet|local|lan)(?![A-Za-z0-9_])[^\s'\"]*"), 0),
@@ -169,8 +186,8 @@ def scrub_obj(obj, max_chars: int = 2000):
         out = {}
         for k, v in obj.items():
             if isinstance(v, str):
-                _, joined, value = scrub(f"{k}: {v}").partition(": ")
-                v = value if joined else v
+                pair, head = scrub(f"{k}: {v}"), f"{k}: "
+                v = pair[len(head):] if pair.startswith(head) else v
             out[scrub_obj(k, max_chars)] = scrub_obj(v, max_chars)
         return out
     if isinstance(obj, list):

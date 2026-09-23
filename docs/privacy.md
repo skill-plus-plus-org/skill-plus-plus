@@ -50,8 +50,10 @@ typed placeholder such as `[REDACTED:github-token]`:
   Basic and Token)
 - cookies, from a `Cookie:` header or curl's `-b` / `--cookie`
 - database connection strings, a password in a URL of any scheme, and
-  credentials written as `key=value` or `key: value`, prefixed, quoted and
-  bracketed keys included (`DB_PASSWORD=`, `"password":`, `user[password]=`)
+  credentials written as `key=value` or `key: value`, quoted and bracketed keys
+  included (`"password":`, `user[password]=`); a key with a prefix when it is an
+  environment variable in capitals (`DB_PASSWORD=`) or its value is quoted
+  (`"client_secret": "…"`)
 - email addresses, URL-encoded ones (`%40`) included, and URLs on `.internal`,
   `.corp`, `.intranet`, `.local` and `.lan` hosts
 - any other random-looking string of 40 characters or more, as a fallback,
@@ -65,7 +67,9 @@ names a server rather than a person.
 **What it does not recognise:** people's names, phone numbers, IP addresses,
 hostnames outside the domains above, a password or token passed as a flag's
 value without `=` (`-p secret`, `--password secret`, `curl -u user:secret`),
-secrets written in hexadecimal (such as `openssl rand -hex` output, which looks
+a lower-case prefixed or camelCase key with an unquoted value
+(`client_secret: abc123`, `dbPassword=abc123`), a value that reads as code
+(`password = getpass()`), secrets written in hexadecimal (such as `openssl rand -hex` output, which looks
 the same as a commit hash), long strings made of only one or two kinds of
 character, and anything sensitive written in plain prose or inside a file's
 content. Treat the ledger as you would your shell history.

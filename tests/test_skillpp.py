@@ -473,6 +473,49 @@ class TestSanitize(unittest.TestCase):
         token = "k-q-x-Zr8Tq2WmN4pLb7-v-j-Yh3Kd9SgF2Pz6M-w-Ra5"
         self.assertNotIn(token, scrub(f"export SIGNING {token}"))
 
+    def test_two_addresses_joined_by_a_separator_are_both_redacted(self):
+        """Letting a match start only where a run of address characters starts
+        kept the rule linear, and stopped it ever trying the second address."""
+        for joint in ("-", "+", ".", "%2C", "%20"):
+            out = scrub(f"a.one@example.com{joint}b.two@example.com")
+            self.assertNotIn("a.one", out, joint)
+            self.assertNotIn("b.two", out, joint)
+
+    def test_the_email_rule_stays_linear(self):
+        """A lookahead that rescanned the rest of the host from every place a
+        domain could end made a long dotted run ending in `:x/` quadratic."""
+        start = time.perf_counter()
+        scrub("x@" + "aa." * 40000 + "aa:x/")
+        self.assertLess(time.perf_counter() - start, 1.0)
+
+    def test_scrub_obj_scrubs_a_string_before_cutting_it(self):
+        from skillpp.sanitize import scrub_obj
+        token = "q8Zr4Lm2Xv9Kp1Wd7Ns3Hc6Yb0Tf5Jg8Rk2Ue4Ao1"
+        value = "x" * 1975 + " " + token          # the token straddles the cut at 2,000
+        self.assertNotIn(token[:16], scrub_obj(value, 2000))
+
+    def test_code_that_names_a_token_is_not_a_credential(self):
+        for text in ("next_token=parse(resp)", "page_token = response.next_page_token",
+                     "MAX_TOKEN=4096000", "id_token: jwt.decode(raw)",
+                     "reset_password_token: string", "password_reset_token: expires_in",
+                     "tokenizer.pad_token = tokenizer.eos_token",
+                     "SECRET_KEY = os.environ['SECRET_KEY']",
+                     "model = hf_AutoModelForCausalLM.from_pretrained(name)",
+                     "the bearer responsibilities are listed below",
+                     "grep -b --color=auto pattern notes.md"):
+            self.assertEqual(scrub(text), text)
+
+    def test_prefixed_keys_count_as_env_vars_or_quoted_config(self):
+        for text, secret in (("export DB_PASSWORD=hunter2hunter2", "hunter2hunter2"),
+                             ('"client_secret": "Xq7Lm2Pz9Rt4Wv8N"', "Xq7Lm2Pz9Rt4Wv8N"),
+                             ('SECRET_KEY = "Xq7Lm2Pz9Rt4Wv8N"', "Xq7Lm2Pz9Rt4Wv8N")):
+            self.assertNotIn(secret, scrub(text), text)
+
+    def test_a_dict_key_containing_a_colon_keeps_its_value(self):
+        from skillpp.sanitize import scrub_obj
+        self.assertEqual(scrub_obj({"Scope: which files?": "only src"}),
+                         {"Scope: which files?": "only src"})
+
     def test_a_dict_value_is_read_with_its_key(self):
         from skillpp.sanitize import scrub_obj
         out = scrub_obj({"password": "hunter2hunter2", "command": "ls -la"})
@@ -522,12 +565,6 @@ class TestNothingSecretReachesDisk(TempRoot):
         handle_tool(self.config, {**base, "tool_name": "Bash",
                                   "tool_input": {"command": "make upload"},
                                   "tool_response": {"stdout": straddling}})
-        # Tool input is cut at `max_field_chars`; a space before the token keeps
-        # it out of the padding's run, so only the order of scrub and cut decides.
-        at_input_cut = "x" * (self.config.max_field_chars - 26) + " " + self.TOKEN
-        handle_tool(self.config, {**base, "tool_name": "Write",
-                                  "tool_input": {"file_path": "/r/out.txt",
-                                                 "content": at_input_cut}})
         self._say(tx, {"type": "text", "text": straddling})
         handle_session_end(self.config, base)
         self.assertNotIn(self.TOKEN[:16], self._on_disk())
