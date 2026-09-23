@@ -344,6 +344,143 @@ class TestSanitize(unittest.TestCase):
         b = scrub("deploy --token=" + "Z9y8" * 12)
         self.assertEqual(a, b, "same shape must scrub identically or dedup breaks")
 
+    def test_no_recorded_session_changes_under_scrub(self):
+        """Every step of the public recordings was scrubbed when it was captured,
+        so scrubbing it again must change nothing. Titles and matching read the
+        scrubbed text, so a rule that starts matching ordinary work would quietly
+        change detection; it fails here first."""
+        def strings(value):
+            if isinstance(value, str):
+                yield value
+            elif isinstance(value, dict):
+                for item in value.values():
+                    yield from strings(item)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from strings(item)
+
+        seen = 0
+        folder = Path(__file__).parent / "fixtures" / "sessions"
+        for path in sorted(folder.glob("[0-9a-f]*-*.json")):
+            steps = json.loads(path.read_text(encoding="utf-8")).get("steps", [])
+            for text in strings(steps):
+                seen += 1
+                self.assertEqual(scrub(text), text, f"{path.name}: {text[:80]}")
+        self.assertGreater(seen, 1000)
+
+    def test_only_the_secret_is_replaced_and_its_quotes_stay(self):
+        self.assertEqual(scrub('export PASSWORD="hunter2abc"'),
+                         'export PASSWORD="[REDACTED:credential]"')
+
+    def test_prefixed_quoted_and_bracketed_keys_are_credentials(self):
+        for text, secret in (
+                ("export DB_PASSWORD=hunter2hunter2", "hunter2hunter2"),
+                ("GITHUB_TOKEN=abc123def456ghi", "abc123def456ghi"),
+                ("      POSTGRES_PASSWORD: Tr0ub4dor3x", "Tr0ub4dor3x"),
+                ('{"password": "hunter2hunter2"}', "hunter2hunter2"),
+                ("user[password]=hunter2hunter2", "hunter2hunter2"),
+                ("user%5Bpassword%5D=hunter2hunter2", "hunter2hunter2"),
+                ('password="correct horse battery"', "horse battery"),
+                ("X-CSRFToken: Zk3xP9qLm2vB7nW4", "Zk3xP9qLm2vB7nW4")):
+            self.assertNotIn(secret, scrub(text), text)
+        self.assertEqual(scrub('{"password": "hunter2hunter2"}'),
+                         '{"password": "[REDACTED:credential]"}')
+
+    def test_names_that_only_look_like_credentials_are_kept(self):
+        for text in ("max_tokens=4096", "prompt_tokens: 123456",
+                     "OLDPWD=/Users/dev/code", "print(d[token])",
+                     'grep -rn "token=" src/ --include="*.py"',
+                     "session = requests.Session()",
+                     "vim src/hf_dataset_loader_utils.py"):
+            self.assertEqual(scrub(text), text)
+
+    def test_a_typed_label_is_not_relabelled_as_a_credential(self):
+        self.assertEqual(scrub("DEPLOY_TOKEN=ghp_" + "Ab1" * 12),
+                         "DEPLOY_TOKEN=[REDACTED:github-token]")
+
+    def test_a_password_in_any_url_is_redacted(self):
+        for text, secret in (
+                ("DATABASE_URL=postgresql+psycopg2://app:s3cretpass@db:5432/app",
+                 "s3cretpass"),
+                ("redis-cli -u rediss://:s3cretpass@cache:6380/0", "s3cretpass"),
+                ("curl HTTPS://bob:s3cretpass@example.com/x", "s3cretpass"),
+                ("psql Postgres://bob:s3cretpass@db.example.com/app", "s3cretpass"),
+                ("open https://bob:s3cretpass@gitlab.internal/page", "gitlab.internal")):
+            self.assertNotIn(secret, scrub(text), text)
+        for text in ("https://example.com:8080/path",
+                     "ssh://git@github.com:22/acme/x.git",
+                     "npm view https://registry.npmjs.org/@scope/pkg"):
+            self.assertEqual(scrub(text), text)
+
+    def test_cookies_and_authorization_headers_are_redacted(self):
+        session = "eyJ1c2VyX2lkIjo0Mn0" + ".ZeyHgA." + "nx3tV95EzjWm" + "0C4YeHzbZPFCDdg"
+        sid = "s%3A" + "wxreDzQR" * 3
+        token = "9944b091" * 5
+        basic = "dXNlcjpz" + "M2NyZXRw" * 2 + "YXNz"
+        for text, secret in (
+                (f"curl -b 'session={session}' https://example.com", session),
+                (f"curl -H 'Cookie: sid={sid}; theme=dark' https://example.com", sid),
+                (f"curl -H 'Authorization: Token {token}' https://example.com", token),
+                (f"curl -H 'Authorization: Basic {basic}' https://example.com", basic)):
+            self.assertNotIn(secret, scrub(text), text)
+
+    def test_short_vendor_tokens_are_redacted_without_a_key_name(self):
+        for token in ("whsec_" + "Ab1" * 8, "hf_" + "Ab1" * 12,
+                      "sk_live_" + "Ab1" * 8, "rk_test_" + "Ab1" * 8,
+                      "glpat-" + "Ab1_" * 5):
+            self.assertNotIn(token, scrub(f"login --token {token}"), token)
+
+    def test_a_secret_glued_to_cjk_text_is_still_found(self):
+        """`\\b` is Unicode-aware: between `は` and `A` there is no boundary, so
+        every typed rule let a secret written straight after Japanese through."""
+        for secret in ("AKIA" + "IOSFODNN7EXAMPLE", "ghp_" + "Ab1" * 12,
+                       "jane.doe@example.com",
+                       "postgres://u:hunter2abc@db.example.com/app"):
+            self.assertNotIn(secret, scrub(f"キーは{secret}です"), secret)
+        self.assertNotIn("hunter2abc", scrub("キーはpassword=hunter2abcです"))
+
+    def test_remotes_are_kept_and_addresses_before_a_colon_are_not(self):
+        for cmd in ("git clone git@git.my-corp.example.com:team/repo.git",
+                    "scp report.pdf dev@build.example.com:~/inbox/"):
+            self.assertEqual(scrub(cmd), cmd)
+        self.assertNotIn("jane.doe",
+                         scrub("curl -u jane.doe@example.com:hunter2 https://x"))
+        self.assertNotIn("jane.doe",
+                         scrub("curl 'https://api.example.com/u?email=jane.doe%40acme.co'"))
+
+    def test_a_private_key_block_is_redacted_whole(self):
+        body = "MIIEpAIBAAKCAQEAx9 Jcjv5X83ck8= =Xq7c"
+        for kind in ("RSA PRIVATE KEY", "OPENSSH PRIVATE KEY", "PGP PRIVATE KEY BLOCK"):
+            out = scrub(f"cat k -----BEGIN {kind}-----\n{body}\n-----END {kind}-----")
+            self.assertEqual(out, "cat k [REDACTED:private-key]", kind)
+        # A header with no END does not reach forward into the next key.
+        text = ("-----BEGIN RSA PRIVATE KEY----- $ ls notes "
+                "-----BEGIN RSA PRIVATE KEY----- x -----END RSA PRIVATE KEY-----")
+        self.assertIn("$ ls notes", scrub(text))
+
+    def test_a_percent_encoded_signature_is_redacted_whole(self):
+        sig = "4UZUeJMZoUa4gxeuhOSCfMcU" + "%2F%2B" + "w9iFEzik2w8KvHk24" + "%3D"
+        out = scrub(f"https://acct.blob.example.com/c/b?sv=2022&spr=https&sig={sig}")
+        for i in range(len(sig) - 7):
+            self.assertNotIn(sig[i:i + 8], out)
+        # Joining escapes must not let a token inside an encoded path pass as a name.
+        token = "Zk3xP9qLm2vB7nW4" * 3
+        redirect = ("redirect_uri=https%3A%2F%2Fapp.example.com%2Fapi%2Fv1"
+                    f"%2Foauth%2Fcallback%2F{token}")
+        self.assertNotIn(token, scrub(redirect))
+
+    def test_one_letter_pieces_do_not_make_a_token_look_like_a_name(self):
+        token = "k-q-x-Zr8Tq2WmN4pLb7-v-j-Yh3Kd9SgF2Pz6M-w-Ra5"
+        self.assertNotIn(token, scrub(f"export SIGNING {token}"))
+
+    def test_a_dict_value_is_read_with_its_key(self):
+        from skillpp.sanitize import scrub_obj
+        out = scrub_obj({"password": "hunter2hunter2", "command": "ls -la"})
+        self.assertNotIn("hunter2hunter2", str(out))
+        self.assertEqual(out["command"], "ls -la")
+        key = "ghp_" + "Ab1" * 12
+        self.assertNotIn(key, str(scrub_obj({key: "x"})))
+
 
 class TestNothingSecretReachesDisk(TempRoot):
     """The hooks scrub each field as it enters, so these go through the real
@@ -385,6 +522,12 @@ class TestNothingSecretReachesDisk(TempRoot):
         handle_tool(self.config, {**base, "tool_name": "Bash",
                                   "tool_input": {"command": "make upload"},
                                   "tool_response": {"stdout": straddling}})
+        # Tool input is cut at `max_field_chars`; a space before the token keeps
+        # it out of the padding's run, so only the order of scrub and cut decides.
+        at_input_cut = "x" * (self.config.max_field_chars - 26) + " " + self.TOKEN
+        handle_tool(self.config, {**base, "tool_name": "Write",
+                                  "tool_input": {"file_path": "/r/out.txt",
+                                                 "content": at_input_cut}})
         self._say(tx, {"type": "text", "text": straddling})
         handle_session_end(self.config, base)
         self.assertNotIn(self.TOKEN[:16], self._on_disk())
