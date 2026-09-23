@@ -27,8 +27,8 @@ from it, and a test keeps the two identical.
   committed once by a neutral author (`Recorder <recorder@example.com>`), so
   your name never reaches a transcript. To record a session again, delete its
   folder first.
-- **Keep your own ledger clean.** If skillpp is installed for your user
-  (`skillpp install --user`), start CLI chats as `SKILLPP_INTERNAL=1 claude`.
+- **Keep your own ledger clean.** If skill-plus-plus is installed for your user
+  (`skill-plus-plus install --user`), start CLI chats as `SKILL_PLUS_PLUS_INTERNAL=1 claude`.
   The Desktop app can't set that, so record there only while it isn't
   installed for the user.
 

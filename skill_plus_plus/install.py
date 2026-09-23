@@ -15,45 +15,50 @@ from pathlib import Path
 
 # `SessionStart` banks what earlier sessions left behind: sessions held because
 # the local model did not answer when they ended, and sessions that never ended.
-# It starts `skillpp fold-pending` detached, because a session must not wait on a
+# It starts `skill-plus-plus fold-pending` detached, because a session must not wait on a
 # model to start.
 HOOK_EVENTS = ("UserPromptSubmit", "PostToolUse", "SessionEnd", "SessionStart")
-MARKER = "skillpp hook"
+# What marks a hook as ours: the command in either of its forms,
+# `python3 -m skill_plus_plus hook` or `<path>/skill-plus-plus hook`.
+MARKERS = ("skill_plus_plus hook", "skill-plus-plus hook")
+# A hook written before the rename. It no longer runs, so it never counts as
+# installed: `install` replaces it and `--remove` takes it out.
+OLD_MARKER = "skillpp hook"
 
 # The slash commands ship inside the package, so an installed copy has them too.
 COMMANDS = Path(__file__).resolve().parent / "commands"
-# The ones a developer types. `skillpp-draft.md` is read by `skillpp draft`.
-INTERACTIVE_COMMANDS = ("skillpp-review.md", "skillpp-new.md")
+# The ones a developer types. `skill-plus-plus-draft.md` is read by `skill-plus-plus draft`.
+INTERACTIVE_COMMANDS = ("skill-plus-plus-review.md", "skill-plus-plus-new.md")
 
 
 def hook_command(python: str | None = None, package_root: Path | None = None,
                  script: str | None = None) -> str:
     """The shell command Claude Code will run for each hook event.
 
-    From a checkout, ``PYTHONPATH`` makes ``-m skillpp`` importable without
+    From a checkout, ``PYTHONPATH`` makes ``-m skill_plus_plus`` importable without
     installing the package. Installed (``pipx install``), the console script is
     used instead: its path survives an upgrade, while a ``PYTHONPATH`` into a
     venv's ``site-packages`` names the Python version and breaks with it. The
     ledger root is deliberately *not* passed, so it defaults to
-    ``~/.claude/skillpp`` rather than landing inside the repo.
+    ``~/.claude/skill-plus-plus`` rather than landing inside the repo.
 
     The interpreter is looked up on PATH rather than pinned. This used to write
     ``sys.executable`` — on the machine this was developed on, that is
     ``/opt/homebrew/opt/python@3.14/bin/python3.14``, which stops existing at
-    the next upgrade and means nothing on anyone else's machine. skillpp
+    the next upgrade and means nothing on anyone else's machine. skill-plus-plus
     imports nothing outside the standard library, so any ``python3`` runs it.
     Pass *python* to pin one deliberately.
     """
     root = package_root or Path(__file__).resolve().parent.parent
-    checkout = (root / "bin" / "skillpp").is_file()
+    checkout = (root / "bin" / "skill-plus-plus").is_file()
     if not checkout and not python:
-        script = script or shutil.which("skillpp")
+        script = script or shutil.which("skill-plus-plus")
         # A path with a space would need quoting, and a quoted path no longer
-        # contains MARKER; the PYTHONPATH form below still works for it.
+        # contains a marker; the PYTHONPATH form below still works for it.
         if script and not any(c.isspace() for c in script):
             return f"{script} hook"
     interpreter = f'"{python}"' if python else "python3"
-    return f'PYTHONPATH="{root}" {interpreter} -m skillpp hook'
+    return f'PYTHONPATH="{root}" {interpreter} -m skill_plus_plus hook'
 
 
 def desired_hooks(python: str | None = None, package_root: Path | None = None) -> dict:
@@ -64,8 +69,9 @@ def desired_hooks(python: str | None = None, package_root: Path | None = None) -
     }
 
 
-def _has_marker(entries: list) -> bool:
-    return MARKER in json.dumps(entries)
+def _has_marker(entries: list, markers: tuple[str, ...] = MARKERS) -> bool:
+    text = json.dumps(entries)
+    return any(marker in text for marker in markers)
 
 
 def plan_settings(settings_path: Path, python: str | None = None,
@@ -83,7 +89,10 @@ def plan_settings(settings_path: Path, python: str | None = None,
     changes: list[str] = []
     for event, config in desired_hooks(python, package_root).items():
         current = hooks.get(event)
-        if current is None:
+        if isinstance(current, list) and _has_marker(current, (OLD_MARKER,)):
+            current[:] = [entry for entry in current if not _has_marker([entry], (OLD_MARKER,))]
+            changes.append(f"remove the old skillpp {event} hook")
+        if not current:
             hooks[event] = config
             changes.append(f"add {event} hook")
         elif isinstance(current, list) and not _has_marker(current):
@@ -95,10 +104,10 @@ def plan_settings(settings_path: Path, python: str | None = None,
 
 
 def installed_events(settings_path: Path) -> list[str]:
-    """Which hook events in this settings file are wired to skillpp.
+    """Which hook events in this settings file are wired to skill-plus-plus.
 
     The predicate `plan_settings` applies inline, extracted so `doctor` can ask
-    the question without re-implementing what `MARKER` and `HOOK_EVENTS` mean.
+    the question without re-implementing what `MARKERS` and `HOOK_EVENTS` mean.
     A missing or unreadable file is not an error here — it is an answer.
     """
     try:
@@ -113,10 +122,11 @@ def installed_events(settings_path: Path) -> list[str]:
 
 
 def plan_removal(settings_path: Path) -> tuple[dict, list[str]]:
-    """Return (settings without skillpp's hooks, change list) without writing.
+    """Return (settings without skill-plus-plus's hooks, change list) without writing.
 
-    Only entries carrying `MARKER` go. Anything else in the same event stays —
-    a settings file is the developer's, not ours, and an installer that cannot
+    Only entries carrying a marker go, the old `skillpp` one included.
+    Anything else in the same event stays — a settings file is the
+    developer's, not ours, and an installer that cannot
     take itself out cleanly should not be writing there in the first place. An
     event left with no entries is dropped rather than left as an empty list.
     """
@@ -134,19 +144,20 @@ def plan_removal(settings_path: Path) -> tuple[dict, list[str]]:
         return merged, ["nothing to remove — no hooks"]
     for event in HOOK_EVENTS:
         current = hooks.get(event)
-        if not isinstance(current, list) or not _has_marker(current):
+        ours = MARKERS + (OLD_MARKER,)
+        if not isinstance(current, list) or not _has_marker(current, ours):
             continue
-        kept = [entry for entry in current if MARKER not in json.dumps(entry)]
+        kept = [entry for entry in current if not _has_marker([entry], ours)]
         if kept:
             hooks[event] = kept
-            changes.append(f"remove skillpp from {event} ({len(kept)} other(s) kept)")
+            changes.append(f"remove skill-plus-plus from {event} ({len(kept)} other(s) kept)")
         else:
             del hooks[event]
             changes.append(f"remove {event} hook")
     if not hooks:
         merged.pop("hooks", None)
     if not changes:
-        changes.append("skillpp is not wired here — nothing to remove")
+        changes.append("skill-plus-plus is not wired here — nothing to remove")
     return merged, changes
 
 
@@ -156,7 +167,7 @@ def apply_settings(settings_path: Path, merged: dict) -> Path | None:
     backup = None
     if settings_path.exists():
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        backup = settings_path.with_suffix(f".json.skillpp-backup-{stamp}")
+        backup = settings_path.with_suffix(f".json.skill-plus-plus-backup-{stamp}")
         shutil.copy2(settings_path, backup)
     settings_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     return backup
@@ -271,9 +282,9 @@ def build_upload_bundle(skill_md: Path, out_dir: Path) -> str:
 def install_command_files(target_dir: Path) -> list[Path]:
     """Copy the slash commands a developer types into ``.claude/commands/``.
 
-    Only `/skillpp-review` used to be copied, so `/skillpp-new` had to be
-    found and copied by hand. `/skillpp-draft` is not
-    among them: nobody types it, `skillpp draft` hands it to its own agent.
+    Only `/skill-plus-plus-review` used to be copied, so `/skill-plus-plus-new` had to be
+    found and copied by hand. `/skill-plus-plus-draft` is not
+    among them: nobody types it, `skill-plus-plus draft` hands it to its own agent.
     """
     target_dir.mkdir(parents=True, exist_ok=True)
     written = []

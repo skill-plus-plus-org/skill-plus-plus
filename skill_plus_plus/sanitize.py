@@ -8,8 +8,8 @@ what is and is not recognised, and changes with ``_PATTERNS``.
 
 A redaction is a type label that never depends on the value —
 ``[REDACTED:github-token]`` — so two runs of one workflow with different
-secrets still embed alike (`skillpp.matching`) and keep the same step shapes
-(`skillpp.signals`).
+secrets still embed alike (`skill_plus_plus.matching`) and keep the same step shapes
+(`skill_plus_plus.signals`).
 """
 
 from __future__ import annotations

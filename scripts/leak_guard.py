@@ -11,7 +11,7 @@ synthetic values the tests use allowed by name. The terms that are actually
 sensitive to you (an employer, an internal project, a colleague, a hostname)
 cannot live here, because a public list of them publishes them. Keep those in a
 file outside the repo, one per line, and pass it with `--denylist` or
-`SKILLPP_DENYLIST`; they are matched case-insensitively.
+`SKILL_PLUS_PLUS_DENYLIST`; they are matched case-insensitively.
 
 Exits 1 and prints every hit as `where: pattern: text`.
 """
@@ -51,7 +51,7 @@ def denylist(path: str | None) -> list[re.Pattern]:
     """Each term as a whole word, case-insensitive. A plain substring found
     `cat` inside `concatenate`. Underscores count as a boundary, so
     `cat_project` still matches."""
-    source = path or os.environ.get("SKILLPP_DENYLIST")
+    source = path or os.environ.get("SKILL_PLUS_PLUS_DENYLIST")
     if not source:
         return []
     terms = []

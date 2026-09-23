@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking. skillpp is small, standard-library-only Python, and most of
+Thanks for looking. skill-plus-plus is small, standard-library-only Python, and most of
 it is explained in its own comments. This page covers setting up, the tests,
 the conventions the code follows, and how to show that a change is better, not
 just different.
@@ -10,13 +10,13 @@ just different.
 ```bash
 git clone https://github.com/himanshu096/skill-plus-plus
 cd skill-plus-plus
-pip install -e .          # puts `skillpp` on your PATH; or run python3 bin/skillpp
+pip install -e .          # puts `skill-plus-plus` on your PATH; or run python3 bin/skill-plus-plus
 ```
 
 Python 3.10 or newer. Nothing else is needed for the tests. `node`, if you have
 it, runs two extra tests of the review page's JavaScript; without it they skip.
 Ollama and the two models (see the README) are only needed to measure detection
-and matching, and to use skillpp for real.
+and matching, and to use skill-plus-plus for real.
 
 ## Tests
 
@@ -26,7 +26,7 @@ python3 -m unittest discover -s tests
 
 About ten seconds, with no model: the boundary judge, the embeddings, the
 describer and naming are stubbed for the whole suite (`setUpModule` in
-`tests/test_skillpp.py`). If a test you add reaches Ollama, it is missing a stub.
+`tests/test_skill_plus_plus.py`). If a test you add reaches Ollama, it is missing a stub.
 
 Tests that need recorded sessions skip when there are none; see
 [tests/fixtures/sessions/README.md](tests/fixtures/sessions/README.md).
@@ -40,7 +40,7 @@ python3 scripts/leak_guard.py
 It fails on home paths, email addresses, UUIDs and credential-shaped strings in
 tracked files. If you keep a list of terms that must never appear in public
 (an employer, a client, a colleague), pass it with `--denylist` or
-`SKILLPP_DENYLIST`, from outside the repo.
+`SKILL_PLUS_PLUS_DENYLIST`, from outside the repo.
 
 ## How the code is written
 
@@ -106,13 +106,13 @@ format.
 
 ## Changing the draft prompt
 
-A change to `skillpp/commands/skillpp-draft.md` is checked on four recorded
+A change to `skill_plus_plus/commands/skill-plus-plus-draft.md` is checked on four recorded
 sessions. Drafting and judging are Claude calls, so this is not in the unit
 suite:
 
 ```bash
 python3 tests/benchmarks/draft_check.py prepare draft.code.feature   # and the other three
-# run the `skillpp … draft … --apply` line it prints
+# run the `skill-plus-plus … draft … --apply` line it prints
 python3 tests/benchmarks/draft_check.py judge
 python3 tests/benchmarks/draft_check.py check
 ```

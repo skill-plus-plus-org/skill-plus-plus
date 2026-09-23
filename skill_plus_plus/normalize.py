@@ -1,6 +1,6 @@
 """Parameterisation and step shapes.
 
-Two jobs, both run *after* :mod:`skillpp.sanitize`:
+Two jobs, both run *after* :mod:`skill_plus_plus.sanitize`:
 
 * :func:`parameterize` turns machine-specific values into template variables,
   so a captured trace can run on somebody else's laptop (docs/design.md §3, step 6).
@@ -9,7 +9,7 @@ Two jobs, both run *after* :mod:`skillpp.sanitize`:
   the same kind of step. `signals.py` compares these across a candidate's runs.
 
 A whole-workflow `signature` built from these used to decide whether two runs
-were the same procedure. That is now an embedding (`skillpp.matching`).
+were the same procedure. That is now an embedding (`skill_plus_plus.matching`).
 """
 
 from __future__ import annotations

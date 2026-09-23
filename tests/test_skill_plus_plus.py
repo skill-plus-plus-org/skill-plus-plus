@@ -16,17 +16,17 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from skillpp.capture import (_fold_steps, fold_session, handle_prompt, handle_tool,
+from skill_plus_plus.capture import (_fold_steps, fold_session, handle_prompt, handle_tool,
                              handle_session_end)
-from skillpp.config import Config
-from skillpp.ledger import STATUS_CANDIDATE, Entry, Ledger
-from skillpp.lifecycle import check_staleness, parse_frontmatter, record_use, scan
-from skillpp.normalize import normalize_command, parameterize, step_shape
-from skillpp.sanitize import scrub
-from skillpp.segment import is_marker, is_prompt
-from skillpp.segment import segment as _real_segment
-from skillpp.signals import detect, effects
-from skillpp.summary import check_dependencies, scaffold_skill
+from skill_plus_plus.config import Config
+from skill_plus_plus.ledger import STATUS_CANDIDATE, Entry, Ledger
+from skill_plus_plus.lifecycle import check_staleness, parse_frontmatter, record_use, scan
+from skill_plus_plus.normalize import normalize_command, parameterize, step_shape
+from skill_plus_plus.sanitize import scrub
+from skill_plus_plus.segment import is_marker, is_prompt
+from skill_plus_plus.segment import segment as _real_segment
+from skill_plus_plus.signals import detect, effects
+from skill_plus_plus.summary import check_dependencies, scaffold_skill
 
 from fixtures.messy_session import (EXPECTED_OCCURRENCES, LEAKED_TOKEN,
                                     clean_session_dict, to_captured_session,
@@ -124,8 +124,8 @@ def setUpModule() -> None:
     verdicts on purpose.
     """
     global _REAL_JUDGE, _REAL_DESCRIBE, _REAL_EMBED
-    import skillpp.boundary as boundary
-    import skillpp.matching as matching
+    import skill_plus_plus.boundary as boundary
+    import skill_plus_plus.matching as matching
     _REAL_JUDGE = boundary.judge_session
     _REAL_DESCRIBE = boundary.describe_in_session
     _REAL_EMBED = matching.embed
@@ -143,7 +143,7 @@ def setUpModule() -> None:
     # on a refused connection. A candidate the model never named keeps the
     # title capture gave it, which is what these tests assert against.
     global _REAL_NAME
-    import skillpp.capture as capture
+    import skill_plus_plus.capture as capture
     _REAL_NAME = capture._name_from_model
     capture._name_from_model = lambda config, entry: None
     # And for `install`, which lists the Ollama models and pulls missing ones on
@@ -151,7 +151,7 @@ def setUpModule() -> None:
     # machine running it has pulled: every model is present unless a test says
     # otherwise, and a pull that is not stubbed fails the test.
     global _REAL_MODELS, _REAL_PULL
-    import skillpp.cli as cli
+    import skill_plus_plus.cli as cli
     _REAL_MODELS, _REAL_PULL = cli._available_models, cli._pull_model
     cli._available_models = lambda config: ([config.local_model, config.embed_model + ":latest"], "")
 
@@ -161,14 +161,14 @@ def setUpModule() -> None:
 
 
 def tearDownModule() -> None:
-    import skillpp.boundary as boundary
-    import skillpp.capture as capture
-    import skillpp.matching as matching
+    import skill_plus_plus.boundary as boundary
+    import skill_plus_plus.capture as capture
+    import skill_plus_plus.matching as matching
     boundary.judge_session = _REAL_JUDGE
     boundary.describe_in_session = _REAL_DESCRIBE
     matching.embed = _REAL_EMBED
     capture._name_from_model = _REAL_NAME
-    import skillpp.cli as cli
+    import skill_plus_plus.cli as cli
     cli._available_models, cli._pull_model = _REAL_MODELS, _REAL_PULL
 
 
@@ -215,7 +215,7 @@ def judged(steps: list[dict]) -> list[dict]:
 
 
 def segment(steps, *args, **kwargs):
-    """`skillpp.segment.segment`, on a stream that carries verdicts.
+    """`skill_plus_plus.segment.segment`, on a stream that carries verdicts.
 
     Boundaries come from the judge now; a stream nothing judged banks nothing at
     all, which is the offline path and not what these tests are about. Stamping
@@ -232,7 +232,7 @@ class TempRoot(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
-        self.config = Config(self.root / "skillpp")
+        self.config = Config(self.root / "skill-plus-plus")
         self.config.ensure_dirs()
         self.judged = self._stub_judge(is_marker)
 
@@ -253,7 +253,7 @@ class TempRoot(unittest.TestCase):
         Pass `True`/`False`, or a callable taking the step, to script a
         different judge. Pass `None` deliberately to test being offline.
         """
-        import skillpp.boundary as boundary
+        import skill_plus_plus.boundary as boundary
         real = boundary.judge_session
         calls: list[dict] = []
 
@@ -489,7 +489,7 @@ class TestSanitize(unittest.TestCase):
         self.assertLess(time.perf_counter() - start, 1.0)
 
     def test_scrub_obj_scrubs_a_string_before_cutting_it(self):
-        from skillpp.sanitize import scrub_obj
+        from skill_plus_plus.sanitize import scrub_obj
         token = "q8Zr4Lm2Xv9Kp1Wd7Ns3Hc6Yb0Tf5Jg8Rk2Ue4Ao1"
         value = "x" * 1975 + " " + token          # the token straddles the cut at 2,000
         self.assertNotIn(token[:16], scrub_obj(value, 2000))
@@ -512,12 +512,12 @@ class TestSanitize(unittest.TestCase):
             self.assertNotIn(secret, scrub(text), text)
 
     def test_a_dict_key_containing_a_colon_keeps_its_value(self):
-        from skillpp.sanitize import scrub_obj
+        from skill_plus_plus.sanitize import scrub_obj
         self.assertEqual(scrub_obj({"Scope: which files?": "only src"}),
                          {"Scope: which files?": "only src"})
 
     def test_a_dict_value_is_read_with_its_key(self):
-        from skillpp.sanitize import scrub_obj
+        from skill_plus_plus.sanitize import scrub_obj
         out = scrub_obj({"password": "hunter2hunter2", "command": "ls -la"})
         self.assertNotIn("hunter2hunter2", str(out))
         self.assertEqual(out["command"], "ls -la")
@@ -554,7 +554,7 @@ class TestNothingSecretReachesDisk(TempRoot):
             fh.write(self._row("assistant", list(blocks)))
 
     def test_a_token_cut_by_a_field_limit_leaves_no_fragment(self):
-        from skillpp.capture import _RESPONSE_CHARS, handle_session_end
+        from skill_plus_plus.capture import _RESPONSE_CHARS, handle_session_end
         # The token starts 25 characters before the cut, in text with no space
         # to back off to, like a path or a line of JSON.
         straddling = ("/srv/app/build/" * 40)[:_RESPONSE_CHARS - 25] + self.TOKEN + " then more"
@@ -570,7 +570,7 @@ class TestNothingSecretReachesDisk(TempRoot):
         self.assertNotIn(self.TOKEN[:16], self._on_disk())
 
     def test_every_field_a_hook_stores_is_scrubbed(self):
-        from skillpp.capture import handle_session_end
+        from skill_plus_plus.capture import handle_session_end
         tx, base = self._session()
         tx.write_text(self._row("user", f"deploy with {LEAKED_TOKEN}"))
         handle_prompt(self.config, {**base, "prompt": f"deploy with {LEAKED_TOKEN}"})
@@ -605,7 +605,7 @@ class TestNormalize(unittest.TestCase):
         self.assertEqual(a, b)
 
     def test_normalize_links_reads_every_link_of_a_chain(self):
-        from skillpp.normalize import normalize_links
+        from skill_plus_plus.normalize import normalize_links
         self.assertEqual(normalize_links("cd /repo && git add -A && git commit -m x"),
                          ["cd", "git add", "git commit"])
         self.assertEqual(normalize_links(""), [])
@@ -642,6 +642,34 @@ class TestNormalize(unittest.TestCase):
 
     def test_parameterize_ids(self):
         self.assertIn("${ID}", parameterize("aws s3 ls bucket-1234567", None))
+
+
+class TestRootFromBeforeTheRename(unittest.TestCase):
+    """`~/.claude/skillpp/` moves to `~/.claude/skill-plus-plus/`, once."""
+
+    def setUp(self):
+        home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.old, self.new = home / "skillpp", home / "skill-plus-plus"
+        for patch in (mock.patch("skill_plus_plus.config.OLD_ROOT", self.old),
+                      mock.patch("skill_plus_plus.config.DEFAULT_ROOT", self.new),
+                      mock.patch.dict(os.environ, {}, clear=False)):
+            patch.start()
+            self.addCleanup(patch.stop)
+        os.environ.pop("SKILL_PLUS_PLUS_ROOT", None)
+
+    def test_an_old_ledger_moves_into_place(self):
+        (self.old / "ledger").mkdir(parents=True)
+        (self.old / "ledger" / "abc.md").write_text("kept", encoding="utf-8")
+        self.assertEqual(Config().root, self.new)
+        self.assertEqual((self.new / "ledger" / "abc.md").read_text(encoding="utf-8"), "kept")
+        self.assertFalse(self.old.exists())
+
+    def test_a_new_ledger_is_never_overwritten(self):
+        (self.old / "ledger").mkdir(parents=True)
+        (self.new / "ledger").mkdir(parents=True)
+        Config()
+        self.assertTrue(self.old.exists(), "both exist: nothing is moved or merged")
 
 
 class TestLedger(TempRoot):
@@ -732,7 +760,7 @@ class TestSignals(unittest.TestCase):
         self.assertNotIn("divergence", kinds)
 
     def test_shell_builtins_are_not_stale_references(self):
-        from skillpp.lifecycle import _referenced
+        from skill_plus_plus.lifecycle import _referenced
         _, programs = _referenced("1. `export TOKEN=x`\n2. `terraform apply`\n")
         self.assertNotIn("export", programs)
         self.assertIn("terraform", programs)
@@ -772,7 +800,7 @@ class TestSignals(unittest.TestCase):
 
     def test_git_commands_that_discard_uncommitted_work_are_destructive(self):
         """A real run restored `cases.json` to HEAD and its draft said nothing."""
-        from skillpp.signals import DESTRUCTIVE
+        from skill_plus_plus.signals import DESTRUCTIVE
         discards = ["git checkout HEAD -- backend/eval/cases.json && git diff --stat",
                     "git checkout -- .", "git checkout .", "git -C repo checkout main -- a.py",
                     "git restore cases.json", "git restore --staged --worktree a.py",
@@ -801,7 +829,7 @@ class TestCapture(TempRoot):
         session this was measured against, the prompt produced the entry title
         "Looks good — commit".
         """
-        from skillpp.capture import _subject_of, _title_for
+        from skill_plus_plus.capture import _subject_of, _title_for
         heredoc = ("git add -A && git commit -m \"$(cat <<'EOF'\n"
                    "test(eval): add tutorial-card case for Expense Report\n\n"
                    "Sibling to expense_report_local.\nEOF\n)\"")
@@ -813,7 +841,7 @@ class TestCapture(TempRoot):
 
     def test_commit_subject_parsing_falls_through_rather_than_guessing(self):
         """Unrecognised forms keep the old behaviour instead of inventing one."""
-        from skillpp.capture import _subject_of, _title_for
+        from skill_plus_plus.capture import _subject_of, _title_for
         self.assertEqual(_subject_of([bash("git commit -m 'fix: guard empty cart'")]),
                          "guard empty cart")
         self.assertEqual(_subject_of([bash('git commit -m "feat(api): add retry"')]),
@@ -831,7 +859,7 @@ class TestCapture(TempRoot):
         Capped at three, the model was handed "did you call MCP for this?" and
         never saw "confirm TITLES is still the single source of truth".
         """
-        from skillpp.episode import render
+        from skill_plus_plus.episode import render
         entry = Entry(id="a", signature="s", title="t",
                       steps=[bash("npm test")],
                       intents=["add an eval case",
@@ -942,7 +970,7 @@ class TestCapture(TempRoot):
         difference only shows on a reply longer than the storage cap, which is
         37% of real tool calls.
         """
-        import skillpp.boundary as boundary
+        import skill_plus_plus.boundary as boundary
         seen = {}
         # Off by default now that nothing reads it; this is how it reads when on.
         self.config.describe_steps = True
@@ -973,7 +1001,7 @@ class TestCapture(TempRoot):
         `describe_in_session` cannot catch that — it is the callee that lost the
         argument — so this asserts on the prompt `describe` actually builds.
         """
-        import skillpp.boundary as boundary
+        import skill_plus_plus.boundary as boundary
         seen = {}
 
         def spy_ask(model, prompt, **kw):
@@ -1024,7 +1052,7 @@ class TestEnvelopePrefixes(TempRoot):
 
     def _prompts(self, text):
         handle_prompt(self.config, {"session_id": "s", "prompt": text})
-        from skillpp.capture import _load_session
+        from skill_plus_plus.capture import _load_session
         return _load_session(self.config, "s")["prompts"]
 
     def test_command_message_is_not_a_prompt(self):
@@ -1047,7 +1075,7 @@ class TestDictation(TempRoot):
                "-> give me in this format")
 
     def dictate(self, text, title=""):
-        from skillpp.capture import fold_dictation
+        from skill_plus_plus.capture import fold_dictation
         result = fold_dictation(self.config, text, title)
         return Ledger(self.config).get(result["id"]), result
 
@@ -1076,7 +1104,7 @@ class TestDictation(TempRoot):
         self.assertIn("vague_sources", [q.kind for q in detect(entry)])
 
     def test_question_cap_still_applies(self):
-        from skillpp.summary import questions_for
+        from skill_plus_plus.summary import questions_for
         entry, _ = self.dictate(self.EXAMPLE)
         self.assertGreater(len(detect(entry)), 3)
         self.assertEqual(len(questions_for(entry, self.config)), 3)
@@ -1175,7 +1203,7 @@ class TestScaffold(unittest.TestCase):
     def test_the_skill_keeps_only_what_recurred(self):
         """An episode is one occurrence wrapped in that day's particulars. On a
         real entry seen 11x the method was 3 steps and the episode held 14."""
-        from skillpp.signals import recurring_steps
+        from skill_plus_plus.signals import recurring_steps
         core = [bash("./review.sh"), bash("./build.sh --force"),
                 bash("wc -w sections/*.md")]
         entry = Entry(id="abc", signature="s", title="article loop",
@@ -1190,7 +1218,7 @@ class TestScaffold(unittest.TestCase):
 
     def test_one_occurrence_keeps_every_step(self):
         """Nothing to compare, so nothing is evidence of being incidental."""
-        from skillpp.signals import recurring_steps
+        from skill_plus_plus.signals import recurring_steps
         steps = [bash("npm ci"), bash("npm test")]
         entry = Entry(id="abc", signature="s", steps=steps, variants=[steps])
         self.assertEqual(len(recurring_steps(entry)), 2)
@@ -1198,7 +1226,7 @@ class TestScaffold(unittest.TestCase):
     def test_a_disagreeing_set_of_variants_keeps_the_episode(self):
         """An empty intersection means the occurrences agree on nothing, and
         the honest answer is the whole episode rather than a stub."""
-        from skillpp.signals import recurring_steps
+        from skill_plus_plus.signals import recurring_steps
         entry = Entry(id="abc", signature="s",
                       steps=[bash("npm ci"), bash("npm test")],
                       variants=[[bash("npm ci")], [bash("cargo build")]])
@@ -1206,7 +1234,7 @@ class TestScaffold(unittest.TestCase):
 
     def test_shell_keywords_are_not_dependencies(self):
         """A real skill declared `requires_cli: ["\\", "do", "done", "for"]`."""
-        from skillpp.capture import _cli_dependencies
+        from skill_plus_plus.capture import _cli_dependencies
         # `printf` and `wc` were asserted here until coreutils stopped being
         # declared; the keyword-stepping this test exists to guard is the
         # second assertion, which is unchanged.
@@ -1219,14 +1247,14 @@ class TestScaffold(unittest.TestCase):
     def test_a_heredoc_body_is_not_shell(self):
         """`python3 - <<'EOF' … EOF` carries Python, whose `;` means nothing to
         a shell. Splitting on it declared `print('deps` as a requirement."""
-        from skillpp.capture import _cli_dependencies
+        from skill_plus_plus.capture import _cli_dependencies
         self.assertEqual(_cli_dependencies([bash(
             "python3 - <<'EOF'\nprint('deps'); x = 1\nEOF")]), {"python3"})
 
     def test_a_truncated_heredoc_drops_the_rest(self):
         """`max_field_chars` cuts a long command at 2000 characters, so the
         terminator is usually gone — this is where `frontend` came from."""
-        from skillpp.capture import _cli_dependencies
+        from skill_plus_plus.capture import _cli_dependencies
         self.assertEqual(_cli_dependencies([bash(
             "python3 - <<'EOF'\nr('frontend gets AGENT_URL'); print('py')")]),
             {"python3"})
@@ -1234,13 +1262,13 @@ class TestScaffold(unittest.TestCase):
     def test_code_in_a_quoted_argument_is_not_shell(self):
         """Nothing here knows what `-e` means; staying inside the quotes is
         enough. This declared `console.log('ok')\"` on a real skill."""
-        from skillpp.capture import _cli_dependencies
+        from skill_plus_plus.capture import _cli_dependencies
         self.assertEqual(_cli_dependencies([bash(
             'node -e "require(\'pptxgenjs\'); console.log(\'ok\')" && npm test')]),
             {"node", "npm"})
 
     def test_quoted_operators_do_not_split(self):
-        from skillpp.capture import _cli_dependencies
+        from skill_plus_plus.capture import _cli_dependencies
         self.assertEqual(_cli_dependencies([bash('git commit -m "a && b; c"')]),
                          {"git"})
 
@@ -1248,7 +1276,7 @@ class TestScaffold(unittest.TestCase):
         """The list is headed "if a requirement is missing, stop", and
         `check_dependencies` resolves with `shutil.which` — which never fails
         on `cp`. Declaring them is noise nothing can act on."""
-        from skillpp.capture import _cli_dependencies
+        from skill_plus_plus.capture import _cli_dependencies
         self.assertEqual(_cli_dependencies([bash(
             "cp a b; rm c; grep x d; sed -i '' s/a/b/ e; pdftoppm f g")]),
             {"pdftoppm"})
@@ -1270,7 +1298,7 @@ class TestScaffold(unittest.TestCase):
         """Both of the first real drafts came back as pure scaffold — TODO
         comment and all — because the scaffold had already written a document
         that looked finished."""
-        from skillpp.summary import WRITE_HERE
+        from skill_plus_plus.summary import WRITE_HERE
         entry = Entry(id="abc", signature="s", title="build a deck",
                       deps_cli=["node"],
                       steps=[bash("npm run build"), bash("rm -rf dist")],
@@ -1402,7 +1430,7 @@ class TestLifecycle(TempRoot):
         hot = self.root / "skills"
         self._write_skill(hot, "alpha")
         skill = [s for s in scan(hot, self.config, self.root) if s.name == "alpha"][0]
-        from skillpp.lifecycle import move_tier
+        from skill_plus_plus.lifecycle import move_tier
         dest = move_tier(skill, "cold", hot, self.config)
         self.assertTrue((dest / "SKILL.md").exists())
         self.assertFalse((hot / "alpha").exists())
@@ -1426,13 +1454,13 @@ class TestLifecycle(TempRoot):
 
 class TestInstall(unittest.TestCase):
     def test_hook_command_does_not_redirect_the_ledger_into_the_repo(self):
-        from skillpp.install import hook_command
+        from skill_plus_plus.install import hook_command
         cmd = hook_command(python="/usr/bin/python3", package_root=Path("/repo"))
         self.assertIn('PYTHONPATH="/repo"', cmd)
         self.assertNotIn("--root", cmd)
 
     def test_plan_preserves_existing_hooks(self):
-        from skillpp.install import plan_settings
+        from skill_plus_plus.install import plan_settings
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             path.write_text(json.dumps({
@@ -1447,7 +1475,7 @@ class TestInstall(unittest.TestCase):
         self.assertEqual(len(on_disk["hooks"]["PostToolUse"]), 1, "planning must not write")
 
     def test_bundle_matches_the_plugin_layout_desktop_uses(self):
-        from skillpp.install import build_plugin_bundle
+        from skill_plus_plus.install import build_plugin_bundle
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "skills" / "alpha"
             src.mkdir(parents=True)
@@ -1470,7 +1498,7 @@ class TestInstall(unittest.TestCase):
 
     def test_upload_zip_has_the_skill_folder_as_root(self):
         import zipfile
-        from skillpp.install import build_upload_bundle
+        from skill_plus_plus.install import build_upload_bundle
         with tempfile.TemporaryDirectory() as tmp:
             md = self._skill(tmp, "alpha", "does a thing")
             archive = build_upload_bundle(md, Path(tmp) / "out")
@@ -1479,7 +1507,7 @@ class TestInstall(unittest.TestCase):
         self.assertNotIn("SKILL.md", names, "files must not sit at archive root")
 
     def test_upload_validation_catches_overlong_description(self):
-        from skillpp.install import validate_for_upload, UPLOAD_DESCRIPTION_MAX
+        from skill_plus_plus.install import validate_for_upload, UPLOAD_DESCRIPTION_MAX
         with tempfile.TemporaryDirectory() as tmp:
             md = self._skill(tmp, "alpha", "x" * (UPLOAD_DESCRIPTION_MAX + 20))
             problems = validate_for_upload(md)
@@ -1487,13 +1515,13 @@ class TestInstall(unittest.TestCase):
         self.assertIn("trim by 20", problems[0])
 
     def test_upload_validation_passes_a_good_skill(self):
-        from skillpp.install import validate_for_upload
+        from skill_plus_plus.install import validate_for_upload
         with tempfile.TemporaryDirectory() as tmp:
             md = self._skill(tmp, "alpha", "Use when the user asks for a thing.")
             self.assertEqual(validate_for_upload(md), [])
 
     def test_plan_is_idempotent(self):
-        from skillpp.install import plan_settings
+        from skill_plus_plus.install import plan_settings
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             merged, _ = plan_settings(path)
@@ -1504,7 +1532,7 @@ class TestInstall(unittest.TestCase):
 
 class TestHookRobustness(TempRoot):
     def test_hook_never_raises_on_garbage(self):
-        from skillpp.cli import main
+        from skill_plus_plus.cli import main
         import io
         bad_payloads = ['not json', '{}', '{"tool_name": 123}', '[]', '']
         for payload in bad_payloads:
@@ -1541,7 +1569,7 @@ class TestSegmentBoundaries(unittest.TestCase):
 
         Their absence kept the doc-fetch episode from folding into its commit.
         """
-        from skillpp.segment import is_read_only
+        from skill_plus_plus.segment import is_read_only
         for tool in ("ToolSearch", "AskUserQuestion"):
             self.assertTrue(is_read_only({"tool": tool, "input": {}}), tool)
 
@@ -1620,7 +1648,7 @@ class TestSegmentBoundaries(unittest.TestCase):
         had: `-C` is a flag, the subcommand scan stops at the first flag, so the
         command fingerprinted as a bare `git` and matched no marker.
         """
-        from skillpp.segment import is_marker
+        from skill_plus_plus.segment import is_marker
         for form in ("git -C /repo commit -m x",
                      "git -c user.email=a@b.com commit -m x",
                      "git --git-dir=/r/.git commit -m x"):
@@ -1628,13 +1656,13 @@ class TestSegmentBoundaries(unittest.TestCase):
 
     def test_inspecting_with_git_dash_c_is_still_read_only(self):
         """The same blind spot, on the other side: 76 real calls counted as work."""
-        from skillpp.segment import is_read_only
+        from skill_plus_plus.segment import is_read_only
         for form in ("git -C /repo status", "git --no-pager log", "git -C /r diff"):
             self.assertTrue(is_read_only(bash(form)), form)
 
     def test_flags_after_a_subcommand_still_end_the_scan(self):
         """The guard: this is what keeps two runs of one test suite alike."""
-        from skillpp.normalize import normalize_command
+        from skill_plus_plus.normalize import normalize_command
         self.assertEqual(normalize_command("pytest -k auth"), "pytest")
         self.assertEqual(normalize_command("pytest -k billing"), "pytest")
         self.assertEqual(normalize_command("npm run test -- --watch"), "npm run")
@@ -1805,7 +1833,7 @@ class TestReadThatFeedsAWrite(unittest.TestCase):
     procedure input than exploration."""
 
     def _keep(self, steps):
-        from skillpp.capture import _substantive
+        from skill_plus_plus.capture import _substantive
         return [s["tool"] for s in _substantive(steps)]
 
     def _read(self, path):
@@ -1844,7 +1872,7 @@ class TestReadsAndRetrievals(unittest.TestCase):
     def test_the_read_tools_are_read_only(self):
         """Their absence meant the pure-exploration flag could never fire on an
         episode containing a `Read` — which is most of them."""
-        from skillpp.segment import is_read_only
+        from skill_plus_plus.segment import is_read_only
         for tool in ("Read", "Glob", "Grep", "WebFetch", "WebSearch"):
             self.assertTrue(is_read_only({"tool": tool, "input": {}}), tool)
         self.assertFalse(is_read_only({"tool": "Write", "input": {}}))
@@ -1852,14 +1880,14 @@ class TestReadsAndRetrievals(unittest.TestCase):
 
     def test_an_mcp_retrieval_still_counts_as_looking(self):
         """`is_read_only` is unchanged for MCP: the flagging rule needs it."""
-        from skillpp.segment import is_read_only
+        from skill_plus_plus.segment import is_read_only
         self.assertTrue(is_read_only({"tool": "mcp__Drive__search_files", "input": {}}))
         self.assertFalse(is_read_only({"tool": "mcp__Slack__post_message", "input": {}}))
 
     def test_the_trimmer_keeps_a_leading_mcp_retrieval(self):
         """Fetching the material is step one of the method, not the search that
         found it. Trimming left `meeting-prep` as two steps of five."""
-        from skillpp.segment import trim_leading_exploration
+        from skill_plus_plus.segment import trim_leading_exploration
         steps = [{"tool": "mcp__Calendar__get_event", "input": {}, "failed": False},
                  {"tool": "mcp__Drive__search_files", "input": {}, "failed": False},
                  {"tool": "Write", "input": {"file_path": "/tmp/a.md"}, "failed": False},
@@ -1869,7 +1897,7 @@ class TestReadsAndRetrievals(unittest.TestCase):
         self.assertEqual(len(kept), 4)
 
     def test_the_trimmer_still_drops_leading_greps(self):
-        from skillpp.segment import trim_leading_exploration
+        from skill_plus_plus.segment import trim_leading_exploration
         steps = [bash("grep -rn export src/"), bash("grep -rn timeout src/"),
                  {"tool": "Edit", "input": {"file_path": "/a.py"}, "failed": False},
                  bash("pytest")]
@@ -1923,13 +1951,13 @@ class TestStripScaffolding(unittest.TestCase):
     """
 
     def _strip(self, cmd):
-        from skillpp.normalize import strip_scaffolding
+        from skill_plus_plus.normalize import strip_scaffolding
         return strip_scaffolding(cmd)
 
     def test_leading_cd_and_ampersands(self):
         self.assertEqual(
-            self._strip("cd /Users/dev/ai_projects/skill-plus-plus && sed -n '1,40p' skillpp/cli.py"),
-            "sed -n '1,40p' skillpp/cli.py")
+            self._strip("cd /Users/dev/ai_projects/skill-plus-plus && sed -n '1,40p' skill_plus_plus/cli.py"),
+            "sed -n '1,40p' skill_plus_plus/cli.py")
 
     def test_bare_cd_on_its_own_line(self):
         """17% of real commands, and the newline hides it from the `&&` form."""
@@ -1964,7 +1992,7 @@ class TestStripScaffolding(unittest.TestCase):
         """The guard. Stripping *would* move fingerprints — `cd /r && npm test`
         shapes as `bash:cd` raw and `bash:npm test` stripped — so `step_shape`
         must keep reading the raw command and this must stay rendering-only."""
-        from skillpp.normalize import strip_scaffolding
+        from skill_plus_plus.normalize import strip_scaffolding
         raw = [bash("cd /r && npm test 2>&1 | tail -5"), bash("cd /r && git commit -m x")]
         stripped = [bash(strip_scaffolding(s["input"]["command"])) for s in raw]
         self.assertEqual(_sig(raw), "bash:cd")
@@ -1973,7 +2001,7 @@ class TestStripScaffolding(unittest.TestCase):
     def test_describe_step_still_emits_a_runnable_command(self):
         """`render_step` feeds a model; `describe_step` writes the SKILL.md a
         person runs. A stripped command there would not work."""
-        from skillpp.ledger import describe_step
+        from skill_plus_plus.ledger import describe_step
         step = {"tool": "Bash", "failed": False,
                 "input": {"command": "cd /repo && npm ci 2>&1 | tail -25",
                           "description": "Install pinned dependencies"}}
@@ -1981,7 +2009,7 @@ class TestStripScaffolding(unittest.TestCase):
         self.assertIn("tail -25", describe_step(step))
 
     def test_render_step_shows_the_stripped_command(self):
-        from skillpp.episode import render_step
+        from skill_plus_plus.episode import render_step
         step = {"tool": "Bash", "failed": False,
                 "input": {"command": 'echo "=== npm ===" \ncd /Users/dev/acme && npm ci 2>&1 | tail -25',
                           "description": "Install pinned dependencies"}}
@@ -2050,22 +2078,22 @@ class TestChainedMarkers(unittest.TestCase):
     """17 real commits produced 0 markers, because only the head was read."""
 
     def test_a_chained_commit_is_a_marker(self):
-        from skillpp.segment import is_marker
+        from skill_plus_plus.segment import is_marker
         self.assertTrue(is_marker(_lb("cd /repo && git add -A && git commit -m x")))
 
     def test_a_heredoc_commit_is_a_marker(self):
-        from skillpp.segment import is_marker
+        from skill_plus_plus.segment import is_marker
         self.assertTrue(is_marker(_lb(
             "git add -A backend/ && git commit -q -F- <<'EOF' && git log --oneline -1")))
 
     def test_a_failed_chained_commit_is_not_a_marker(self):
         """A commit a pre-commit hook rejected means the task is still running."""
-        from skillpp.segment import is_marker
+        from skill_plus_plus.segment import is_marker
         self.assertFalse(is_marker(
             _lb("cd /repo && git commit -m x", failed=True)))
 
     def test_a_chain_of_reads_is_not_a_marker(self):
-        from skillpp.segment import is_marker
+        from skill_plus_plus.segment import is_marker
         self.assertFalse(is_marker(_lb("cd /repo && ls -la && cat README.md")))
 
 
@@ -2096,7 +2124,7 @@ class TestNarrationIsAttributedToTheRightStep(TempRoot):
         return {"type": "user", "message": {"content": body}}
 
     def test_text_between_two_calls_leads_in_to_the_second(self):
-        from skillpp.capture import _narration
+        from skill_plus_plus.capture import _narration
         payload = self._transcript([
             self._assistant(self._call()),
             self._assistant(self._text("now check the other file"), self._call()),
@@ -2107,7 +2135,7 @@ class TestNarrationIsAttributedToTheRightStep(TempRoot):
 
     def test_a_prompt_in_the_gap_sends_the_first_half_backwards(self):
         """The shape this fixes: report, new prompt, next task's first call."""
-        from skillpp.capture import _narration
+        from skill_plus_plus.capture import _narration
         payload = self._transcript([
             self._assistant(self._call()),
             self._assistant(self._text("Scan done. All 4 resolve to keys.")),
@@ -2120,7 +2148,7 @@ class TestNarrationIsAttributedToTheRightStep(TempRoot):
 
     def test_the_report_lands_on_the_step_it_describes(self):
         """End to end through the hook, not just the parser."""
-        from skillpp.capture import handle_prompt, handle_tool
+        from skill_plus_plus.capture import handle_prompt, handle_tool
         self.config.describe_steps = False
         handle_prompt(self.config, {"session_id": "s", "cwd": "/r",
                                     "prompt": "work out which ones"})
@@ -2139,7 +2167,7 @@ class TestNarrationIsAttributedToTheRightStep(TempRoot):
                                   "tool_input": {"command": "grep -n chart"},
                                   **self._transcript(rows)})
 
-        from skillpp.capture import _load_session
+        from skill_plus_plus.capture import _load_session
         steps = [s for s in _load_session(self.config, "s")["steps"]
                  if not is_prompt(s)]
         self.assertEqual(steps[0]["tool"], "Read")
@@ -2148,13 +2176,13 @@ class TestNarrationIsAttributedToTheRightStep(TempRoot):
         self.assertNotIn("Scan done", steps[1].get("assistant_note", ""))
 
     def test_a_missing_transcript_costs_the_note_and_nothing_else(self):
-        from skillpp.capture import _narration
+        from skill_plus_plus.capture import _narration
         self.assertEqual(_narration({}), ("", ""))
         self.assertEqual(_narration({"transcript_path": "/no/such/file"}), ("", ""))
 
     def test_the_live_session_carries_its_investigation_report(self):
         """`241955c7`, the session this was found on. A private one: it runs
-        where `SKILLPP_FIXTURES` points at the set that holds it."""
+        where `SKILL_PLUS_PLUS_FIXTURES` points at the set that holds it."""
         sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "sessions"))
         import score
         found = score.load("241955c7")
@@ -2204,10 +2232,10 @@ class TestOfflineWithoutAModel(TempRoot):
         """Being offline costs the candidate, never the record.
 
         The file is the only copy of the work, and `handle_session_end` unlinked
-        it unconditionally before this. Stamped `held` so `skillpp stats` can
+        it unconditionally before this. Stamped `held` so `skill-plus-plus stats` can
         tell it apart from a session still being written.
         """
-        from skillpp.capture import (_session_file, handle_prompt,
+        from skill_plus_plus.capture import (_session_file, handle_prompt,
                                      handle_session_end, handle_tool)
         self._stub_judge(None)                  # the model is not reachable
         handle_prompt(self.config, {"session_id": "off", "cwd": "/r",
@@ -2227,7 +2255,7 @@ class TestOfflineWithoutAModel(TempRoot):
 
     def test_a_live_session_is_not_reported_as_held(self):
         """A session still being written has a file too."""
-        from skillpp.capture import handle_prompt
+        from skill_plus_plus.capture import handle_prompt
         handle_prompt(self.config, {"session_id": "live", "cwd": "/r",
                                     "prompt": "still going"})
         files = list(self.config.sessions_dir.glob("*.json"))
@@ -2412,7 +2440,7 @@ class TestEpisodeFilter(TempRoot):
 
     def _answer(self, reply):
         """Point episode.ask at a canned reply, or an exception to raise."""
-        import skillpp.episode as ep
+        import skill_plus_plus.episode as ep
 
         def fake(model, prompt, *, host=None, timeout=None):
             if isinstance(reply, Exception):
@@ -2422,32 +2450,32 @@ class TestEpisodeFilter(TempRoot):
         self.addCleanup(lambda: setattr(ep, "ask", self._real))
 
     def test_yes_keeps_and_no_drops(self):
-        from skillpp.episode import is_reusable
+        from skill_plus_plus.episode import is_reusable
         self._answer("yes")
         self.assertIs(is_reusable(self._entry())[0], True)
 
     def test_no_is_a_drop(self):
-        from skillpp.episode import is_reusable
+        from skill_plus_plus.episode import is_reusable
         self._answer("no")
         self.assertIs(is_reusable(self._entry())[0], False)
 
     def test_a_verbose_answer_still_parses(self):
         """One-word instructions are advisory; a model that explains still counts."""
-        from skillpp.episode import is_reusable
+        from skill_plus_plus.episode import is_reusable
         self._answer("**No** — this was one particular bug.")
         self.assertIs(is_reusable(self._entry())[0], False)
 
     def test_unreachable_model_keeps_the_episode(self):
         """The expensive error is dropping real work, so absence means keep."""
-        from skillpp.episode import is_reusable
-        from skillpp.local import LocalModelUnavailable
+        from skill_plus_plus.episode import is_reusable
+        from skill_plus_plus.local import LocalModelUnavailable
         self._answer(LocalModelUnavailable("connection refused"))
         verdict, why = is_reusable(self._entry())
         self.assertIsNone(verdict)
         self.assertIn("keeping", why)
 
     def test_an_unclear_answer_keeps_the_episode(self):
-        from skillpp.episode import is_reusable
+        from skill_plus_plus.episode import is_reusable
         self._answer("it depends on what you mean by reusable")
         verdict, why = is_reusable(self._entry())
         self.assertIsNone(verdict)
@@ -2455,26 +2483,26 @@ class TestEpisodeFilter(TempRoot):
 
     def test_render_keeps_the_whole_command(self):
         """Crisp, not lossy: fingerprinting hides that tests ran at all."""
-        from skillpp.episode import render_step
+        from skill_plus_plus.episode import render_step
         line = render_step({"tool": "Bash",
                             "input": {"command": "python3 -m unittest discover"}})
         self.assertIn("unittest discover", line)
 
     def test_render_marks_a_failed_step(self):
-        from skillpp.episode import render_step
+        from skill_plus_plus.episode import render_step
         self.assertTrue(render_step(
             {"tool": "Bash", "input": {"command": "npm test"},
              "failed": True}).startswith("!"))
 
     def test_render_no_longer_truncates_a_giant_step(self):
         """The cap used to guillotine heredocs, which is where the meaning is."""
-        from skillpp.episode import render_step
+        from skill_plus_plus.episode import render_step
         line = render_step({"tool": "Bash", "input": {"command": "x" * 5000}})
         self.assertIn("x" * 5000, line)
         self.assertNotIn("…", line)
 
     def test_render_collapses_whitespace_in_a_multiline_command(self):
-        from skillpp.episode import render_step
+        from skill_plus_plus.episode import render_step
         line = render_step({"tool": "Bash",
                             "input": {"command": "python3 - <<PY\nimport os\nPY"}})
         self.assertIn("python3 - <<PY import os PY", line)
@@ -2482,7 +2510,7 @@ class TestEpisodeFilter(TempRoot):
 
     def test_render_leads_with_the_agents_description(self):
         """87% of captured Bash calls carry one; it is the purpose signal."""
-        from skillpp.episode import render_step
+        from skill_plus_plus.episode import render_step
         line = render_step({"tool": "Bash", "input": {
             "command": "uvx --from mcpdoc mcpdoc --help",
             "description": "Test if mcpdoc installs via uvx"}})
@@ -2492,13 +2520,13 @@ class TestEpisodeFilter(TempRoot):
 
     def test_render_omits_the_description_cleanly_when_absent(self):
         """6.8% of episodes have none. No placeholder, no stray blank line."""
-        from skillpp.episode import render_step
+        from skill_plus_plus.episode import render_step
         line = render_step({"tool": "Bash", "input": {"command": "npm test"}})
         self.assertEqual(line, "$ npm test")
 
     def test_render_marks_a_failed_step_that_has_a_description(self):
         """The `!` must survive the two-line path, or failure goes invisible."""
-        from skillpp.episode import render_step
+        from skill_plus_plus.episode import render_step
         line = render_step({"tool": "Bash", "failed": True, "input": {
             "command": "kubectl scale deploy/api --replicas=0",
             "description": "Drain replicas holding the lock"}})
@@ -2506,7 +2534,7 @@ class TestEpisodeFilter(TempRoot):
 
     def test_a_parked_entry_is_not_ready_and_not_a_candidate(self):
         """Why a new status rather than a flag: `ready` already gates on it."""
-        from skillpp.ledger import STATUS_ONE_OFF
+        from skill_plus_plus.ledger import STATUS_ONE_OFF
         entry = self._entry(occurrences=9, status=STATUS_ONE_OFF)
         ledger = Ledger(self.config)
         ledger.save(entry)
@@ -2514,7 +2542,7 @@ class TestEpisodeFilter(TempRoot):
         self.assertEqual(list(ledger.candidates(ready_only=False)), [])
 
     def test_parking_survives_a_round_trip(self):
-        from skillpp.ledger import STATUS_ONE_OFF
+        from skill_plus_plus.ledger import STATUS_ONE_OFF
         ledger = Ledger(self.config)
         ledger.save(self._entry(status=STATUS_ONE_OFF))
         self.assertEqual([e.status for e in ledger.all()], [STATUS_ONE_OFF])
@@ -2526,7 +2554,7 @@ class TestSiftRanking(TempRoot):
     def setUp(self) -> None:
         super().setUp()
         import argparse
-        import skillpp.episode as ep
+        import skill_plus_plus.episode as ep
         self.argparse = argparse
         ep.ask, self._real = (lambda *a, **k: "no"), ep.ask
         self.addCleanup(lambda: setattr(ep, "ask", self._real))
@@ -2552,8 +2580,8 @@ class TestSiftRanking(TempRoot):
         return next(e for e in Ledger(self.config).all() if e.id == eid)
 
     def test_ranking_annotates_without_gating(self):
-        from skillpp.cli import cmd_sift
-        from skillpp.ledger import STATUS_CANDIDATE
+        from skill_plus_plus.cli import cmd_sift
+        from skill_plus_plus.ledger import STATUS_CANDIDATE
         self._save()
         cmd_sift(self._args())
         entry = self._get()
@@ -2562,29 +2590,29 @@ class TestSiftRanking(TempRoot):
 
     def test_recurrence_outranks_the_model(self):
         """Twice is behavioural evidence; the model said no and does not win."""
-        from skillpp.cli import cmd_sift
+        from skill_plus_plus.cli import cmd_sift
         self._save(occurrences=2)
         cmd_sift(self._args())
         self.assertEqual(self._get().hint, "method")
 
     def test_a_recurring_entry_is_never_parked(self):
-        from skillpp.cli import cmd_sift
-        from skillpp.ledger import STATUS_CANDIDATE
+        from skill_plus_plus.cli import cmd_sift
+        from skill_plus_plus.ledger import STATUS_CANDIDATE
         self._save(occurrences=3)
         cmd_sift(self._args(park=True))
         self.assertEqual(self._get().status, STATUS_CANDIDATE)
 
     def test_parking_is_opt_in(self):
-        from skillpp.cli import cmd_sift
-        from skillpp.ledger import STATUS_ONE_OFF
+        from skill_plus_plus.cli import cmd_sift
+        from skill_plus_plus.ledger import STATUS_ONE_OFF
         self._save()
         cmd_sift(self._args(park=True))
         self.assertEqual(self._get().status, STATUS_ONE_OFF)
 
     def test_an_unreachable_model_leaves_no_hint(self):
-        import skillpp.episode as ep
-        from skillpp.cli import cmd_sift
-        from skillpp.local import LocalModelUnavailable
+        import skill_plus_plus.episode as ep
+        from skill_plus_plus.cli import cmd_sift
+        from skill_plus_plus.local import LocalModelUnavailable
 
         def boom(*a, **k):
             raise LocalModelUnavailable("refused")
@@ -2596,7 +2624,7 @@ class TestSiftRanking(TempRoot):
         self.assertEqual(entry.status, "candidate")
 
     def test_review_lists_repeatable_first(self):
-        from skillpp.episode import rank_key
+        from skill_plus_plus.episode import rank_key
         entries = [Entry(id="c", signature="s", hint="one-off"),
                    Entry(id="a", signature="s", hint="method"),
                    Entry(id="b", signature="s", hint="")]
@@ -2608,8 +2636,8 @@ class TestSiftRanking(TempRoot):
         self.assertEqual(self._get().hint, "method")
 
     def test_reopen_still_undoes_a_parking(self):
-        from skillpp.cli import cmd_reopen, cmd_sift
-        from skillpp.ledger import STATUS_CANDIDATE
+        from skill_plus_plus.cli import cmd_reopen, cmd_sift
+        from skill_plus_plus.ledger import STATUS_CANDIDATE
         self._save()
         cmd_sift(self._args(park=True))
         cmd_reopen(self.argparse.Namespace(root=self.config.root, id="one"))
@@ -2655,7 +2683,7 @@ class TestDraftCommand(TempRoot):
             # Where a real agent writes: the directory it was handed, which
             # is a workspace outside `~/.claude` — `Write` is denied under
             # there. `cmd_draft` moves the result into `drafts/<id>/`.
-            workspace = Path(kw["env"]["SKILLPP_DRAFT_DIR"])
+            workspace = Path(kw["env"]["SKILL_PLUS_PLUS_DRAFT_DIR"])
             for rel in (writes or []):
                 path = workspace / rel.split("/", 1)[1]
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -2668,59 +2696,59 @@ class TestDraftCommand(TempRoot):
         return seen
 
     def test_a_dry_run_launches_nothing(self):
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
         seen = self._spy()
         self.assertEqual(cmd_draft(self._args()), 0)
         self.assertNotIn("argv", seen)
 
     def test_the_prompt_is_one_argument_with_the_id(self):
         """A space inside --allowed-tools once split it into two broken args."""
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
         seen = self._spy()
         cmd_draft(self._args(apply=True))
         argv = seen["argv"]
         # One argv element carrying id and destination, both literal.
-        prompt = next(a for a in argv if a.startswith("/skillpp-draft"))
+        prompt = next(a for a in argv if a.startswith("/skill-plus-plus-draft"))
         self.assertIn("cand1", prompt)
-        # `skillpp` is not on PATH; the CLI is invoked as `python3 bin/skillpp`,
+        # `skill-plus-plus` is not on PATH; the CLI is invoked as `python3 bin/skill-plus-plus`,
         # so a pattern naming the bare binary would allow nothing.
-        self.assertIn("Bash(python3 bin/skillpp *),Read,Write,Edit", argv)
+        self.assertIn("Bash(python3 bin/skill-plus-plus *),Read,Write,Edit", argv)
 
     def test_the_agent_runs_where_the_cli_resolves(self):
         """The allowed-tools pattern is relative, so the cwd is load-bearing.
         It used to be this checkout, which an installed package does not have:
         the agent now runs from a home holding exactly what its prompt uses,
         removed afterwards."""
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
         seen = self._spy()
         cmd_draft(self._args(apply=True))
-        self.assertEqual(seen["home"], [".claude/commands/skillpp-draft.md", "bin/skillpp"])
+        self.assertEqual(seen["home"], [".claude/commands/skill-plus-plus-draft.md", "bin/skill-plus-plus"])
         self.assertFalse(Path(seen["kw"]["cwd"]).exists())
 
-    def test_the_agents_cli_is_the_skillpp_that_started_it(self):
+    def test_the_agents_cli_is_the_skill_plus_plus_that_started_it(self):
         """Run from an unrelated directory with a plain `python3`, as the agent's
         Bash runs it: this package answers, whether installed or checked out."""
         import shutil
         import subprocess
-        import skillpp
-        from skillpp.cli import _agent_home
+        import skill_plus_plus
+        from skill_plus_plus.cli import _agent_home
         home = _agent_home("cand1")
         self.addCleanup(lambda: shutil.rmtree(home, ignore_errors=True))
-        out = subprocess.run(["python3", "bin/skillpp", "--version"], cwd=home,
+        out = subprocess.run(["python3", "bin/skill-plus-plus", "--version"], cwd=home,
                              capture_output=True, text=True, timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertIn(skillpp.__version__, out.stdout)
-        from skillpp.install import COMMANDS
-        self.assertEqual((home / ".claude/commands/skillpp-draft.md").read_bytes(),
-                         (COMMANDS / "skillpp-draft.md").read_bytes())
+        self.assertIn(skill_plus_plus.__version__, out.stdout)
+        from skill_plus_plus.install import COMMANDS
+        self.assertEqual((home / ".claude/commands/skill-plus-plus-draft.md").read_bytes(),
+                         (COMMANDS / "skill-plus-plus-draft.md").read_bytes())
 
     def test_the_agent_is_configurable(self):
         """A command template, so no vendor and no API key are baked in."""
         import os
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
         seen = self._spy()
-        os.environ["SKILLPP_AGENT"] = "my-agent --go {PROMPT}"
-        self.addCleanup(lambda: os.environ.pop("SKILLPP_AGENT", None))
+        os.environ["SKILL_PLUS_PLUS_AGENT"] = "my-agent --go {PROMPT}"
+        self.addCleanup(lambda: os.environ.pop("SKILL_PLUS_PLUS_AGENT", None))
         cmd_draft(self._args(apply=True))
         self.assertEqual(seen["argv"][:2], ["my-agent", "--go"])
 
@@ -2728,47 +2756,47 @@ class TestDraftCommand(TempRoot):
         """The prompt once said `<draft-dir>` with nothing substituting it, so a
         good draft was written to the agent's own scratchpad and reported as no
         draft at all."""
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
         seen = self._spy()
         cmd_draft(self._args(apply=True))
         # A literal in the prompt, not an environment variable: a sandboxed
         # Bash call containing `$VAR` is rejected as "Contains expansion".
-        prompt = next(a for a in seen["argv"] if a.startswith("/skillpp-draft"))
-        workspace = seen["kw"]["env"]["SKILLPP_DRAFT_DIR"]
+        prompt = next(a for a in seen["argv"] if a.startswith("/skill-plus-plus-draft"))
+        workspace = seen["kw"]["env"]["SKILL_PLUS_PLUS_DRAFT_DIR"]
         self.assertTrue(prompt.endswith(workspace))
         self.assertNotIn("$", prompt)
         # Never inside the ledger root: on a default install that is under
         # `~/.claude`, where the agent's `Write` and `Edit` are refused, and
         # every draft came back as the bare scaffold because of it.
         self.assertFalse(Path(workspace).is_relative_to(self.config.root))
-        # SKILLPP_ROOT stays in the environment; Python reads it directly.
-        self.assertEqual(seen["kw"]["env"]["SKILLPP_ROOT"],
+        # SKILL_PLUS_PLUS_ROOT stays in the environment; Python reads it directly.
+        self.assertEqual(seen["kw"]["env"]["SKILL_PLUS_PLUS_ROOT"],
                          str(self.config.root))
 
     def test_a_note_reaches_the_agent_after_the_two_arguments(self):
         """The developer's note is part of the prompt, not of `show`'s output:
         a tool's output is evidence, and this is an instruction."""
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
         seen = self._spy()
         note = "- check every command against DEPLOY.md\n- leave the styling out"
         cmd_draft(self._args(apply=True, note=f"  {note}\n"))
-        prompt = next(a for a in seen["argv"] if a.startswith("/skillpp-draft"))
-        workspace = seen["kw"]["env"]["SKILLPP_DRAFT_DIR"]
-        self.assertEqual(prompt.splitlines()[0], f"/skillpp-draft cand1 {workspace}",
+        prompt = next(a for a in seen["argv"] if a.startswith("/skill-plus-plus-draft"))
+        workspace = seen["kw"]["env"]["SKILL_PLUS_PLUS_DRAFT_DIR"]
+        self.assertEqual(prompt.splitlines()[0], f"/skill-plus-plus-draft cand1 {workspace}",
                          "id and directory still come first, as the command reads them")
         self.assertTrue(prompt.endswith(note), "the note arrives whole, lines and all")
 
     def test_a_blank_note_leaves_the_prompt_as_it_was(self):
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
         seen = self._spy()
         cmd_draft(self._args(apply=True, note="  \n "))
-        prompt = next(a for a in seen["argv"] if a.startswith("/skillpp-draft"))
-        workspace = seen["kw"]["env"]["SKILLPP_DRAFT_DIR"]
-        self.assertEqual(prompt, f"/skillpp-draft cand1 {workspace}")
+        prompt = next(a for a in seen["argv"] if a.startswith("/skill-plus-plus-draft"))
+        workspace = seen["kw"]["env"]["SKILL_PLUS_PLUS_DRAFT_DIR"]
+        self.assertEqual(prompt, f"/skill-plus-plus-draft cand1 {workspace}")
 
     def test_drafting_never_promotes(self):
-        from skillpp.cli import cmd_draft
-        from skillpp.ledger import STATUS_CANDIDATE
+        from skill_plus_plus.cli import cmd_draft
+        from skill_plus_plus.ledger import STATUS_CANDIDATE
         self._spy(writes=["cand1/SKILL.md"])
         cmd_draft(self._args(apply=True))
         entry = Ledger(self.config).get("cand1")
@@ -2776,7 +2804,7 @@ class TestDraftCommand(TempRoot):
         self.assertEqual(entry.skill_path, "")
 
     def test_a_draft_lands_outside_the_skills_directory(self):
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
         self._spy(writes=["cand1/SKILL.md"])
         cmd_draft(self._args(apply=True))
         drafted = list((self.config.root / "drafts").rglob("SKILL.md"))
@@ -2785,9 +2813,9 @@ class TestDraftCommand(TempRoot):
 
     def test_a_stated_decline_is_not_an_error(self):
         """The prompt tells the agent to say so when there is no procedure."""
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
         self._spy(writes=[], exit_code=0,
-                  say="SKILLPP-DECLINE: one particular bug, not a method\n")
+                  say="SKILL-PLUS-PLUS-DECLINE: one particular bug, not a method\n")
         self.assertEqual(cmd_draft(self._args(apply=True)), 0)
 
     def test_silence_is_not_a_decline(self):
@@ -2798,7 +2826,7 @@ class TestDraftCommand(TempRoot):
         of a file made a blocked agent look like a working filter, so a decline
         now has to be stated.
         """
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
         self._spy(writes=[], exit_code=0,
                   say="I could not read the candidate, so I am stopping.\n")
         self.assertEqual(cmd_draft(self._args(apply=True)), 1)
@@ -2807,13 +2835,13 @@ class TestDraftCommand(TempRoot):
         """An unauthenticated CLI exits 1 and writes nothing — same shape as a
         decline, and the opposite meaning. Reporting it as "nothing here" is how
         an unattended run hides a dead agent."""
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
         self._spy(writes=[], exit_code=1)
         self.assertEqual(cmd_draft(self._args(apply=True)), 1)
 
     def test_a_missing_agent_reports_how_to_fix_it(self):
         import subprocess
-        from skillpp.cli import cmd_draft
+        from skill_plus_plus.cli import cmd_draft
 
         def boom(*a, **k):
             raise FileNotFoundError("claude")
@@ -2823,7 +2851,7 @@ class TestDraftCommand(TempRoot):
 
 
 class TestReviseCommand(TempRoot):
-    """`skillpp revise`: the agent changes an existing draft, in place, as told.
+    """`skill-plus-plus revise`: the agent changes an existing draft, in place, as told.
 
     No agent is launched: `subprocess.run` is replaced by a function that edits
     (or does not edit) the draft the way an agent would.
@@ -2853,34 +2881,34 @@ class TestReviseCommand(TempRoot):
             seen["argv"], seen["kw"] = argv, kw
             if edit:
                 # The working copy the prompt names, never the draft itself.
-                edit(Path(kw["env"]["SKILLPP_DRAFT_DIR"]) / "SKILL.md")
+                edit(Path(kw["env"]["SKILL_PLUS_PLUS_DRAFT_DIR"]) / "SKILL.md")
             return subprocess.CompletedProcess(argv, exit_code, stdout=say, stderr="")
         real, subprocess.run = subprocess.run, fake
         self.addCleanup(lambda: setattr(subprocess, "run", real))
         return seen
 
     def test_a_dry_run_launches_nothing(self):
-        from skillpp.cli import cmd_revise
+        from skill_plus_plus.cli import cmd_revise
         seen = self._agent()
         self.assertEqual(cmd_revise(self._args(apply=False)), 0)
         self.assertNotIn("argv", seen)
 
     def test_the_instruction_and_the_file_reach_the_agent_as_one_prompt(self):
-        from skillpp.cli import cmd_revise
+        from skill_plus_plus.cli import cmd_revise
         seen = self._agent(edit=lambda p: p.write_text(p.read_text() + "more\n"))
         cmd_revise(self._args(instruction="also cover fact cases"))
         prompt = next(a for a in seen["argv"] if "Revise a draft skill" in a)
         self.assertIn("also cover fact cases", prompt)
-        working_copy = Path(seen["kw"]["env"]["SKILLPP_DRAFT_DIR"]) / "SKILL.md"
+        working_copy = Path(seen["kw"]["env"]["SKILL_PLUS_PLUS_DRAFT_DIR"]) / "SKILL.md"
         self.assertIn(str(working_copy), prompt)
         self.assertNotIn(str(self.skill), prompt,
                          "the agent was pointed at a path it may not edit")
-        # And the change reached the real draft anyway, moved by skillpp.
+        # And the change reached the real draft anyway, moved by skill-plus-plus.
         self.assertTrue(self.skill.read_text().endswith("more\n"))
-        self.assertEqual(seen["kw"]["env"]["SKILLPP_INTERNAL"], "1")
+        self.assertEqual(seen["kw"]["env"]["SKILL_PLUS_PLUS_INTERNAL"], "1")
 
     def test_a_revision_keeps_the_previous_version(self):
-        from skillpp.cli import cmd_revise
+        from skill_plus_plus.cli import cmd_revise
         self._agent(edit=lambda p: p.write_text(p.read_text() + "## Traps\n"))
         self.assertEqual(cmd_revise(self._args()), 0)
         self.assertIn("## Traps", self.skill.read_text())
@@ -2889,19 +2917,19 @@ class TestReviseCommand(TempRoot):
         self.assertNotIn("## Traps", kept[0].read_text())
 
     def test_no_change_is_not_a_revision(self):
-        from skillpp.cli import cmd_revise
+        from skill_plus_plus.cli import cmd_revise
         self._agent()
         self.assertEqual(cmd_revise(self._args()), 1)
 
     def test_a_stated_decline_is_reported_and_leaves_the_draft(self):
-        from skillpp.cli import cmd_revise
-        self._agent(say="SKILLPP-DECLINE: that would make it a different skill\n")
+        from skill_plus_plus.cli import cmd_revise
+        self._agent(say="SKILL-PLUS-PLUS-DECLINE: that would make it a different skill\n")
         self.assertEqual(cmd_revise(self._args()), 1)
         self.assertEqual(self.skill.read_text(), "---\nname: x\ndescription: d\n---\n# Body\n")
 
     def test_there_must_be_a_draft_to_revise(self):
         import shutil as sh
-        from skillpp.cli import cmd_revise
+        from skill_plus_plus.cli import cmd_revise
         sh.rmtree(self.skill.parent)
         seen = self._agent()
         self.assertEqual(cmd_revise(self._args()), 1)
@@ -2923,7 +2951,7 @@ class TestLeadingExplorationTrim(unittest.TestCase):
         return {"tool": "UserPrompt", "input": {"prompt": text}}
 
     def test_drops_the_greps_that_found_the_bug(self):
-        from skillpp.segment import trim_leading_exploration
+        from skill_plus_plus.segment import trim_leading_exploration
         steps = [self.bash("grep -rn timeout src/"), self.bash("cat src/api.py"),
                  self.bash("sed -i s/5/30/ src/api.py"),
                  self.bash("git commit -am fix")]
@@ -2933,7 +2961,7 @@ class TestLeadingExplorationTrim(unittest.TestCase):
 
     def test_keeps_reads_that_are_real_steps(self):
         """"check the logs, then restart" is a two-step recipe, not exploration."""
-        from skillpp.segment import trim_leading_exploration
+        from skill_plus_plus.segment import trim_leading_exploration
         steps = [self.bash("systemctl restart api"),
                  self.bash("journalctl -u api -n 50")]
         kept, cut = trim_leading_exploration(steps)
@@ -2942,7 +2970,7 @@ class TestLeadingExplorationTrim(unittest.TestCase):
 
     def test_never_trims_below_two_substantive_steps(self):
         """Otherwise an exploration-only episode becomes a recipe of its tail."""
-        from skillpp.segment import trim_leading_exploration
+        from skill_plus_plus.segment import trim_leading_exploration
         steps = [self.bash("grep -rn x ."), self.bash("grep -rn y ."),
                  self.bash("./deploy.sh")]
         kept, cut = trim_leading_exploration(steps)
@@ -2951,7 +2979,7 @@ class TestLeadingExplorationTrim(unittest.TestCase):
 
     def test_a_prompt_sentinel_survives_the_trim(self):
         """The episode is titled from it; losing it names the episode after a command."""
-        from skillpp.segment import is_prompt, trim_leading_exploration
+        from skill_plus_plus.segment import is_prompt, trim_leading_exploration
         steps = [self.prompt("push today's metrics like last week"),
                  self.bash("grep -rn metrics src/"), self.bash("grep -rn m2 src/"),
                  self.bash("curl -X POST https://dash/api/metrics"),
@@ -2961,18 +2989,18 @@ class TestLeadingExplorationTrim(unittest.TestCase):
         self.assertTrue(is_prompt(kept[0]))
 
     def test_an_all_reads_episode_is_left_alone(self):
-        from skillpp.segment import trim_leading_exploration
+        from skill_plus_plus.segment import trim_leading_exploration
         steps = [self.bash("git status"), self.bash("git diff"), self.bash("ls -la")]
         kept, cut = trim_leading_exploration(steps)
         self.assertEqual((len(kept), cut), (3, 0))
 
     def test_a_write_is_never_read_only(self):
-        from skillpp.segment import is_read_only
+        from skill_plus_plus.segment import is_read_only
         self.assertFalse(is_read_only({"tool": "Write",
                                        "input": {"file_path": "/tmp/x"}}))
 
     def test_an_anchored_read_is_not_fooled_by_a_substring(self):
-        from skillpp.segment import is_read_only
+        from skill_plus_plus.segment import is_read_only
         self.assertTrue(is_read_only(self.bash("grep -rn x .")))
         self.assertFalse(is_read_only(self.bash("vim $(grep -l x .)")))
 
@@ -2995,16 +3023,16 @@ class TestCaptureDoesNotObserveItself(TempRoot):
     def test_an_internal_run_is_not_captured(self):
         """`draft` spawns an agent, whose session was banked as a candidate.
 
-        Two runs produced two junk entries titled `/skillpp-draft <id>`, holding
+        Two runs produced two junk entries titled `/skill-plus-plus-draft <id>`, holding
         the draft agent's own `find` and `ls`. Automation observing itself is a
         feedback loop: using the tool manufactures work for the tool.
         """
         import os
-        from skillpp.cli import cmd_hook
+        from skill_plus_plus.cli import cmd_hook
         import argparse, io, sys as _sys
 
-        os.environ["SKILLPP_INTERNAL"] = "1"
-        self.addCleanup(lambda: os.environ.pop("SKILLPP_INTERNAL", None))
+        os.environ["SKILL_PLUS_PLUS_INTERNAL"] = "1"
+        self.addCleanup(lambda: os.environ.pop("SKILL_PLUS_PLUS_INTERNAL", None))
         real, _sys.stdin = _sys.stdin, io.StringIO(json.dumps(
             {"session_id": "auto", "cwd": "/p", "prompt": "invisible"}))
         self.addCleanup(lambda: setattr(_sys, "stdin", real))
@@ -3018,7 +3046,7 @@ class TestCaptureDoesNotObserveItself(TempRoot):
         The harness injects envelopes into the prompt stream. They are not
         something a developer typed, and a skill named after one never fires.
         """
-        from skillpp.capture import handle_prompt
+        from skill_plus_plus.capture import handle_prompt
         handle_prompt(self.config, {"session_id": "e", "cwd": "/p",
                                     "prompt": "<task-notification>\ndone"})
         handle_prompt(self.config, {"session_id": "e", "cwd": "/p",
@@ -3096,7 +3124,7 @@ class TestBenchmarkSegmentation(unittest.TestCase):
         # Both release cases bank two entries where the truth is one, for the
         # same reason and at two different distances: lexical similarity cannot
         # see through a swapped tool. `different-runner` lands at 0.786, inside
-        # the band `skillpp merge` already looks at; `two-steps-different`
+        # the band `skill-plus-plus merge` already looks at; `two-steps-different`
         # lands at 0.531, under the floor of every band a live command can
         # afford, which is why the queued pass exists. Neither is a segmenter
         # bug — segmentation cut both sessions correctly.
@@ -3194,7 +3222,7 @@ class TestOccurrencesCountEveryRecognition(TempRoot):
 
 
 class TestMatching(TempRoot):
-    """`skillpp.matching`: same procedure, decided by an embedding.
+    """`skill_plus_plus.matching`: same procedure, decided by an embedding.
 
     The embedder is stubbed with fixed vectors so these test the matcher's own
     rules — what it compares, what it caches, where the floor sits — without a
@@ -3203,7 +3231,7 @@ class TestMatching(TempRoot):
 
     def setUp(self) -> None:
         super().setUp()
-        import skillpp.matching as matching
+        import skill_plus_plus.matching as matching
         self.matching = matching
         self.calls: list[str] = []
         self.vectors: dict[str, list[float]] = {}
@@ -3286,7 +3314,7 @@ class TestMatching(TempRoot):
         self.assertEqual(len(self.calls) - before, 2, "episode and entry both re-embedded")
 
     def test_an_unreachable_model_raises_rather_than_guessing(self):
-        from skillpp.local import LocalModelUnavailable
+        from skill_plus_plus.local import LocalModelUnavailable
         a = self._entry("a", "regenerate fixtures")
 
         def down(text, **kw):
@@ -3318,7 +3346,7 @@ class TestCandidatesBelongToOneProject(TempRoot):
                                           "steps": judged([dict(st) for st in self.WORK])})
 
     def test_a_project_is_the_repo_root_above_the_folder(self):
-        from skillpp.capture import project_of
+        from skill_plus_plus.capture import project_of
         repo = self._repo("app")
         (repo / "src" / "deep").mkdir(parents=True)
         self.assertEqual(project_of(str(repo / "src" / "deep")), str(repo))
@@ -3353,7 +3381,7 @@ class TestCandidatesBelongToOneProject(TempRoot):
     def test_live_capture_records_the_folder_the_session_ran_in(self):
         """The hooks carry the folder; a candidate banked from them names it.
         (Sessions folded with no folder, as the scorers do, have none.)"""
-        from skillpp.capture import _load_session
+        from skill_plus_plus.capture import _load_session
         repo = self._repo("app")
         handle_prompt(self.config, {"session_id": "live", "cwd": str(repo), "prompt": "deploy"})
         for st in self.WORK:
@@ -3367,7 +3395,7 @@ class TestCandidatesBelongToOneProject(TempRoot):
         self.assertEqual(Ledger(self.config).get(result["id"]).projects, [str(repo)])
 
     def test_merge_never_joins_candidates_from_two_projects(self):
-        from skillpp.cli import main
+        from skill_plus_plus.cli import main
         a, b = self._repo("a"), self._repo("b")
         self._fold("s1", a)
         self._fold("s2", b)
@@ -3386,8 +3414,8 @@ class TestCaptureMatchesByEmbedding(TempRoot):
                 "steps": judged([dict(st) for st in self.WORK])}
 
     def _down(self):
-        import skillpp.matching as matching
-        from skillpp.local import LocalModelUnavailable
+        import skill_plus_plus.matching as matching
+        from skill_plus_plus.local import LocalModelUnavailable
 
         def refuse(*a, **k):
             raise LocalModelUnavailable("refused")
@@ -3403,7 +3431,7 @@ class TestCaptureMatchesByEmbedding(TempRoot):
         self.assertEqual(list(Ledger(self.config).all()), [])
 
     def test_a_forced_fold_with_no_model_banks_unmatched(self):
-        """Forced, it is banked anyway, and marked for `skillpp merge`."""
+        """Forced, it is banked anyway, and marked for `skill-plus-plus merge`."""
         self._down()
         result = fold_session(self.config, self._session("s1"), force=True)
         self.assertEqual(result["status"], "created")
@@ -3412,7 +3440,7 @@ class TestCaptureMatchesByEmbedding(TempRoot):
     def test_a_miss_makes_a_duplicate_never_an_overwrite(self):
         """Ids used to be the signature, so a miss on identical work rewrote the
         existing file — status, parking and counts included."""
-        from skillpp.ledger import STATUS_DISMISSED
+        from skill_plus_plus.ledger import STATUS_DISMISSED
         first = fold_session(self.config, self._session("s1"))
         led = Ledger(self.config)
         entry = led.get(first["id"])
@@ -3433,7 +3461,7 @@ class TestCaptureMatchesByEmbedding(TempRoot):
 
 
 class TestMergeCommand(TempRoot):
-    """`skillpp merge`: folding what is already in the ledger."""
+    """`skill-plus-plus merge`: folding what is already in the ledger."""
 
     def _args(self, **kw):
         import argparse
@@ -3447,7 +3475,7 @@ class TestMergeCommand(TempRoot):
             steps=[bash("npm run build"), bash("./deploy.sh staging")]))
 
     def test_a_dry_run_changes_nothing(self):
-        from skillpp.cli import cmd_merge
+        from skill_plus_plus.cli import cmd_merge
         self._save("a", "s1")
         self._save("b", "s2")
         cmd_merge(self._args())
@@ -3455,8 +3483,8 @@ class TestMergeCommand(TempRoot):
 
     def test_apply_folds_and_records_the_fold(self):
         """The absorbed entry's file is gone; decisions.jsonl is its only record."""
-        from skillpp import decisions
-        from skillpp.cli import cmd_merge
+        from skill_plus_plus import decisions
+        from skill_plus_plus.cli import cmd_merge
         self._save("a", "s1")
         self._save("b", "s2")
         cmd_merge(self._args(apply=True))
@@ -3467,7 +3495,7 @@ class TestMergeCommand(TempRoot):
         self.assertTrue(any("absorbed" in n for n in notes))
 
     def test_nothing_below_the_floor_is_folded(self):
-        from skillpp.cli import cmd_merge
+        from skill_plus_plus.cli import cmd_merge
         self._save("a", "s1")
         self._save("b", "s2")
         cmd_merge(self._args(apply=True, floor=1.01))
@@ -3475,7 +3503,7 @@ class TestMergeCommand(TempRoot):
 
 
 class TestFoldInto(TempRoot):
-    """Moving one entry's evidence into another, as `skillpp merge` does."""
+    """Moving one entry's evidence into another, as `skill-plus-plus merge` does."""
 
     RELEASE = ["git checkout main", "npm test", "git push --follow-tags"]
     RELEASE_PYTEST = ["git checkout main", "pytest -q", "git push --follow-tags"]
@@ -3487,7 +3515,7 @@ class TestFoldInto(TempRoot):
         return Entry(**base)
 
     def test_folding_adds_the_counts_and_unions_the_sessions(self):
-        from skillpp.similar import fold_into
+        from skill_plus_plus.similar import fold_into
         a = self._entry("a", self.RELEASE, sessions=["s1"], occurrences=2)
         b = self._entry("b", self.RELEASE_PYTEST, sessions=["s1"], occurrences=1)
         fold_into(a, b)
@@ -3495,14 +3523,14 @@ class TestFoldInto(TempRoot):
         self.assertEqual(a.sessions, ["s1"])
 
     def test_folding_keeps_the_other_body_as_a_variant(self):
-        from skillpp.similar import fold_into
+        from skill_plus_plus.similar import fold_into
         a = self._entry("a", self.RELEASE, sessions=["s1"])
         b = self._entry("b", self.RELEASE_PYTEST, sessions=["s2"])
         fold_into(a, b)
         self.assertEqual(len(a.variants), 1)
 
     def test_cosine_is_safe_on_degenerate_input(self):
-        from skillpp.local import cosine
+        from skill_plus_plus.local import cosine
         self.assertEqual(cosine([], [1.0]), 0.0)
         self.assertEqual(cosine([0.0, 0.0], [0.0, 0.0]), 0.0)
         self.assertEqual(cosine([1.0, 2.0], [1.0]), 0.0)
@@ -3537,14 +3565,14 @@ class TestNaming(TempRoot):
         return Ledger(self.config).get("cand")
 
     def test_a_title_replaces_the_developers_words(self):
-        from skillpp.cli import cmd_name
+        from skill_plus_plus.cli import cmd_name
         self.assertEqual(cmd_name(self._args(
             title="drain replicas to clear a migration lock")), 0)
         self.assertEqual(self._get().title,
                          "drain replicas to clear a migration lock")
 
     def test_a_description_is_recorded_and_round_trips(self):
-        from skillpp.cli import cmd_name
+        from skill_plus_plus.cli import cmd_name
         cmd_name(self._args(description="Use when a migration is blocked by a "
                                         "lock held by running replicas."))
         self.assertIn("blocked by a lock", self._get().description)
@@ -3553,21 +3581,21 @@ class TestNaming(TempRoot):
         """200 characters is the skill frontmatter limit. A description that
         will not fit cannot become a skill, so refusing here beats discovering
         it at promotion."""
-        from skillpp.cli import cmd_name
+        from skill_plus_plus.cli import cmd_name
         self.assertEqual(cmd_name(self._args(description="x" * 201)), 1)
         self.assertEqual(self._get().description, "")
 
     def test_a_title_long_enough_to_be_a_session_summary_is_refused(self):
-        from skillpp.cli import cmd_name
+        from skill_plus_plus.cli import cmd_name
         self.assertEqual(cmd_name(self._args(title="x" * 81)), 1)
 
     def test_naming_nothing_is_an_error_not_a_silent_pass(self):
-        from skillpp.cli import cmd_name
+        from skill_plus_plus.cli import cmd_name
         self.assertEqual(cmd_name(self._args()), 1)
 
     def test_naming_does_not_promote_or_change_status(self):
-        from skillpp.cli import cmd_name
-        from skillpp.ledger import STATUS_CANDIDATE
+        from skill_plus_plus.cli import cmd_name
+        from skill_plus_plus.ledger import STATUS_CANDIDATE
         cmd_name(self._args(title="drain replicas first"))
         entry = self._get()
         self.assertEqual(entry.status, STATUS_CANDIDATE)
@@ -3575,7 +3603,7 @@ class TestNaming(TempRoot):
 
     def test_the_description_reaches_the_written_file(self):
         """A human reading the ledger entry should see it without --json."""
-        from skillpp.cli import cmd_name
+        from skill_plus_plus.cli import cmd_name
         cmd_name(self._args(description="Use when a migration is lock-blocked."))
         text = Ledger(self.config).path_for("cand").read_text()
         self.assertIn("description: Use when a migration is lock-blocked.", text)
@@ -3606,12 +3634,12 @@ class TestSplit(TempRoot):
                 "curl -s https://staging/health")]))
 
     def _split(self, at):
-        from skillpp.cli import cmd_split
+        from skill_plus_plus.cli import cmd_split
         return cmd_split(self.argparse.Namespace(
             root=self.config.root, id="both", at=at))
 
     def test_a_split_produces_two_candidates(self):
-        from skillpp.ledger import STATUS_CANDIDATE
+        from skill_plus_plus.ledger import STATUS_CANDIDATE
         self.assertEqual(self._split(2), 0)
         cands = [e for e in Ledger(self.config).all()
                  if e.status == STATUS_CANDIDATE]
@@ -3619,7 +3647,7 @@ class TestSplit(TempRoot):
 
     def test_the_original_is_kept_not_deleted(self):
         """The verdict came from a model and the steps are the only evidence."""
-        from skillpp.ledger import STATUS_SPLIT
+        from skill_plus_plus.ledger import STATUS_SPLIT
         self._split(2)
         original = Ledger(self.config).get("both")
         self.assertEqual(original.status, STATUS_SPLIT)
@@ -3628,7 +3656,7 @@ class TestSplit(TempRoot):
 
     def test_a_split_that_would_strand_a_step_is_refused(self):
         """One step is not a procedure, so cutting there loses it."""
-        from skillpp.ledger import STATUS_CANDIDATE
+        from skill_plus_plus.ledger import STATUS_CANDIDATE
         self.assertEqual(self._split(1), 1)
         self.assertEqual(Ledger(self.config).get("both").status,
                          STATUS_CANDIDATE)
@@ -3638,7 +3666,7 @@ class TestSplit(TempRoot):
 
     def test_both_halves_inherit_the_provenance(self):
         """Occurrences count sessions, and both halves were seen in the same one."""
-        from skillpp.ledger import STATUS_CANDIDATE
+        from skill_plus_plus.ledger import STATUS_CANDIDATE
         self._split(2)
         for e in Ledger(self.config).all():
             if e.status == STATUS_CANDIDATE:
@@ -3672,7 +3700,7 @@ class TestDecisionLog(TempRoot):
         return entry
 
     def test_a_promote_records_a_method_label(self):
-        from skillpp import decisions
+        from skill_plus_plus import decisions
         decisions.record(self.config, self._entry("a", hint="method"),
                          decisions.PROMOTED)
         rows = decisions.read(self.config)
@@ -3681,7 +3709,7 @@ class TestDecisionLog(TempRoot):
 
     def test_the_hint_is_captured_alongside_the_decision(self):
         """Without the pair, the line is history rather than a measurement."""
-        from skillpp import decisions
+        from skill_plus_plus import decisions
         decisions.record(self.config, self._entry("a", hint="one-off"),
                          decisions.PROMOTED)
         score = decisions.score(self.config)
@@ -3689,7 +3717,7 @@ class TestDecisionLog(TempRoot):
         self.assertEqual(score["misses"][0]["hint"], "one-off")
 
     def test_agreement_is_counted_both_ways(self):
-        from skillpp import decisions
+        from skill_plus_plus import decisions
         decisions.record(self.config, self._entry("a", hint="method"),
                          decisions.PROMOTED)
         decisions.record(self.config, self._entry("b", hint="one-off"),
@@ -3699,7 +3727,7 @@ class TestDecisionLog(TempRoot):
 
     def test_an_unranked_decision_is_not_scored(self):
         """Deciding before sift ran says nothing about sift."""
-        from skillpp import decisions
+        from skill_plus_plus import decisions
         decisions.record(self.config, self._entry("a"), decisions.PROMOTED)
         score = decisions.score(self.config)
         self.assertEqual(score["unranked"], 1)
@@ -3707,7 +3735,7 @@ class TestDecisionLog(TempRoot):
 
     def test_the_latest_decision_wins_per_candidate(self):
         """Parked, reopened, then promoted is one judgement with a history."""
-        from skillpp import decisions
+        from skill_plus_plus import decisions
         entry = self._entry("a", hint="one-off")
         decisions.record(self.config, entry, decisions.PARKED)
         decisions.record(self.config, entry, decisions.REOPENED)
@@ -3718,13 +3746,13 @@ class TestDecisionLog(TempRoot):
 
     def test_parking_is_never_truth(self):
         """It is the model's own act, so scoring it would grade its own homework."""
-        from skillpp import decisions
+        from skill_plus_plus import decisions
         decisions.record(self.config, self._entry("a", hint="one-off"),
                          decisions.PARKED)
         self.assertEqual(decisions.score(self.config)["judged"], 0)
 
     def test_a_reopen_counts_as_a_method(self):
-        from skillpp import decisions
+        from skill_plus_plus import decisions
         decisions.record(self.config, self._entry("a", hint="one-off"),
                          decisions.REOPENED)
         self.assertEqual(decisions.score(self.config)["disagreed"], 1)
@@ -3735,14 +3763,14 @@ class TestDecisionLog(TempRoot):
         A directory where the file belongs makes the open fail without any
         permission juggling, which would otherwise outlive the test.
         """
-        from skillpp import decisions
+        from skill_plus_plus import decisions
         entry = self._entry("a", hint="method")
         self.config.decisions_file.mkdir(parents=True, exist_ok=True)
         decisions.record(self.config, entry, decisions.PROMOTED)  # must not raise
         self.assertEqual(decisions.read(self.config), [])
 
     def test_a_corrupt_line_is_skipped_not_fatal(self):
-        from skillpp import decisions
+        from skill_plus_plus import decisions
         decisions.record(self.config, self._entry("a", hint="method"),
                          decisions.PROMOTED)
         with self.config.decisions_file.open("a") as fh:
@@ -3754,14 +3782,14 @@ class TestReconcile(TempRoot):
     """Reporting drift, and never acting on it."""
 
     def _promoted(self, eid, path):
-        from skillpp.ledger import STATUS_PROMOTED
+        from skill_plus_plus.ledger import STATUS_PROMOTED
         entry = Entry(id=eid, signature="s", title=f"skill {eid}",
                       status=STATUS_PROMOTED, skill_path=str(path))
         Ledger(self.config).save(entry)
         return entry
 
     def test_a_live_skill_is_not_drift(self):
-        from skillpp.lifecycle import reconcile
+        from skill_plus_plus.lifecycle import reconcile
         alive = self.root / "SKILL.md"
         alive.write_text("---\nname: x\n---\n")
         self._promoted("a", alive)
@@ -3769,7 +3797,7 @@ class TestReconcile(TempRoot):
         self.assertEqual((result["live"], result["missing"]), (1, []))
 
     def test_a_deleted_skill_is_reported(self):
-        from skillpp.lifecycle import reconcile
+        from skill_plus_plus.lifecycle import reconcile
         self._promoted("a", self.root / "gone" / "SKILL.md")
         result = reconcile(Ledger(self.config), self.config)
         self.assertEqual(len(result["missing"]), 1)
@@ -3778,14 +3806,14 @@ class TestReconcile(TempRoot):
     def test_reporting_never_changes_status(self):
         """Reopening would second-guess a deletion that was almost certainly
         deliberate, and re-propose the same workflow on every decline."""
-        from skillpp.ledger import STATUS_PROMOTED
-        from skillpp.lifecycle import reconcile
+        from skill_plus_plus.ledger import STATUS_PROMOTED
+        from skill_plus_plus.lifecycle import reconcile
         self._promoted("a", self.root / "gone" / "SKILL.md")
         reconcile(Ledger(self.config), self.config)
         self.assertEqual(Ledger(self.config).get("a").status, STATUS_PROMOTED)
 
     def test_a_promotion_with_no_path_recorded_is_drift_too(self):
-        from skillpp.lifecycle import reconcile
+        from skill_plus_plus.lifecycle import reconcile
         self._promoted("a", "")
         result = reconcile(Ledger(self.config), self.config)
         self.assertEqual(result["missing"][0]["skill_path"], "(never recorded)")
@@ -3803,7 +3831,7 @@ class TestParkingSticks(TempRoot):
     CMDS = ["npm test", "git tag -s v2.4.0 -m rel", "git push --follow-tags"]
 
     def _session(self, sid):
-        from skillpp.capture import (handle_prompt, handle_session_end,
+        from skill_plus_plus.capture import (handle_prompt, handle_session_end,
                                      handle_tool)
         handle_prompt(self.config, {"session_id": sid, "cwd": "/r",
                                     "prompt": "cut the release"})
@@ -3870,8 +3898,8 @@ class TestWeb(TempRoot):
     """The decision page: candidates seen often enough, Accept or Decline, then
     Create Skill for an accepted one.
 
-    Every action runs a real `skillpp` command in a subprocess, so these run the
-    CLI end to end. The agent `skillpp draft` launches is a stub script; no model
+    Every action runs a real `skill-plus-plus` command in a subprocess, so these run the
+    CLI end to end. The agent `skill-plus-plus draft` launches is a stub script; no model
     and no real agent are involved.
     """
 
@@ -3888,28 +3916,28 @@ class TestWeb(TempRoot):
         return entry
 
     def _rows(self):
-        from skillpp.web import collect_state
+        from skill_plus_plus.web import collect_state
         return {r["id"]: r for r in collect_state(self.config)["rows"]}
 
     def _agent(self, body):
-        """Point `skillpp draft` at a stub agent script."""
+        """Point `skill-plus-plus draft` at a stub agent script."""
         import os
         import shlex
         script = self.root / "agent.py"
         script.write_text("import os, pathlib, sys\n" + body, encoding="utf-8")
-        os.environ["SKILLPP_AGENT"] = (f"{shlex.quote(sys.executable)} "
+        os.environ["SKILL_PLUS_PLUS_AGENT"] = (f"{shlex.quote(sys.executable)} "
                                        f"{shlex.quote(str(script))} {{PROMPT}}")
-        self.addCleanup(lambda: os.environ.pop("SKILLPP_AGENT", None))
+        self.addCleanup(lambda: os.environ.pop("SKILL_PLUS_PLUS_AGENT", None))
 
     def _wait_for_draft(self, eid):
-        from skillpp import web
+        from skill_plus_plus import web
         job = web._jobs.get(eid)
         if job:
             job.join(timeout=60)
 
     def test_candidates_are_split_by_whether_they_were_seen_often_enough(self):
-        from skillpp.ledger import STATUS_ONE_OFF
-        from skillpp.web import collect_state
+        from skill_plus_plus.ledger import STATUS_ONE_OFF
+        from skill_plus_plus.web import collect_state
         self._save("ready", occurrences=3)
         self._save("twice", occurrences=2)
         self._save("often", occurrences=7)
@@ -3924,15 +3952,15 @@ class TestWeb(TempRoot):
         self.assertEqual(by_id["twice"]["state"], "collecting")
 
     def test_a_candidate_below_the_threshold_cannot_be_decided(self):
-        from skillpp.ledger import STATUS_CANDIDATE
-        from skillpp.web import accept, decline
+        from skill_plus_plus.ledger import STATUS_CANDIDATE
+        from skill_plus_plus.web import accept, decline
         self._save("twice", occurrences=2)
         self.assertFalse(accept(self.config, "twice")["ok"])
         self.assertFalse(decline(self.config, "twice")["ok"])
         self.assertEqual(Ledger(self.config).get("twice").status, STATUS_CANDIDATE)
 
     def test_decisions_stay_listed_whatever_the_count(self):
-        from skillpp.ledger import STATUS_DISMISSED, STATUS_PROMOTED
+        from skill_plus_plus.ledger import STATUS_DISMISSED, STATUS_PROMOTED
         self._save("yes", occurrences=1, status=STATUS_PROMOTED)
         self._save("no", occurrences=2, status=STATUS_DISMISSED)
         rows = self._rows()
@@ -3940,8 +3968,8 @@ class TestWeb(TempRoot):
         self.assertEqual(rows["no"]["state"], "dismissed")
 
     def test_accept_promotes_and_records_the_decision(self):
-        from skillpp.ledger import STATUS_PROMOTED
-        from skillpp.web import accept
+        from skill_plus_plus.ledger import STATUS_PROMOTED
+        from skill_plus_plus.web import accept
         self._save("a")
         self.assertTrue(accept(self.config, "a")["ok"])
         self.assertEqual(Ledger(self.config).get("a").status, STATUS_PROMOTED)
@@ -3950,8 +3978,8 @@ class TestWeb(TempRoot):
         self.assertFalse(accept(self.config, "a")["ok"], "decided once")
 
     def test_decline_dismisses_and_records_the_decision(self):
-        from skillpp.ledger import STATUS_DISMISSED
-        from skillpp.web import accept, decline
+        from skill_plus_plus.ledger import STATUS_DISMISSED
+        from skill_plus_plus.web import accept, decline
         self._save("d")
         self.assertTrue(decline(self.config, "d")["ok"])
         self.assertEqual(Ledger(self.config).get("d").status, STATUS_DISMISSED)
@@ -3962,8 +3990,8 @@ class TestWeb(TempRoot):
 
     def test_the_clock_counts_down_from_the_last_recognition(self):
         from datetime import datetime, timedelta, timezone
-        from skillpp.ledger import STATUS_PROMOTED
-        from skillpp.web import days_left
+        from skill_plus_plus.ledger import STATUS_PROMOTED
+        from skill_plus_plus.web import days_left
         now = datetime(2026, 9, 17, 12, tzinfo=timezone.utc)
         ago = lambda d: (now - timedelta(days=d)).isoformat()
         entry = lambda d, **kw: Entry(id="x", occurrences=kw.pop("n", 1), last_seen=ago(d), **kw)
@@ -3978,7 +4006,7 @@ class TestWeb(TempRoot):
 
     def test_closest_to_expiring_first_at_the_same_count_and_expired_last(self):
         from datetime import datetime, timedelta, timezone
-        from skillpp.web import collect_state
+        from skill_plus_plus.web import collect_state
         ago = lambda d: (datetime.now(timezone.utc) - timedelta(days=d)).isoformat()
         self._save("fresh", occurrences=1, last_seen=ago(1))
         self._save("old", occurrences=1, last_seen=ago(12))
@@ -3988,8 +4016,8 @@ class TestWeb(TempRoot):
         self.assertEqual(order, ["more", "old", "fresh", "gone"])
 
     def test_a_declined_candidate_can_be_reinstated(self):
-        from skillpp.ledger import STATUS_CANDIDATE
-        from skillpp.web import decline, reinstate
+        from skill_plus_plus.ledger import STATUS_CANDIDATE
+        from skill_plus_plus.web import decline, reinstate
         self._save("d")
         self.assertFalse(reinstate(self.config, "d")["ok"], "not declined yet")
         decline(self.config, "d")
@@ -4000,14 +4028,14 @@ class TestWeb(TempRoot):
         self.assertIn("declined, reinstated", log)
 
     def test_create_skill_needs_an_accepted_candidate(self):
-        from skillpp.web import create_skill
+        from skill_plus_plus.web import create_skill
         self._save("u")
         self.assertFalse(create_skill(self.config, "u")["ok"])
         self.assertFalse((self.config.root / "drafts" / "u").exists())
 
     def test_create_skill_drafts_and_never_installs(self):
-        from skillpp.web import accept, create_skill
-        self._agent("d = pathlib.Path(os.environ['SKILLPP_DRAFT_DIR'])\n"
+        from skill_plus_plus.web import accept, create_skill
+        self._agent("d = pathlib.Path(os.environ['SKILL_PLUS_PLUS_DRAFT_DIR'])\n"
                     "d.mkdir(parents=True, exist_ok=True)\n"
                     "(d / 'SKILL.md').write_text('---\\nname: x\\n---\\n')\n")
         self._save("c")
@@ -4022,12 +4050,12 @@ class TestWeb(TempRoot):
     def _agent_echoing_its_prompt(self):
         """A stub that writes the prompt it was handed into the draft, so a
         test reads exactly what the agent read."""
-        self._agent("d = pathlib.Path(os.environ['SKILLPP_DRAFT_DIR'])\n"
+        self._agent("d = pathlib.Path(os.environ['SKILL_PLUS_PLUS_DRAFT_DIR'])\n"
                     "d.mkdir(parents=True, exist_ok=True)\n"
                     "(d / 'SKILL.md').write_text('---\\nname: x\\n---\\n' + sys.argv[1])\n")
 
     def _drafted_with(self, eid, note):
-        from skillpp.web import accept, create_skill
+        from skill_plus_plus.web import accept, create_skill
         self._save(eid)
         accept(self.config, eid)
         self.assertTrue(create_skill(self.config, eid, note=note)["ok"])
@@ -4047,7 +4075,7 @@ class TestWeb(TempRoot):
         self.assertIn("\n--dry-run", self._drafted_with("o", "--dry-run"))
 
     def test_a_note_too_long_is_refused_before_anything_runs(self):
-        from skillpp.web import MAX_NOTE, accept, create_skill
+        from skill_plus_plus.web import MAX_NOTE, accept, create_skill
         self._save("l")
         accept(self.config, "l")
         self.assertFalse(create_skill(self.config, "l", note="x" * (MAX_NOTE + 1))["ok"])
@@ -4055,7 +4083,7 @@ class TestWeb(TempRoot):
         self.assertEqual(self._rows()["l"]["state"], "accepted")
 
     def test_a_failed_draft_says_why_and_can_be_retried(self):
-        from skillpp.web import accept, create_skill
+        from skill_plus_plus.web import accept, create_skill
         self._agent("print('not logged in'); sys.exit(1)\n")
         self._save("f")
         accept(self.config, "f")
@@ -4069,7 +4097,7 @@ class TestWeb(TempRoot):
 
     def test_one_draft_run_at_a_time(self):
         import time
-        from skillpp.web import _write_status, accept, create_skill
+        from skill_plus_plus.web import _write_status, accept, create_skill
         self._save("r")
         accept(self.config, "r")
         _write_status(self.config, "r", state="running", started=time.time())
@@ -4078,7 +4106,7 @@ class TestWeb(TempRoot):
 
     def test_a_run_from_a_server_that_restarted_fails_at_once(self):
         import time
-        from skillpp.web import _write_status, accept, create_skill
+        from skill_plus_plus.web import _write_status, accept, create_skill
         self._save("o")
         accept(self.config, "o")
         _write_status(self.config, "o", state="running", started=time.time(),
@@ -4091,14 +4119,14 @@ class TestWeb(TempRoot):
         self._wait_for_draft("o")
 
     def test_a_run_that_never_finished_reads_as_failed(self):
-        from skillpp.web import _write_status, accept
+        from skill_plus_plus.web import _write_status, accept
         self._save("s")
         accept(self.config, "s")
         _write_status(self.config, "s", state="running", started=0)
         self.assertEqual(self._rows()["s"]["state"], "failed")
 
     def test_an_installed_skill_is_shown_as_installed(self):
-        from skillpp.ledger import STATUS_PROMOTED
+        from skill_plus_plus.ledger import STATUS_PROMOTED
         skill = self.root / "skills" / "x" / "SKILL.md"
         skill.parent.mkdir(parents=True)
         skill.write_text("---\nname: x\n---\n")
@@ -4107,7 +4135,7 @@ class TestWeb(TempRoot):
 
     def test_the_page_lists_each_project_with_its_counts(self):
         """The switcher's menu: every project on the page, "No project" last."""
-        from skillpp.web import collect_state
+        from skill_plus_plus.web import collect_state
         a, b = self.root / "repo-a", self.root / "repo-b"
         for repo in (a, b):
             (repo / ".git").mkdir(parents=True)
@@ -4123,7 +4151,7 @@ class TestWeb(TempRoot):
         self.assertEqual(rows["w"], [""])
 
     def test_a_draft_carries_its_project(self):
-        from skillpp.web import collect_state
+        from skill_plus_plus.web import collect_state
         repo = self.root / "repo"
         (repo / ".git").mkdir(parents=True)
         self._drafted("x")
@@ -4138,7 +4166,7 @@ class TestWeb(TempRoot):
     def test_the_page_filters_by_the_chosen_project(self):
         """All projects, one project, and the entries with none."""
         import json, subprocess
-        from skillpp.web import PAGE
+        from skill_plus_plus.web import PAGE
         script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
         state = {"rows": [{"id": "a", "projects": ["/r/a"]}, {"id": "b", "projects": ["/r/b"]},
                           {"id": "n", "projects": [""]}, {"id": "old", "projects": ["/r/a", "/r/b"]}],
@@ -4162,7 +4190,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         return repo
 
     def test_install_puts_the_skill_in_its_projects_skills_folder(self):
-        from skillpp.web import collect_state, install_skill
+        from skill_plus_plus.web import collect_state, install_skill
         repo = self._in_repo("x")
         result = install_skill(self.config, "x", "project")
         skill = repo / ".claude" / "skills" / "add-eval-case"
@@ -4175,14 +4203,14 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         self.assertEqual(self.ledger.get("x").skill_path, str(skill / "SKILL.md"))
 
     def test_install_just_for_me_uses_the_personal_folder(self):
-        from skillpp.web import install_skill
+        from skill_plus_plus.web import install_skill
         self._in_repo("x")
         personal = self.root / "home-skills"
         self.assertTrue(install_skill(self.config, "x", "personal", personal)["ok"])
         self.assertTrue((personal / "add-eval-case" / "SKILL.md").exists())
 
     def test_a_draft_with_open_questions_is_not_installed(self):
-        from skillpp.web import install_skill
+        from skill_plus_plus.web import install_skill
         repo = self._in_repo("x")
         skill = self.config.root / "drafts" / "x" / "SKILL.md"
         skill.write_text(skill.read_text() + "\n## Open questions\n\n- Which topics?\n")
@@ -4191,7 +4219,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         self.assertFalse((repo / ".claude").exists())
 
     def test_a_folder_it_did_not_install_is_left_alone(self):
-        from skillpp.web import install_skill
+        from skill_plus_plus.web import install_skill
         repo = self._in_repo("x")
         theirs = repo / ".claude" / "skills" / "add-eval-case"
         theirs.mkdir(parents=True)
@@ -4200,7 +4228,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         self.assertEqual((theirs / "SKILL.md").read_text(), "someone else's")
 
     def test_a_revision_reaches_the_installed_skill_through_update(self):
-        from skillpp.web import collect_state, install_skill
+        from skill_plus_plus.web import collect_state, install_skill
         repo = self._in_repo("x")
         install_skill(self.config, "x", "project")
         draft = self.config.root / "drafts" / "x" / "SKILL.md"
@@ -4212,7 +4240,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         self.assertFalse(collect_state(self.config)["drafts"][0]["install_stale"])
 
     def test_uninstall_removes_only_what_it_installed(self):
-        from skillpp.web import install_skill, uninstall_skill
+        from skill_plus_plus.web import install_skill, uninstall_skill
         repo = self._in_repo("x")
         install_skill(self.config, "x", "project")
         skill = repo / ".claude" / "skills" / "add-eval-case"
@@ -4224,14 +4252,14 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         self.assertEqual(self.ledger.get("x").skill_path, "")
 
     def test_uninstall_leaves_no_empty_skills_folder_behind(self):
-        from skillpp.web import install_skill, uninstall_skill
+        from skill_plus_plus.web import install_skill, uninstall_skill
         repo = self._in_repo("x")
         install_skill(self.config, "x", "project")
         uninstall_skill(self.config, "x")
         self.assertFalse((repo / ".claude" / "skills").exists())
 
     def test_uninstall_leaves_a_skill_edited_after_install(self):
-        from skillpp.web import install_skill, uninstall_skill
+        from skill_plus_plus.web import install_skill, uninstall_skill
         repo = self._in_repo("x")
         install_skill(self.config, "x", "project")
         installed = repo / ".claude" / "skills" / "add-eval-case" / "SKILL.md"
@@ -4240,7 +4268,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         self.assertIn("my own step", installed.read_text())
 
     def test_without_a_project_folder_it_installs_only_for_you(self):
-        from skillpp.web import collect_state, install_skill
+        from skill_plus_plus.web import collect_state, install_skill
         self._drafted("x")
         self.assertEqual(collect_state(self.config)["drafts"][0]["project_name"], "")
         self.assertFalse(install_skill(self.config, "x", "project")["ok"])
@@ -4248,7 +4276,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
     def test_an_install_request_cannot_choose_the_folder(self):
         """The folder comes from the ledger; a path in the request is ignored,
         and an unknown target is refused."""
-        from skillpp.web import install_skill
+        from skill_plus_plus.web import install_skill
         repo = self._in_repo("x")
         elsewhere = self.root / "elsewhere"
         self.assertFalse(install_skill(self.config, "x", str(elsewhere))["ok"])
@@ -4267,8 +4295,8 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         self.assertIn("a", self._rows())
 
     def _drafted(self, eid, name="add-eval-case", extra=None):
-        from skillpp.ledger import STATUS_PROMOTED
-        from skillpp.web import _write_status
+        from skill_plus_plus.ledger import STATUS_PROMOTED
+        from skill_plus_plus.web import _write_status
         self._save(eid, status=STATUS_PROMOTED)
         folder = self.config.root / "drafts" / eid
         folder.mkdir(parents=True)
@@ -4280,7 +4308,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         _write_status(self.config, eid, state="ready")
 
     def test_a_finished_draft_is_listed_for_review(self):
-        from skillpp.web import collect_state
+        from skill_plus_plus.web import collect_state
         self._drafted("x", extra={"references/notes.md": "n"})
         self._save("u")                                    # undecided: no draft
         drafts = collect_state(self.config)["drafts"]
@@ -4295,7 +4323,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         """Told apart by when, not only by name: the draft just asked for is
         the one being looked for."""
         import os
-        from skillpp.web import collect_state
+        from skill_plus_plus.web import collect_state
         self._drafted("old", name="zz-older")
         self._drafted("new", name="aa-newer")
         os.utime(self.config.root / "drafts" / "old" / "SKILL.md", (1_000_000, 1_000_000))
@@ -4305,7 +4333,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
 
     def test_a_draft_downloads_as_a_folder_ready_for_the_skills_directory(self):
         import io, zipfile
-        from skillpp.web import draft_zip
+        from skill_plus_plus.web import draft_zip
         self._drafted("x", extra={"references/notes.md": "n"})
         filename, data = draft_zip(self.config, "x")
         self.assertEqual(filename, "add-eval-case.zip")
@@ -4315,7 +4343,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
 
     def test_a_downloaded_draft_is_listed_as_downloaded_until_it_changes(self):
         import io, zipfile
-        from skillpp.web import collect_state, draft_zip, record_download
+        from skill_plus_plus.web import collect_state, draft_zip, record_download
         self._drafted("x")
         self.assertEqual(collect_state(self.config)["drafts"][0]["downloaded_at"], "")
         record_download(self.config, "x")
@@ -4329,13 +4357,13 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
                          "a revised draft is back to review")
 
     def test_only_a_finished_draft_of_a_known_entry_downloads(self):
-        from skillpp.web import draft_zip
+        from skill_plus_plus.web import draft_zip
         self._save("u")
         self.assertIsNone(draft_zip(self.config, "u"))
         self.assertIsNone(draft_zip(self.config, "../../etc"))
 
     def test_an_unsafe_skill_name_falls_back_to_the_id(self):
-        from skillpp.web import draft_zip
+        from skill_plus_plus.web import draft_zip
         self._drafted("x", name="../escape")
         filename, _ = draft_zip(self.config, "x")
         self.assertEqual(filename, "x.zip")
@@ -4344,7 +4372,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
     def test_a_draft_renders_as_markdown_and_never_as_raw_html(self):
         """The SKILL.md is written by an agent, so it is untrusted text."""
         import json, subprocess
-        from skillpp.web import PAGE
+        from skill_plus_plus.web import PAGE
         script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
         source = ("---\nname: x\nmetadata:\n  tier: \"provisional\"\n---\n"
                   "# Title\n\nA line\ncontinued with `body_contains`.\n\n"
@@ -4365,7 +4393,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         self.assertNotIn("<img", html)
 
     def test_revise_needs_a_draft_and_an_instruction(self):
-        from skillpp.web import revise
+        from skill_plus_plus.web import revise
         self._save("u")
         self.assertFalse(revise(self.config, "u", "change it")["ok"])
         self._drafted("x")
@@ -4373,8 +4401,8 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
 
     def test_revise_changes_the_draft_and_keeps_history_out_of_the_download(self):
         import io, zipfile
-        from skillpp.web import collect_state, draft_zip, revise
-        self._agent("d = pathlib.Path(os.environ['SKILLPP_DRAFT_DIR']) / 'SKILL.md'\n"
+        from skill_plus_plus.web import collect_state, draft_zip, revise
+        self._agent("d = pathlib.Path(os.environ['SKILL_PLUS_PLUS_DRAFT_DIR']) / 'SKILL.md'\n"
                     "d.write_text(d.read_text() + '## Traps\\n')\n")
         self._drafted("x")
         self.assertTrue(revise(self.config, "x", "add a traps section")["ok"])
@@ -4389,7 +4417,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
                          ["add-eval-case/SKILL.md"])
 
     def test_a_failed_revision_keeps_the_draft_and_says_why(self):
-        from skillpp.web import collect_state, revise
+        from skill_plus_plus.web import collect_state, revise
         self._agent("print('not logged in'); sys.exit(1)\n")
         self._drafted("x")
         revise(self.config, "x", "add a traps section")
@@ -4401,7 +4429,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
 
     def test_a_revision_in_progress_is_shown_and_not_started_twice(self):
         import time
-        from skillpp.web import _write_status, collect_state, revise
+        from skill_plus_plus.web import _write_status, collect_state, revise
         self._drafted("x")
         _write_status(self.config, "x", state="revising", started=time.time())
         self.assertEqual(self._rows()["x"]["state"], "revising")
@@ -4420,7 +4448,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         """`## Known gaps` was the scaffold's name for the same section and
         nothing read it, so two real drafts carried four unanswered questions,
         showed no answer fields and downloaded freely."""
-        from skillpp.web import draft_zip, split_open_questions
+        from skill_plus_plus.web import draft_zip, split_open_questions
         questions, rest = split_open_questions(self.GAPS)
         self.assertEqual(questions, ["Is it always `x`?"])
         self.assertNotIn("Known gaps", rest)
@@ -4429,7 +4457,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
                           "a draft with unanswered gaps downloaded")
 
     def test_open_questions_are_read_out_of_the_draft(self):
-        from skillpp.web import split_open_questions
+        from skill_plus_plus.web import split_open_questions
         questions, rest = split_open_questions(self.QUESTIONS)
         self.assertEqual(questions, ["Is it always `x`, or can it also be `y`?",
                                      "Which runner?"])
@@ -4439,7 +4467,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         self.assertEqual(split_open_questions("# Body\n"), ([], "# Body\n"))
 
     def test_a_draft_with_open_questions_shows_them_and_will_not_download(self):
-        from skillpp.web import collect_state, draft_zip
+        from skill_plus_plus.web import collect_state, draft_zip
         self._drafted("x")
         skill = self.config.root / "drafts" / "x" / "SKILL.md"
         skill.write_text(skill.read_text() + "\n" + self.QUESTIONS)
@@ -4449,10 +4477,10 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         self.assertIsNone(draft_zip(self.config, "x"))
 
     def test_answers_revise_the_draft_until_it_downloads(self):
-        from skillpp.web import answer_questions, collect_state, draft_zip
+        from skill_plus_plus.web import answer_questions, collect_state, draft_zip
         self._agent(
             "import re\n"
-            "d = pathlib.Path(os.environ['SKILLPP_DRAFT_DIR']) / 'SKILL.md'\n"
+            "d = pathlib.Path(os.environ['SKILL_PLUS_PLUS_DRAFT_DIR']) / 'SKILL.md'\n"
             "prompt = sys.argv[-1]\n"
             "assert 'A: always x' in prompt, prompt\n"
             "t = re.sub(r'## Open questions[\\s\\S]*?(?=\\n---)', '', d.read_text())\n"
@@ -4472,7 +4500,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         self.assertIsNotNone(draft_zip(self.config, "x"))
 
     def test_the_outline_uses_the_agents_own_step_descriptions(self):
-        from skillpp.web import step_outline
+        from skill_plus_plus.web import step_outline
         steps = [
             {"tool": "Bash", "input": {"command": "./start.sh", "description": "Restart servers"}},
             {"tool": "Bash", "input": {"command": "./start.sh", "description": "Restart servers"}},
@@ -4490,8 +4518,8 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
                                                "Asked you: Bundle or split? → Split"])
 
     def test_a_summary_is_asked_on_demand_cached_and_redone_when_the_entry_grows(self):
-        import skillpp.local as local
-        from skillpp.web import summarise
+        import skill_plus_plus.local as local
+        from skill_plus_plus.web import summarise
         self._save("a")
         calls = []
         real = local.ask
@@ -4522,7 +4550,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
 
     def test_a_row_says_where_the_pattern_was_recognized(self):
         """"Seen in" is one line per recognition, not per distinct session."""
-        from skillpp.web import seen_runs
+        from skill_plus_plus.web import seen_runs
         entry = self._save("a", occurrences=2, seen=[
             {"session": "s1", "at": "2026-09-18T09:00:00+00:00"},
             {"session": "s1", "at": "2026-09-18T11:00:00+00:00"}])
@@ -4534,7 +4562,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
     def test_an_entry_from_before_the_record_shows_ids_without_a_time(self):
         """`created` and `last_seen` only bound the range; printing either
         against every run would be inventing when the work happened."""
-        from skillpp.web import seen_runs
+        from skill_plus_plus.web import seen_runs
         entry = self._save("old", occurrences=2)
         entry.seen = []
         self.assertEqual(seen_runs(entry),
@@ -4543,7 +4571,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
     def test_a_transcript_is_only_read_for_something_shaped_like_a_session(self):
         """The id reaches `_find_transcript` as a glob, so the page cannot
         steer it at another directory."""
-        from skillpp.web import transcript
+        from skill_plus_plus.web import transcript
         for bad in ("../../etc", "a/b", "*", ""):
             self.assertEqual(transcript(self.config, bad)["error"], "not a session id")
         missing = transcript(self.config, "nosuchsession0000")
@@ -4553,14 +4581,14 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
     def test_every_state_has_its_own_label_on_the_page(self):
         """A dismissed row once rendered as "Agent declined" with a retry
         button, because both states were called "declined"."""
-        from skillpp.web import PAGE
+        from skill_plus_plus.web import PAGE
         for state in ("collecting", "undecided", "accepted", "creating", "drafted", "revising",
                       "installed", "failed", "declined", "dismissed"):
             self.assertIn(f'"{state}"', PAGE)
 
     def test_the_page_carries_no_external_references(self):
         """Dependency-free on purpose, and offline by consequence."""
-        from skillpp.web import PAGE
+        from skill_plus_plus.web import PAGE
         for bad in ("http://", "https://", "//cdn.", "<script src", "<link"):
             self.assertNotIn(bad, PAGE)
 
@@ -4585,10 +4613,10 @@ class TestLiveSessions(unittest.TestCase):
         cls.docs = score.load()
         # A set pointed at and found empty is a mistake worth failing on; no
         # public sessions recorded yet is not.
-        if not cls.docs and not os.environ.get("SKILLPP_FIXTURES"):
+        if not cls.docs and not os.environ.get("SKILL_PLUS_PLUS_FIXTURES"):
             raise unittest.SkipTest(
                 "no recorded sessions in tests/fixtures/sessions; point "
-                "SKILLPP_FIXTURES at a set to score one")
+                "SKILL_PLUS_PLUS_FIXTURES at a set to score one")
 
     def test_every_banked_episode_has_a_family(self):
         """`recurrence.py` refuses to score if labels and episodes disagree.
@@ -4604,7 +4632,7 @@ class TestLiveSessions(unittest.TestCase):
         if not expected:
             self.skipTest("this set has no expected.json family_sizes")
         with tempfile.TemporaryDirectory() as tmp:
-            config = Config(Path(tmp) / "skillpp")
+            config = Config(Path(tmp) / "skill-plus-plus")
             config.ensure_dirs()
             rows = recurrence.fold_all(config)
         sizes = recurrence.evaluate(rows)["sizes"]
@@ -4701,8 +4729,8 @@ class TestFoldResumesAfterOutage(TempRoot):
         super().setUp()
         self.calls = self._stub_judge(is_marker)
         self.down = False
-        import skillpp.matching as matching
-        from skillpp.local import LocalModelUnavailable
+        import skill_plus_plus.matching as matching
+        from skill_plus_plus.local import LocalModelUnavailable
 
         def flaky(text, **kw):
             # Down only for the second episode, so the first is banked first.
@@ -4714,7 +4742,7 @@ class TestFoldResumesAfterOutage(TempRoot):
         self.addCleanup(patcher.stop)
 
     def _capture(self, session_id="two"):
-        from skillpp.capture import handle_prompt, handle_tool
+        from skill_plus_plus.capture import handle_prompt, handle_tool
         handle_prompt(self.config, {"session_id": session_id, "cwd": "/r",
                                     "prompt": "ship both"})
         for command in ("npm test", "git commit -m 'a'",
@@ -4731,8 +4759,8 @@ class TestFoldResumesAfterOutage(TempRoot):
         """`folded` is what stops a retry re-banking. It used to reach disk only
         on the offline path, so a worker killed mid-fold lost it — and every
         recognition counts, so one crash could reach the threshold alone."""
-        import skillpp.capture as capture
-        from skillpp.capture import fold_session_now, handle_session_end
+        import skill_plus_plus.capture as capture
+        from skill_plus_plus.capture import fold_session_now, handle_session_end
 
         self._capture()
         real = capture._fold_steps
@@ -4755,7 +4783,7 @@ class TestFoldResumesAfterOutage(TempRoot):
                          [("npm test", 1, False), ("pytest -q", 1, False)])
 
     def test_an_outage_mid_fold_holds_the_session(self):
-        from skillpp.capture import _session_file, handle_session_end
+        from skill_plus_plus.capture import _session_file, handle_session_end
         self._capture()
         self.down = True
         result = handle_session_end(self.config, {"session_id": "two"})
@@ -4768,7 +4796,7 @@ class TestFoldResumesAfterOutage(TempRoot):
         self.assertEqual(self._occurrences(), [("npm test", 1, False)])
 
     def test_a_retry_resumes_without_counting_twice(self):
-        from skillpp.capture import _session_file, handle_session_end
+        from skill_plus_plus.capture import _session_file, handle_session_end
         self._capture()
         self.down = True
         handle_session_end(self.config, {"session_id": "two"})
@@ -4812,7 +4840,7 @@ class TestTurns(TempRoot):
             "".join(json.dumps(r) + "\n" for r in self.rows), encoding="utf-8")
 
     def _prompt(self, text, *, written_first=True):
-        from skillpp.capture import handle_prompt
+        from skill_plus_plus.capture import handle_prompt
         if written_first:
             self._user(text)
         handle_prompt(self.config, {"session_id": "s", "cwd": "/r", "prompt": text,
@@ -4821,14 +4849,14 @@ class TestTurns(TempRoot):
             self._user(text)
 
     def _tool(self, name, tool_input):
-        from skillpp.capture import handle_tool
+        from skill_plus_plus.capture import handle_tool
         self._agent({"type": "tool_use", "name": name, "input": tool_input})
         handle_tool(self.config, {"session_id": "s", "cwd": "/r", "tool_name": name,
                                   "tool_input": tool_input,
                                   "transcript_path": str(self.transcript)})
 
     def _markers(self):
-        from skillpp.capture import _load_session
+        from skill_plus_plus.capture import _load_session
         return [st for st in _load_session(self.config, "s")["steps"] if is_prompt(st)]
 
     def _run(self):
@@ -4853,8 +4881,8 @@ class TestTurns(TempRoot):
         """The judge can be shown what the assistant said. Live it has to see
         what the benchmark sees, and the benchmark has every reply — so the
         session's last reply is attached first, as the keep path already did."""
-        import skillpp.boundary as boundary
-        from skillpp.capture import handle_session_end
+        import skill_plus_plus.boundary as boundary
+        from skill_plus_plus.capture import handle_session_end
         self._run()
         self._agent({"type": "text", "text": "Built the deck."})
         seen = {}
@@ -4873,7 +4901,7 @@ class TestTurns(TempRoot):
         self.assertTrue(seen["last_reply"].endswith("Built the deck."))
 
     def test_each_prompt_gets_the_reply_that_followed_it(self):
-        from skillpp.capture import _load_session, _save_session, _attach_reply
+        from skill_plus_plus.capture import _load_session, _save_session, _attach_reply
         self._run()
         first, second, third = self._markers()
         self.assertEqual(first["reply"], "Reading the source.\n\nHere are 9 slides.")
@@ -4891,7 +4919,7 @@ class TestTurns(TempRoot):
         self.assertNotIn("SECRET REASONING", json.dumps(self._markers()))
 
     def test_a_long_reply_is_clipped_and_scrubbed(self):
-        from skillpp.capture import _REPLY_CHARS
+        from skill_plus_plus.capture import _REPLY_CHARS
         token = "ghp_" + "a" * 36
         self._prompt("go")
         self._agent({"type": "text", "text": token + " " + "word " * 3000})
@@ -4902,7 +4930,7 @@ class TestTurns(TempRoot):
         self.assertTrue(reply.endswith(" …"))
 
     def test_the_candidate_keeps_the_turns_and_what_each_used(self):
-        from skillpp.capture import handle_session_end
+        from skill_plus_plus.capture import handle_session_end
         self._run()
         handle_session_end(self.config, {"session_id": "s",
                                          "transcript_path": str(self.transcript)})
@@ -4914,7 +4942,7 @@ class TestTurns(TempRoot):
                          [[], [], ["skill anthropic-skills:pptx", "mcp mcp__notion__search"]])
 
     def test_each_episode_holds_only_its_own_turns(self):
-        from skillpp.capture import handle_session_end
+        from skill_plus_plus.capture import handle_session_end
         self._prompt("release the backend")
         self._agent({"type": "text", "text": "Releasing."})
         self._tool("Bash", {"command": "npm test"})
@@ -4929,7 +4957,7 @@ class TestTurns(TempRoot):
         self.assertEqual(turns, [["now write the changelog"], ["release the backend"]])
 
     def test_a_merge_keeps_the_first_runs_turns(self):
-        from skillpp.capture import fold_session
+        from skill_plus_plus.capture import fold_session
         def run(session, reply):
             return {"session_id": session, "cwd": "/r", "steps": [
                 {"tool": "UserPrompt", "input": {"text": "ship the release now"}, "reply": reply},
@@ -4944,7 +4972,7 @@ class TestTurns(TempRoot):
     def test_show_for_a_draft_gives_turns_not_steps(self):
         import io
         from contextlib import redirect_stdout
-        from skillpp.cli import main
+        from skill_plus_plus.cli import main
         Ledger(self.config).save(Entry(
             id="aaaaaaaaaaaa", title="t",
             steps=[{"tool": "Bash", "input": {"command": "npm test"}}],
@@ -4978,7 +5006,7 @@ class TestFoldPending(TempRoot):
     def _session(self, sid, *, held=False, hours_ago=0.0, ending_minutes_ago=None):
         from datetime import datetime, timedelta, timezone
 
-        from skillpp.capture import _session_file
+        from skill_plus_plus.capture import _session_file
         steps = [{"tool": "UserPrompt", "input": {"text": f"ship {sid}"}},
                  {"tool": "Bash", "input": {"command": "npm test"}},
                  {"tool": "Bash", "input": {"command": "git commit -m x"}}]
@@ -4996,7 +5024,7 @@ class TestFoldPending(TempRoot):
         return path
 
     def test_a_held_session_is_banked_once_the_model_answers(self):
-        from skillpp.capture import fold_pending
+        from skill_plus_plus.capture import fold_pending
         path = self._session("held1", held=True)
         (result,) = fold_pending(self.config)
         self.assertEqual(result["status"], "created")
@@ -5004,7 +5032,7 @@ class TestFoldPending(TempRoot):
         self.assertEqual(len(list(Ledger(self.config).all())), 1)
 
     def test_a_held_session_stays_held_while_the_model_is_silent(self):
-        from skillpp.capture import fold_pending
+        from skill_plus_plus.capture import fold_pending
         self._stub_judge(None)
         path = self._session("held1", held=True)
         (result,) = fold_pending(self.config)
@@ -5013,7 +5041,7 @@ class TestFoldPending(TempRoot):
         self.assertEqual(list(Ledger(self.config).all()), [])
 
     def test_a_recent_session_is_live_and_an_old_one_has_ended(self):
-        from skillpp.capture import fold_pending
+        from skill_plus_plus.capture import fold_pending
         recent = self._session("recent", hours_ago=1)
         old = self._session("old", hours_ago=13)
         results = {r["session"]: r["status"] for r in fold_pending(self.config)}
@@ -5022,13 +5050,13 @@ class TestFoldPending(TempRoot):
         self.assertFalse(old.exists())
 
     def test_the_starting_session_is_left_alone(self):
-        from skillpp.capture import fold_pending
+        from skill_plus_plus.capture import fold_pending
         path = self._session("starting", held=True)
         self.assertEqual(fold_pending(self.config, exclude="starting"), [])
         self.assertTrue(path.exists())
 
     def test_a_running_fold_is_not_joined_but_a_dead_one_is_ignored(self):
-        from skillpp.capture import fold_pending
+        from skill_plus_plus.capture import fold_pending
         self._session("held1", held=True)
         lock = self.config.root / "fold-pending.lock"
         lock.write_text("")
@@ -5039,7 +5067,7 @@ class TestFoldPending(TempRoot):
         self.assertFalse(lock.exists())
 
     def test_a_chat_with_no_tool_calls_is_not_held_as_offline(self):
-        from skillpp.capture import _session_file, fold_pending
+        from skill_plus_plus.capture import _session_file, fold_pending
         path = _session_file(self.config, "chat")
         path.write_text(json.dumps({
             "session_id": "chat", "cwd": "/r", "prompts": [],
@@ -5054,7 +5082,7 @@ class TestFoldPending(TempRoot):
         """A hook killed mid-fold leaves no `held` stamp, so before `ending`
         existed it was indistinguishable from a live session and waited out the
         12-hour idle rule."""
-        from skillpp.capture import fold_pending
+        from skill_plus_plus.capture import fold_pending
         path = self._session("killed", ending_minutes_ago=5, hours_ago=0)
         (result,) = fold_pending(self.config)
         self.assertEqual(result["status"], "created")
@@ -5064,14 +5092,14 @@ class TestFoldPending(TempRoot):
     def test_a_session_ending_moments_ago_is_not_stolen(self):
         """The grace is what stops the sweep racing a worker that is still
         starting up."""
-        from skillpp.capture import fold_pending
+        from skill_plus_plus.capture import fold_pending
         self._session("fresh", ending_minutes_ago=0.1, hours_ago=0)
         (result,) = fold_pending(self.config)
         self.assertEqual(result["status"], "live")
 
     def test_a_worker_still_folding_is_left_alone(self):
         import socket
-        from skillpp.capture import _lock_file, fold_pending
+        from skill_plus_plus.capture import _lock_file, fold_pending
         path = self._session("busy", ending_minutes_ago=5, hours_ago=0)
         _lock_file(self.config, "busy").write_text(
             json.dumps({"pid": os.getpid(), "host": socket.gethostname()}),
@@ -5084,7 +5112,7 @@ class TestFoldPending(TempRoot):
     def test_the_sweep_folds_inline_rather_than_spawning(self):
         """Ten pending sessions must not become ten model calls at once: they
         serialise at Ollama anyway, and that is the failure being fixed."""
-        from skillpp.capture import fold_pending
+        from skill_plus_plus.capture import fold_pending
         self._session("one", held=True)
         with mock.patch("subprocess.Popen") as popen:
             fold_pending(self.config)
@@ -5095,7 +5123,7 @@ class TestFoldPending(TempRoot):
         """A SIGKILLed fold never runs the `finally`, and the session it banked
         is already gone — so nothing else would ever remove its lock."""
         import socket
-        from skillpp.capture import _lock_file, fold_pending
+        from skill_plus_plus.capture import _lock_file, fold_pending
         lock = _lock_file(self.config, "gone")
         lock.write_text(json.dumps({"pid": 999999,
                                     "host": socket.gethostname()}),
@@ -5106,7 +5134,7 @@ class TestFoldPending(TempRoot):
     def test_an_orphan_lock_from_another_machine_is_left_to_age(self):
         """A foreign pid says nothing about this box, so the age ceiling is the
         only safe way to decide — never `os.kill` on a number from elsewhere."""
-        from skillpp.capture import _FOLD_LOCK_SECONDS, _lock_file, fold_pending
+        from skill_plus_plus.capture import _FOLD_LOCK_SECONDS, _lock_file, fold_pending
         lock = _lock_file(self.config, "elsewhere")
         lock.write_text(json.dumps({"pid": 999999, "host": "another-machine"}),
                         encoding="utf-8")
@@ -5119,7 +5147,7 @@ class TestFoldPending(TempRoot):
 
     def test_session_start_spawns_the_fold_and_does_not_wait(self):
         import io
-        from skillpp.cli import main
+        from skill_plus_plus.cli import main
         real_stdin = sys.stdin
         sys.stdin = io.StringIO('{"session_id": "s1"}')
         self.addCleanup(lambda: setattr(sys, "stdin", real_stdin))
@@ -5163,7 +5191,7 @@ class TestSessionCatalogue(unittest.TestCase):
     @staticmethod
     def _stream(*parts):
         """`"p:text"` is a prompt, anything else one work step."""
-        from skillpp.segment import PROMPT_TOOL
+        from skill_plus_plus.segment import PROMPT_TOOL
         return [{"tool": PROMPT_TOOL, "input": {"text": p[2:]}} if p.startswith("p:")
                 else {"tool": "Bash", "input": {"command": p}} for p in parts]
 
@@ -5350,14 +5378,14 @@ Someone asks for slides drawn from a document they point at.
         self.assertIn("G9", self._failed(self.GOOD + block))
 
     def test_the_run_name_in_the_description_fails(self):
-        self.assertIn("meta", self._failed(self.GOOD.replace("from a document", "from the skillpp README")))
+        self.assertIn("meta", self._failed(self.GOOD.replace("from a document", "from the skill-plus-plus README")))
 
     def test_a_declined_or_failed_run_fails(self):
         self.assertIn("G1", self._failed(self.GOOD, log="# t  exit 1  1.0s\n"))
-        self.assertIn("G1", self._failed(self.GOOD, log=self.LOG + "SKILLPP-DECLINE: one bug\n"))
+        self.assertIn("G1", self._failed(self.GOOD, log=self.LOG + "SKILL-PLUS-PLUS-DECLINE: one bug\n"))
 
     def test_the_bare_template_fails(self):
-        self.assertIn("G5", self._failed(self.GOOD + "\n<!-- skillpp:write-the-procedure -->\n"))
+        self.assertIn("G5", self._failed(self.GOOD + "\n<!-- skill-plus-plus:write-the-procedure -->\n"))
 
     def test_steps_written_as_subheadings_are_read_as_steps(self):
         steps = self.GOOD.split("## Procedure")[1]
@@ -5454,39 +5482,39 @@ class TestNothingPrivateIsTracked(unittest.TestCase):
 
 class TestShippedCommands(unittest.TestCase):
     """The slash commands ship inside the package, so an installed copy has
-    them. `install` used to copy `/skillpp-review` only, and `--remove` left
+    them. `install` used to copy `/skill-plus-plus-review` only, and `--remove` left
     even that one behind."""
 
     def test_install_copies_the_commands_a_developer_types(self):
-        from skillpp.install import install_command_files
+        from skill_plus_plus.install import install_command_files
         with tempfile.TemporaryDirectory() as tmp:
             written = install_command_files(Path(tmp) / "commands")
             self.assertEqual(sorted(p.name for p in written),
-                             ["skillpp-new.md", "skillpp-review.md"])
+                             ["skill-plus-plus-new.md", "skill-plus-plus-review.md"])
             self.assertTrue(all(p.read_text(encoding="utf-8").strip() for p in written))
 
     def test_remove_keeps_a_command_the_developer_edited(self):
-        from skillpp.install import install_command_files, remove_command_files
+        from skill_plus_plus.install import install_command_files, remove_command_files
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "commands"
             install_command_files(target)
-            (target / "skillpp-new.md").write_text("mine now", encoding="utf-8")
+            (target / "skill-plus-plus-new.md").write_text("mine now", encoding="utf-8")
             removed = remove_command_files(target)
-            self.assertEqual(sorted(p.name for p in removed), ["skillpp-review.md"])
-            self.assertEqual((target / "skillpp-new.md").read_text(), "mine now")
+            self.assertEqual(sorted(p.name for p in removed), ["skill-plus-plus-review.md"])
+            self.assertEqual((target / "skill-plus-plus-new.md").read_text(), "mine now")
 
     def test_an_installed_package_hooks_through_its_console_script(self):
         """A PYTHONPATH into a venv's site-packages names the Python version and
         breaks with the next upgrade; the console script's path does not."""
-        from skillpp.install import MARKER, hook_command
+        from skill_plus_plus.install import MARKERS, hook_command
         with tempfile.TemporaryDirectory() as site:
             installed = hook_command(package_root=Path(site),
-                                     script="/home/dev/.local/bin/skillpp")
-            self.assertEqual(installed, "/home/dev/.local/bin/skillpp hook")
+                                     script="/home/dev/.local/bin/skill-plus-plus")
+            self.assertEqual(installed, "/home/dev/.local/bin/skill-plus-plus hook")
             spaced = hook_command(package_root=Path(site),
-                                  script="/Users/dev/My Tools/skillpp")
-            self.assertIn("-m skillpp hook", spaced)
-            self.assertTrue(all(MARKER in c for c in (installed, spaced)))
+                                  script="/Users/dev/My Tools/skill-plus-plus")
+            self.assertIn("-m skill_plus_plus hook", spaced)
+            self.assertTrue(all(any(m in c for m in MARKERS) for c in (installed, spaced)))
 
 
 class TestInstallModels(TempRoot):
@@ -5496,7 +5524,7 @@ class TestInstallModels(TempRoot):
 
     def setUp(self):
         super().setUp()
-        import skillpp.cli as cli
+        import skill_plus_plus.cli as cli
         self.cli = cli
         self.project = self.root / "proj"
         (self.project / ".claude").mkdir(parents=True)
@@ -5558,7 +5586,7 @@ class TestInstallModels(TempRoot):
     def test_a_pull_reports_progress_and_errors_from_the_stream(self):
         import io
         from contextlib import redirect_stdout
-        from skillpp import cli
+        from skill_plus_plus import cli
         real = _REAL_PULL
         lines = [b'{"status":"pulling","total":100,"completed":50}\n',
                  b'{"status":"success"}\n']
@@ -5586,11 +5614,11 @@ class TestInstallScopes(TempRoot):
         self.settings = self.project / ".claude" / "settings.json"
 
     def _run(self, *argv):
-        from skillpp.cli import main
+        from skill_plus_plus.cli import main
         return main(["--root", str(self.config.root), "install", *argv])
 
     def _events(self):
-        from skillpp.install import installed_events
+        from skill_plus_plus.install import installed_events
         return installed_events(self.settings)
 
     def test_no_scope_writes_nothing_and_says_so(self):
@@ -5627,18 +5655,34 @@ class TestInstallScopes(TempRoot):
         self.assertEqual(left["theme"], "dark")
         self.assertIn("echo mine", json.dumps(left["hooks"]["PostToolUse"]))
 
+    def test_install_replaces_a_hook_from_before_the_rename(self):
+        old = 'PYTHONPATH="/opt/skill-plus-plus" python3 -m skillpp hook'
+        self.settings.write_text(json.dumps({"hooks": {
+            event: [{"matcher": "*", "hooks": [{"type": "command", "command": old}]},
+                    {"matcher": "*", "hooks": [{"type": "command", "command": "echo mine"}]}]
+            for event in ("UserPromptSubmit", "PostToolUse", "SessionEnd", "SessionStart")
+        }}), encoding="utf-8")
+        self.assertEqual(self._events(), [], "a hook that no longer runs is not installed")
+        self._run("--project", str(self.project), "--apply")
+        hooks = json.loads(self.settings.read_text())["hooks"]
+        for event, entries in hooks.items():
+            text = json.dumps(entries)
+            self.assertNotIn("-m skillpp hook", text, event)
+            self.assertEqual(text.count("skill_plus_plus hook"), 1, event)
+            self.assertIn("echo mine", text, event)
+
     def test_the_hook_command_pins_no_interpreter(self):
         """It used to write `/opt/homebrew/opt/python@3.14/bin/python3.14`,
         which stops existing at the next upgrade and means nothing on anyone
-        else's machine. skillpp is stdlib-only, so any python3 runs it."""
-        from skillpp.install import hook_command
+        else's machine. skill-plus-plus is stdlib-only, so any python3 runs it."""
+        from skill_plus_plus.install import hook_command
         command = hook_command()
-        self.assertIn("python3 -m skillpp hook", command)
+        self.assertIn("python3 -m skill_plus_plus hook", command)
         self.assertNotIn(sys.executable, command)
-        self.assertIn("-m skillpp hook", hook_command("/usr/bin/python3"))
+        self.assertIn("-m skill_plus_plus hook", hook_command("/usr/bin/python3"))
 
     def test_installed_events_reads_the_marker(self):
-        from skillpp.install import installed_events
+        from skill_plus_plus.install import installed_events
         self.assertEqual(installed_events(self.settings), [])
         self.settings.write_text(json.dumps({"hooks": {"PostToolUse": [
             {"matcher": "*", "hooks": [{"type": "command",
@@ -5649,20 +5693,20 @@ class TestInstallScopes(TempRoot):
 
 
 class TestDoctor(TempRoot):
-    """One command that answers "is skillpp actually running?"."""
+    """One command that answers "is skill-plus-plus actually running?"."""
 
     def setUp(self) -> None:
         super().setUp()
         # Doctor asks Ollama which models it holds. Answered here, so the result
         # does not depend on whether this machine runs Ollama.
-        import skillpp.cli as cli
+        import skill_plus_plus.cli as cli
         real = cli._available_models
         cli._available_models = lambda config: ([], "not reachable (stubbed)")
         self.addCleanup(lambda: setattr(cli, "_available_models", real))
 
     def _run(self, *argv):
         import io
-        from skillpp.cli import main
+        from skill_plus_plus.cli import main
         out = io.StringIO()
         real = sys.stdout
         sys.stdout = out
@@ -5675,7 +5719,7 @@ class TestDoctor(TempRoot):
     def test_it_names_the_missing_events(self):
         """PostToolUse without SessionEnd captures every step and banks none of
         it, which reads as working."""
-        from skillpp.install import desired_hooks
+        from skill_plus_plus.install import desired_hooks
         settings = self.root / "settings.json"
         hooks = desired_hooks()
         del hooks["SessionEnd"]
@@ -5689,7 +5733,7 @@ class TestDoctor(TempRoot):
         self.assertIn("not wired", out)
 
     def test_it_counts_sessions_waiting(self):
-        from skillpp.capture import _session_file
+        from skill_plus_plus.capture import _session_file
         for sid, doc in (("held1", {"held": {"at": "x", "reason": "y"}}),
                          ("live1", {})):
             _session_file(self.config, sid).write_text(
@@ -5700,7 +5744,7 @@ class TestDoctor(TempRoot):
 
 
 class TestScaffoldCommand(TempRoot):
-    """`skillpp scaffold` had no test at all — `--out`, the mode it picks, and
+    """`skill-plus-plus scaffold` had no test at all — `--out`, the mode it picks, and
     the missing-entry path were all unexercised."""
 
     def _entry(self, eid, *, turns=None):
@@ -5712,7 +5756,7 @@ class TestScaffoldCommand(TempRoot):
 
     def _run(self, *argv):
         import io
-        from skillpp.cli import main
+        from skill_plus_plus.cli import main
         out, err = io.StringIO(), io.StringIO()
         real_out, real_err = sys.stdout, sys.stderr
         sys.stdout, sys.stderr = out, err
@@ -5730,7 +5774,7 @@ class TestScaffoldCommand(TempRoot):
         self.assertEqual(code, 0)
         text = path.read_text()
         self.assertNotIn("## Steps", text)
-        self.assertIn("skillpp:write-the-procedure", text)
+        self.assertIn("skill-plus-plus:write-the-procedure", text)
         self.assertIn("facts only", err)
         self.assertIn(str(path), out)
 
@@ -5760,7 +5804,7 @@ class TestDraftInput(TempRoot):
 
     def _show(self, eid):
         import io
-        from skillpp.cli import main
+        from skill_plus_plus.cli import main
         out, real = io.StringIO(), sys.stdout
         sys.stdout = out
         try:
@@ -5794,8 +5838,8 @@ class TestFoldWithoutMatching(TempRoot):
     back into one entry, so the count read as if the judge had never cut."""
 
     def test_matching_off_banks_every_episode_and_never_embeds(self):
-        import skillpp.matching as matching
-        from skillpp.capture import fold_session
+        import skill_plus_plus.matching as matching
+        from skill_plus_plus.capture import fold_session
 
         def forbidden(*a, **k):
             raise AssertionError("the embedding model was asked")
@@ -5830,7 +5874,7 @@ class TestJudgeInput(unittest.TestCase):
     # `expected.json` under "judge_prompts".
 
     def setUp(self):
-        import skillpp.boundary as boundary
+        import skill_plus_plus.boundary as boundary
         self.boundary = boundary
         saved = {k: getattr(boundary, k) for k in (
             "REPLY_BEFORE_CHARS", "REPLY_AFTER_CHARS", "STEP_OUTPUT_CHARS",
@@ -5995,7 +6039,7 @@ class TestWebRefusesOtherPages(TempRoot):
     def setUp(self) -> None:
         super().setUp()
         import threading
-        from skillpp.web import serve
+        from skill_plus_plus.web import serve
         self.httpd = serve(self.config, port=0, open_browser=False)
         self.port = self.httpd.server_address[1]
         worker = threading.Thread(target=self.httpd.serve_forever, daemon=True)
@@ -6036,7 +6080,7 @@ class TestWebRefusesOtherPages(TempRoot):
         self.assertEqual(status, 403)
 
     def test_the_page_sends_json(self):
-        from skillpp.web import PAGE
+        from skill_plus_plus.web import PAGE
         self.assertIn('headers: {"Content-Type": "application/json"}', PAGE)
         self.assertNotIn('method:"POST", body:', PAGE)
 
@@ -6073,7 +6117,7 @@ class TestStepGroups(unittest.TestCase):
              self._step(5, command="git commit -m case", description="Commit")])
 
     def test_steps_sit_under_the_request_they_served(self):
-        from skillpp.web import step_groups
+        from skill_plus_plus.web import step_groups
         groups = step_groups(self._three_requests())
         self.assertEqual([g["request"] for g in groups],
                          ["fetch the ADK docs first", "add the case", "commit"])
@@ -6088,7 +6132,7 @@ class TestStepGroups(unittest.TestCase):
 
     def test_steps_that_cannot_be_placed_for_certain_keep_the_flat_list(self):
         """A list shifted under the wrong requests reads worse than a flat one."""
-        from skillpp.web import step_groups
+        from skill_plus_plus.web import step_groups
         turns = [("a", "Looked it up and found the answer."), ("b", "Changed the file as asked.")]
         unanchored = self._entry(turns, [self._step(1), self._step(2)])
         self.assertIsNone(step_groups(unanchored))
@@ -6101,14 +6145,14 @@ class TestStepGroups(unittest.TestCase):
         self.assertIsNone(step_groups(unnumbered))
 
     def test_one_request_needs_no_anchor(self):
-        from skillpp.web import step_groups
+        from skill_plus_plus.web import step_groups
         groups = step_groups(self._entry([("do it", "done")], [self._step(7), self._step(7)]))
         self.assertEqual([g["tools"] for g in groups], [2])
 
     def test_a_path_in_the_agents_words_still_anchors(self):
         """Replies are stored with paths parameterised; the notes are not."""
         from pathlib import Path
-        from skillpp.web import step_groups
+        from skill_plus_plus.web import step_groups
         home = str(Path.home())
         entry = self._entry(
             [("look", "Nothing to change here."),
@@ -6120,7 +6164,7 @@ class TestStepGroups(unittest.TestCase):
         self.assertEqual([g["tools"] for g in groups], [0, 1])
 
     def test_a_question_says_what_was_asked_and_answered(self):
-        from skillpp.web import step_groups
+        from skill_plus_plus.web import step_groups
         ask = {"tool": "AskUserQuestion", "input": {}, "serves": 1,
                "tool_returned": 'User has answered your questions: '
                                 '"Bundle or split?"="Revert reformat". Go on.'}
@@ -6130,7 +6174,7 @@ class TestStepGroups(unittest.TestCase):
         self.assertEqual(group["digest"], [{"text": "asked you", "warn": False}])
 
     def test_back_to_back_file_changes_count_together_only_when_closed(self):
-        from skillpp.web import step_groups
+        from skill_plus_plus.web import step_groups
         writes = [self._step(1, "Write", file_path=f"/a/{n}.md") for n in ("one", "two", "three")]
         edits = [self._step(1, "Edit", file_path="/a/LOG.md") for _ in range(3)]
         group = step_groups(self._entry([("write", "ok")], writes + edits))[0]
@@ -6139,7 +6183,7 @@ class TestStepGroups(unittest.TestCase):
                          ["Write one.md", "Write two.md", "Write three.md", "Edit LOG.md ×3"])
 
     def test_a_failed_change_shows_a_failed_lookup_only_looked(self):
-        from skillpp.web import step_groups
+        from skill_plus_plus.web import step_groups
         group = step_groups(self._entry([("go", "ok")], [
             {**self._step(1, "Write", file_path="/a/x.md"), "failed": True},
             {**self._step(1, command="grep -n nothing x.md"), "failed": True}]))[0]
@@ -6147,7 +6191,7 @@ class TestStepGroups(unittest.TestCase):
         self.assertEqual((group["failed"], group["looks"]), (1, 1))
 
     def test_a_destructive_command_is_marked_by_the_drafts_own_test(self):
-        from skillpp.web import step_groups
+        from skill_plus_plus.web import step_groups
         group = step_groups(self._entry([("clean", "ok")], [
             self._step(1, command="rm -f slide-*.jpg", description="Clear old previews")]))[0]
         self.assertTrue(group["lines"][0]["warn"])
@@ -6162,7 +6206,7 @@ class TestReviewPageRendering(unittest.TestCase):
         import re
         import shutil
         import subprocess
-        from skillpp.web import PAGE
+        from skill_plus_plus.web import PAGE
         if not shutil.which("node"):
             self.skipTest("node is not installed")
         esc = re.search(r"const esc = .*?;\n", PAGE, re.S)
@@ -6195,7 +6239,7 @@ class TestSessionEndIsAsync(TempRoot):
     """
 
     def _capture(self, sid="s1"):
-        from skillpp.capture import handle_prompt, handle_tool
+        from skill_plus_plus.capture import handle_prompt, handle_tool
         handle_prompt(self.config, {"session_id": sid, "cwd": "/r",
                                     "prompt": "ship it"})
         handle_tool(self.config, {"session_id": sid, "cwd": "/r",
@@ -6207,7 +6251,7 @@ class TestSessionEndIsAsync(TempRoot):
 
     def _hook(self, payload, event="SessionEnd"):
         import io
-        from skillpp.cli import main
+        from skill_plus_plus.cli import main
         real_stdin = sys.stdin
         sys.stdin = io.StringIO(json.dumps(payload))
         self.addCleanup(lambda: setattr(sys, "stdin", real_stdin))
@@ -6217,7 +6261,7 @@ class TestSessionEndIsAsync(TempRoot):
         return code, popen
 
     def test_session_end_stamps_and_spawns_instead_of_folding(self):
-        from skillpp.capture import _session_file
+        from skill_plus_plus.capture import _session_file
         self._capture()
         self.judged.clear()
         code, popen = self._hook({"session_id": "s1"})
@@ -6234,7 +6278,7 @@ class TestSessionEndIsAsync(TempRoot):
         self.assertIn("ending", doc)
 
     def test_the_stamp_keeps_the_transcript_for_the_worker(self):
-        from skillpp.capture import _session_file
+        from skill_plus_plus.capture import _session_file
         self._capture()
         self._hook({"session_id": "s1", "transcript_path": "/tmp/t.jsonl"})
         doc = json.loads(_session_file(self.config, "s1").read_text())
@@ -6249,7 +6293,7 @@ class TestSessionEndIsAsync(TempRoot):
         """`Stop` fires every turn. Folding there cuts one procedure into
         per-turn fragments, and the worker would unlink the session file while
         capture is still appending to it."""
-        from skillpp.capture import _session_file
+        from skill_plus_plus.capture import _session_file
         self._capture()
         code, popen = self._hook({"session_id": "s1"}, event="Stop")
         self.assertEqual(code, 0)
@@ -6257,8 +6301,8 @@ class TestSessionEndIsAsync(TempRoot):
         self.assertTrue(_session_file(self.config, "s1").exists())
 
     def test_the_worker_banks_what_the_hook_stamped(self):
-        from skillpp.capture import _lock_file, _session_file
-        from skillpp.cli import main
+        from skill_plus_plus.capture import _lock_file, _session_file
+        from skill_plus_plus.cli import main
         self._capture()
         self._hook({"session_id": "s1"})
 
@@ -6271,7 +6315,7 @@ class TestSessionEndIsAsync(TempRoot):
     def test_the_worker_logs_its_outcome(self):
         """Its stdio is DEVNULL, so the log is the only place it can answer
         "why was my session not banked?"."""
-        from skillpp.cli import main
+        from skill_plus_plus.cli import main
         self._capture()
         self._hook({"session_id": "s1"})
         main(["--root", str(self.config.root), "fold-session", "s1"])
@@ -6289,7 +6333,7 @@ class TestFoldLock(TempRoot):
     """
 
     def _session(self, sid="s1"):
-        from skillpp.capture import _session_file
+        from skill_plus_plus.capture import _session_file
         steps = [{"tool": "UserPrompt", "input": {"text": "ship it"}},
                  {"tool": "Bash", "input": {"command": "npm test"}},
                  {"tool": "Bash", "input": {"command": "git commit -m x"}}]
@@ -6301,7 +6345,7 @@ class TestFoldLock(TempRoot):
 
     def _lock(self, sid="s1", **held):
         import socket
-        from skillpp.capture import _lock_file
+        from skill_plus_plus.capture import _lock_file
         path = _lock_file(self.config, sid)
         payload = {"pid": os.getpid(), "host": socket.gethostname(),
                    "what": "fold-session", **held}
@@ -6309,7 +6353,7 @@ class TestFoldLock(TempRoot):
         return path
 
     def test_a_second_worker_leaves_the_session_alone(self):
-        from skillpp.capture import fold_session_now
+        from skill_plus_plus.capture import fold_session_now
         path = self._session()
         lock = self._lock()
         self.assertEqual(fold_session_now(self.config, "s1"),
@@ -6319,14 +6363,14 @@ class TestFoldLock(TempRoot):
         self.assertTrue(lock.exists(), "the loser deleted the winner's lock")
 
     def test_a_dead_workers_lock_is_broken(self):
-        from skillpp.capture import fold_session_now
+        from skill_plus_plus.capture import fold_session_now
         self._session()
         lock = self._lock(pid=999999)
         self.assertEqual(fold_session_now(self.config, "s1")["status"], "created")
         self.assertFalse(lock.exists())
 
     def test_a_lock_from_another_machine_is_aged_out_not_pid_checked(self):
-        from skillpp.capture import _FOLD_LOCK_SECONDS, fold_session_now
+        from skill_plus_plus.capture import _FOLD_LOCK_SECONDS, fold_session_now
         self._session()
         lock = self._lock(pid=999999, host="somewhere-else")
         self.assertEqual(fold_session_now(self.config, "s1")["status"], "folding")
@@ -6335,7 +6379,7 @@ class TestFoldLock(TempRoot):
         self.assertEqual(fold_session_now(self.config, "s1")["status"], "created")
 
     def test_a_corrupt_lock_falls_back_to_age(self):
-        from skillpp.capture import _FOLD_LOCK_SECONDS, _lock_file, fold_session_now
+        from skill_plus_plus.capture import _FOLD_LOCK_SECONDS, _lock_file, fold_session_now
         self._session()
         lock = _lock_file(self.config, "s1")
         lock.write_text("not json", encoding="utf-8")
@@ -6345,8 +6389,8 @@ class TestFoldLock(TempRoot):
         self.assertEqual(fold_session_now(self.config, "s1")["status"], "created")
 
     def test_the_lock_is_released_when_the_fold_raises(self):
-        import skillpp.capture as capture
-        from skillpp.capture import _lock_file, fold_session_now
+        import skill_plus_plus.capture as capture
+        from skill_plus_plus.capture import _lock_file, fold_session_now
         self._session()
         real = capture.handle_session_end
 
@@ -6405,7 +6449,7 @@ class TestTranscriptExtract(TempRoot):
         """The builder cut each note to `_RESPONSE_CHARS` and scrubbed after, the
         order live capture had until it was fixed: a token straddling the cut came
         out too short for the scrubber, and its first half went into a fixture."""
-        from skillpp.capture import _RESPONSE_CHARS
+        from skill_plus_plus.capture import _RESPONSE_CHARS
         token = "q8Zr4Lm2Xv9Kp1Wd7Ns3Hc6Yb0Tf5Jg8Rk2Ue4Ao1"
         said = {"type": "text",
                 "text": ("/srv/app/build/" * 40)[:_RESPONSE_CHARS - 25] + token + " then more"}
@@ -6428,7 +6472,7 @@ class TestTranscriptExtract(TempRoot):
         self.assertNotIn(token[:16], json.dumps(steps))
 
     def test_the_judge_waits_long_enough_to_answer(self):
-        import skillpp.boundary as boundary
+        import skill_plus_plus.boundary as boundary
         self.assertEqual(boundary.DEFAULT_TIMEOUT, 30.0)
 
 
@@ -6444,19 +6488,19 @@ class TestConversationMatching(TempRoot):
         return entry
 
     def test_the_text_is_the_conversation_when_there_is_one(self):
-        from skillpp.matching import entry_text, has_conversation, turns_text
+        from skill_plus_plus.matching import entry_text, has_conversation, turns_text
         turns = [{"prompt": "propose the slides", "reply": "Here are 9.", "used": []}]
         self.assertEqual(turns_text(turns), "User: propose the slides\nAgent: Here are 9.")
         self.assertTrue(has_conversation(turns))
         self.assertFalse(has_conversation([{"prompt": "p", "reply": "", "used": []}]))
-        from skillpp.matching import conversation_text
+        from skill_plus_plus.matching import conversation_text
         entry = self._entry("aaaaaaaaaaaa", turns)
         self.assertEqual(entry_text(entry), conversation_text(turns, entry.steps))
         self.assertIn("npm test", entry_text(self._entry("bbbbbbbbbbbb")))
 
     def test_the_material_is_kept_out_of_the_text(self):
         """File names and the body of a reply say what a run was *about*."""
-        from skillpp.matching import REPLY_HEAD, turns_text
+        from skill_plus_plus.matching import REPLY_HEAD, turns_text
         text = turns_text([{"prompt": "turn ARTICLE.md into slides for the team",
                             "reply": "Reading ARTICLE.md. " + "slide bullet " * 200,
                             "used": []}])
@@ -6467,7 +6511,7 @@ class TestConversationMatching(TempRoot):
 
     def test_what_did_the_work_and_what_came_out_of_it(self):
         """Two lines the conversation does not carry, each measured on its own."""
-        from skillpp.matching import conversation_text, deliverable_text
+        from skill_plus_plus.matching import conversation_text, deliverable_text
         turns = [{"prompt": "build the deck", "reply": "Building it.",
                   "used": ["skill anthropic-skills:pptx"]}]
         steps = [{"tool": "Write", "input": {"file_path": "/s/build.js"}},
@@ -6479,7 +6523,7 @@ class TestConversationMatching(TempRoot):
         self.assertEqual(deliverable_text([]), "Produced: nothing")
 
     def test_like_is_only_compared_with_like(self):
-        from skillpp.matching import find_same
+        from skill_plus_plus.matching import find_same
         talk = [{"prompt": "propose the slides", "reply": "Here are 9 slides.", "used": []}]
         steps_only = self._entry("aaaaaaaaaaaa")
         with_talk = self._entry("bbbbbbbbbbbb", talk)
@@ -6489,7 +6533,7 @@ class TestConversationMatching(TempRoot):
         self.assertIsNone(find_same(self.STEPS, [steps_only], self.config, turns=talk))
 
     def test_a_conversation_clears_its_own_floor(self):
-        from skillpp.matching import find_same
+        from skill_plus_plus.matching import find_same
         near = [{"prompt": "propose the slides", "reply": "Here are 9 slides.", "used": []}]
         far = [{"prompt": "restart the backend server", "reply": "Restarted on 8000.", "used": []}]
         entry = self._entry("aaaaaaaaaaaa", near)
@@ -6501,7 +6545,7 @@ class TestConversationMatching(TempRoot):
     def test_merge_never_pairs_a_conversation_with_steps(self):
         import argparse, io
         from contextlib import redirect_stdout
-        from skillpp.cli import cmd_merge
+        from skill_plus_plus.cli import cmd_merge
         talk = [{"prompt": "npm test", "reply": "git commit", "used": []}]
         self._entry("aaaaaaaaaaaa")
         self._entry("bbbbbbbbbbbb", talk)
@@ -6520,7 +6564,7 @@ class TestEmbedEndpoint(TempRoot):
 
     def setUp(self):
         super().setUp()
-        import skillpp.local as local
+        import skill_plus_plus.local as local
         self.local = local
         local._CONTEXT_LENGTHS.clear()
         self.requests = []
@@ -6587,8 +6631,8 @@ class TestEmbedEndpoint(TempRoot):
                 self.local.embed("x", model="m", host="http://h")
 
     def test_find_same_logs_a_truncated_match(self):
-        import skillpp.matching as matching
-        from skillpp.ledger import Entry
+        import skill_plus_plus.matching as matching
+        from skill_plus_plus.ledger import Entry
         entry = Entry(id="longentry123", title="restart the servers",
                       signature="", steps=[{"tool": "Bash",
                                             "input": {"command": "./start.sh"}}])
@@ -6617,7 +6661,7 @@ class TestPromotedSkillsStayMatchable(TempRoot):
     DEPLOY = [bash("npm run build"), bash("./deploy.sh staging")]
 
     def _skill(self):
-        from skillpp.ledger import STATUS_PROMOTED
+        from skill_plus_plus.ledger import STATUS_PROMOTED
         skill = Entry(id="skill1", title="deploy", status=STATUS_PROMOTED,
                       sessions=["s1"], occurrences=1, intents=["deploy"],
                       steps=list(self.DEPLOY))
@@ -6625,7 +6669,7 @@ class TestPromotedSkillsStayMatchable(TempRoot):
         return skill
 
     def test_a_new_run_of_a_skill_counts_toward_the_skill(self):
-        from skillpp.ledger import STATUS_PROMOTED
+        from skill_plus_plus.ledger import STATUS_PROMOTED
         self._skill()
         result = fold_session(self.config, {
             "session_id": "s2", "cwd": "", "prompts": [],
@@ -6639,8 +6683,8 @@ class TestPromotedSkillsStayMatchable(TempRoot):
     def test_merge_covers_a_candidate_a_skill_already_does(self):
         """Reinforce, never delete: the skill exists, and this says it is used."""
         import argparse
-        from skillpp.cli import cmd_merge
-        from skillpp.ledger import STATUS_COVERED, STATUS_PROMOTED
+        from skill_plus_plus.cli import cmd_merge
+        from skill_plus_plus.ledger import STATUS_COVERED, STATUS_PROMOTED
         self._skill()
         # Banked before matching could see it, as an unmatched keep would be.
         Ledger(self.config).save(Entry(

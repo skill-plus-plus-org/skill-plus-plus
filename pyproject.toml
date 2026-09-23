@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "skillpp"
+name = "skill-plus-plus"
 dynamic = ["version"]
 description = "Spot the work you keep repeating with Claude Code, and turn it into skills you review."
 readme = "README.md"
@@ -25,19 +25,19 @@ classifiers = [
 ]
 
 [project.scripts]
-skillpp = "skillpp.cli:main"
+skill-plus-plus = "skill_plus_plus.cli:main"
 
 [project.urls]
 Repository = "https://github.com/himanshu096/skill-plus-plus"
 Issues = "https://github.com/himanshu096/skill-plus-plus/issues"
 
 [tool.setuptools]
-packages = ["skillpp"]
+packages = ["skill_plus_plus"]
 
 [tool.setuptools.package-data]
 # The prompts the local model is asked, and the slash commands `install` copies
 # and `draft` hands to its agent. Without them an installed copy cannot run.
-skillpp = ["prompts/*.md", "commands/*.md"]
+skill_plus_plus = ["prompts/*.md", "commands/*.md"]
 
 [tool.setuptools.dynamic]
-version = { attr = "skillpp.__version__" }
+version = { attr = "skill_plus_plus.__version__" }

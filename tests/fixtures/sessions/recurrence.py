@@ -43,8 +43,8 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(HERE))
 
 import score as live_score                     # noqa: E402
-from skillpp.capture import fold_session       # noqa: E402
-from skillpp.config import Config              # noqa: E402
+from skill_plus_plus.capture import fold_session       # noqa: E402
+from skill_plus_plus.config import Config              # noqa: E402
 
 BANKED = ("created", "merged")
 
@@ -57,7 +57,7 @@ def gap_labels(doc: dict, banked: int, families: list, subjects: list) -> tuple[
     counts neither as a correct merge nor for either family. The cuts made are
     read from the stored verdicts, the planned ones from `truth.boundary_after`.
     """
-    from skillpp.segment import is_prompt
+    from skill_plus_plus.segment import is_prompt
     work = [s for s in doc["steps"] if not is_prompt(s)]
     made = [n for n, s in enumerate(work, 1) if s.get("end") is True and n < len(work)]
     planned = doc["truth"].get("boundary_after") or []
@@ -152,7 +152,7 @@ def pair_level(a: dict, b: dict) -> str:
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
-        config = Config(Path(tmp) / "skillpp")
+        config = Config(Path(tmp) / "skill-plus-plus")
         config.ensure_dirs()
         rows = fold_all(config)
     result = evaluate(rows)

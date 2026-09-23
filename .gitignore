@@ -11,7 +11,8 @@ dist/
 # macOS
 .DS_Store
 
-# Local skillpp state and per-machine Claude Code settings
+# Local skill-plus-plus state and per-machine Claude Code settings
+.claude/skill-plus-plus/
 .claude/skillpp/
 .claude/settings.json
 .claude/settings.local.json

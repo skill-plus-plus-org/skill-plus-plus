@@ -20,12 +20,12 @@ from typing import Any, Iterator
 
 from .config import Config
 
-_DATA_RE = re.compile(r"<!--\s*skillpp:data\s*\n(.*?)\n-->", re.DOTALL)
+_DATA_RE = re.compile(r"<!--\s*skill-plus-plus:data\s*\n(.*?)\n-->", re.DOTALL)
 
 STATUS_CANDIDATE = "candidate"
 STATUS_PROMOTED = "promoted"
 STATUS_DISMISSED = "dismissed"
-# Judged one particular job rather than a method, by `skillpp sift`. Kept
+# Judged one particular job rather than a method, by `skill-plus-plus sift`. Kept
 # rather than deleted: the verdict came from a model and has to be auditable
 # and reversible, so it parks the entry instead of removing it.
 STATUS_ONE_OFF = "one-off"
@@ -62,7 +62,7 @@ class Entry:
 
     id: str
     # A lexical fingerprint of the steps, kept only on entries saved before
-    # matching moved to embeddings (`skillpp.matching`). Nothing reads it to
+    # matching moved to embeddings (`skill_plus_plus.matching`). Nothing reads it to
     # decide anything, and new entries leave it empty.
     signature: str = ""
     title: str = ""
@@ -70,7 +70,7 @@ class Entry:
     # the episode), "model" (the local model named the procedure), "prompt" or
     # "command" (a string capture observed and had to reuse), "" (dictated, or
     # saved before this was recorded). Only the first two are names of a
-    # procedure; `skillpp retitle` walks the rest.
+    # procedure; `skill-plus-plus retitle` walks the rest.
     title_source: str = ""
     status: str = STATUS_CANDIDATE
     occurrences: int = 1
@@ -81,7 +81,7 @@ class Entry:
     intents: list[str] = field(default_factory=list)
     steps: list[dict] = field(default_factory=list)
     # The run as a conversation — `[{"prompt", "reply", "used"}]` — from the
-    # run that created the entry. What `skillpp draft` writes from; see
+    # run that created the entry. What `skill-plus-plus draft` writes from; see
     # `capture._turns`. Empty on entries saved before it existed.
     turns: list[dict] = field(default_factory=list)
     # One `{"session", "at"}` per recognition, in the order they happened —
@@ -101,7 +101,7 @@ class Entry:
     # model dropped 4 of 6 real procedures when it was allowed to decide.
     hint: str = ""
     # A task-shaped name and one line saying when this applies, written by the
-    # agent in `skillpp draft`. Capture can only reuse a string it observed, so
+    # agent in `skill-plus-plus draft`. Capture can only reuse a string it observed, so
     # an unnamed candidate is titled with whatever the developer happened to
     # type — measured against a frontier reader that produced
     # `draining-app-replicas-to-clear-a-migration-lock` where this branch had
@@ -115,7 +115,7 @@ class Entry:
     parked_at_occurrences: int = 0
     # Banked without being compared to anything, because no embedding model
     # answered — only dictation does that, since a
-    # captured session with no model is held instead. `skillpp merge` checks
+    # captured session with no model is held instead. `skill-plus-plus merge` checks
     # these first.
     unmatched: bool = False
 
@@ -175,14 +175,14 @@ class Entry:
             lines.append("_(none)_")
         if self.notes:
             lines += ["", "## Notes", "", self.notes]
-        lines += ["", "<!-- skillpp:data", payload, "-->", ""]
+        lines += ["", "<!-- skill-plus-plus:data", payload, "-->", ""]
         return "\n".join(lines)
 
     @classmethod
     def from_markdown(cls, text: str) -> "Entry":
         m = _DATA_RE.search(text)
         if not m:
-            raise ValueError("ledger entry is missing its skillpp:data payload")
+            raise ValueError("ledger entry is missing its skill-plus-plus:data payload")
         raw = json.loads(m.group(1))
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in raw.items() if k in known})

@@ -46,10 +46,10 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tests" / "fixtures" / "sessions"))
 
 import recurrence                                   # noqa: E402
-from skillpp.config import Config                   # noqa: E402
-from skillpp.ledger import Entry, Ledger            # noqa: E402
-from skillpp.local import cosine, embed             # noqa: E402
-from skillpp.matching import (conversation_text,    # noqa: E402
+from skill_plus_plus.config import Config                   # noqa: E402
+from skill_plus_plus.ledger import Entry, Ledger            # noqa: E402
+from skill_plus_plus.local import cosine, embed             # noqa: E402
+from skill_plus_plus.matching import (conversation_text,    # noqa: E402
                               turns_text)
 
 # Two procedures on two source files — the pairs that separate procedure from material.
@@ -253,11 +253,11 @@ In one sentence of at most 20 words, say what was asked for and what the
 assistant did. Describe the *kind* of work only. Do not name any file, product,
 person, tool, topic or number. Start with a verb."""
 
-ACTIONS = Path(tempfile.gettempdir()) / "skillpp-turn-actions.json"
+ACTIONS = Path(tempfile.gettempdir()) / "skill-plus-plus-turn-actions.json"
 
 
 def turn_action(turn: dict, config: Config, cache: dict) -> str:
-    from skillpp.local import LocalModelUnavailable, ask
+    from skill_plus_plus.local import LocalModelUnavailable, ask
     ask_text = " ".join(str(turn.get("prompt", "")).split())[:600]
     reply = " ".join(str(turn.get("reply", "")).split())[:600]
     key = f"{ask_text}||{reply}"
@@ -307,7 +307,7 @@ RENDERINGS = {
 
 
 def bank_apart() -> tuple[list[dict], Ledger]:
-    root = Path(tempfile.mkdtemp()) / "skillpp"
+    root = Path(tempfile.mkdtemp()) / "skill-plus-plus"
     config = Config(root)
     config.ensure_dirs()
     config.match_floor = config.match_floor_turns = 2.0   # nothing merges

@@ -565,7 +565,7 @@ def handle_session_end(config: Config, payload: dict) -> dict:
     #
     # Stamped rather than merely left behind: a live session has a file too, and
     # counting those as held would report work lost from a session still being
-    # written. `skillpp stats` reads this key, not the glob.
+    # written. `skill-plus-plus stats` reads this key, not the glob.
     if result.get("status") == "offline":
         session["held"] = {
             "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -838,14 +838,14 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
                  source: str = "capture", persist: bool = False) -> dict:
     """Turn a finished session into ledger entries — one per task.
 
-    The session is cut into episodes first (see ``skillpp.segment``) and each
+    The session is cut into episodes first (see ``skill_plus_plus.segment``) and each
     is folded separately: as one entry, a session holding several unrelated
     tasks gets a signature that describes none of them, and never recurs.
 
     Returns the last folded episode's result, with ``episodes`` listing every
     outcome; a session that is one episode returns just that episode's result.
     """
-    # No verdicts means no local model answered, which means skillpp is offline
+    # No verdicts means no local model answered, which means skill-plus-plus is offline
     # for this session. Banking anyway would mean guessing the boundaries from
     # git verbs — measured worse than making no cuts at all, and worse again
     # than the judge. Reported rather than returned empty, because a silent
@@ -862,7 +862,7 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
                 # should not be told the model is down.
                 "reason": (f"no verdicts: {config.local_model} did not answer"
                            if config.judge_boundaries else
-                           "no verdicts: judging is off (SKILLPP_JUDGE=0); "
+                           "no verdicts: judging is off (SKILL_PLUS_PLUS_JUDGE=0); "
                            "sessions wait until it is back on")}
 
     episodes = segment(session.get("steps", []), config.min_episode_steps)
@@ -911,7 +911,7 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
                                    f"{len(foldable)} episodes: {exc}")}
             # An explicit keep never loses work. The rest is banked unmatched,
             # as it is when the model is down before a keep starts, and
-            # `skillpp merge` compares those first.
+            # `skill-plus-plus merge` compares those first.
             can_match = False
             result = _fold_steps(config, session, episode.steps,
                                  source=source, match=False)
@@ -1453,7 +1453,7 @@ def _name_from_model(config: Config, entry: Entry) -> None:
     person doing it, and measured better than anything derived from a prompt.
 
     Never fatal. A fold that cannot reach the model keeps the title it derived
-    and stays `prompt`/`command`, which is what `skillpp retitle` looks for.
+    and stays `prompt`/`command`, which is what `skill-plus-plus retitle` looks for.
     """
     from .summary import name_and_sentence, store_summary
     try:

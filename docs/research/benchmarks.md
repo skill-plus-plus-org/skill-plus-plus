@@ -202,7 +202,7 @@ puts it on the path to a threshold at all.
 
 **It is a tie-breaker, not a replacement.** Only pairs already in the near-miss
 band (0.70–0.85) cost a call, so almost every comparison stays free. And it runs
-from `skillpp merge`, not from a hook: matching happens during `SessionEnd`, and
+from `skill-plus-plus merge`, not from a hook: matching happens during `SessionEnd`, and
 a hook that waits on a model adds that wait to every session.
 
 Folding is not symmetrical — the second entry's evidence moves into the first
@@ -279,10 +279,10 @@ the less-tuned one, and it is where the tie is.
 
 The one difference measured as *not* a tuning gap: this branch titled a candidate
 with whatever the developer typed, because capture can only reuse a string it
-observed. `skillpp draft` now names it, since a frontier reader is already in the
+observed. `skill-plus-plus draft` now names it, since a frontier reader is already in the
 loop there and naming is the half code cannot do.
 
-`skillpp name <id> --title … --description …` writes both back to the ledger, and
+`skill-plus-plus name <id> --title … --description …` writes both back to the ledger, and
 the draft prompt does it **before** deciding whether to draft at all — a name is
 worth having even on a candidate the agent then declines. The description is
 capped at 200 characters, the skill frontmatter limit, because one that will not
@@ -313,16 +313,16 @@ and that one.
 
 | Defect | Cause |
 | --- | --- |
-| Agent allowed nothing | prompt said `skillpp show`, tool scope permitted `python3 bin/skillpp` |
+| Agent allowed nothing | prompt said `skill-plus-plus show`, tool scope permitted `python3 bin/skill-plus-plus` |
 | A blocked agent read as a decline | inferred "nothing here" from an absent file |
-| Candidate not found | `--root` never reached the agent's own `skillpp` calls |
+| Candidate not found | `--root` never reached the agent's own `skill-plus-plus` calls |
 | Draft written to the wrong place | prompt said `<draft-dir>` and nothing substituted it |
-| Draft could not be written at all | `$SKILLPP_DRAFT_DIR` in a sandboxed Bash call is rejected as "Contains expansion" |
+| Draft could not be written at all | `$SKILL_PLUS_PLUS_DRAFT_DIR` in a sandboxed Bash call is rejected as "Contains expansion" |
 
 The last is the one worth generalising: **an environment variable is fine for a
 Python process to read and unusable inside a sandboxed shell command**, because
 an allowed-tools pattern cannot be checked against text that is not yet known.
-`SKILLPP_ROOT` works for that reason and the draft directory does not — it is
+`SKILL_PLUS_PLUS_ROOT` works for that reason and the draft directory does not — it is
 passed as a literal argument in the prompt instead.
 
 Two safeguards earned their place along the way. The decline sentinel meant a
@@ -441,7 +441,7 @@ The last row is the whole difficulty. A segmenter needs both halves.
 
 ### Splitting works, and the restraint matters more than the action
 
-`skillpp split`, reached from the draft prompt, closes case C. Three live runs:
+`skill-plus-plus split`, reached from the draft prompt, closes case C. Three live runs:
 
 | Input | Should split | Did |
 | --- | --- | --- |
@@ -496,7 +496,7 @@ is what makes it a measurement rather than history:
 | `reopen` | a model parked something they wanted back | a false drop, caught in the act |
 | `sift --park` | the model's own act | **never truth** — that would be grading its own homework |
 
-`skillpp accuracy` reports the tally and lists the disagreements. On a seeded
+`skill-plus-plus accuracy` reports the tally and lists the disagreements. On a seeded
 run it correctly surfaced the one that matters:
 
     agreed 2/3 (67%)
@@ -592,7 +592,7 @@ person types and then waits on: a wide band makes a live run long to read.
 The check therefore moved somewhere nothing is waiting on it. `SessionEnd`
 records which entry it touched and decides nothing. `SessionStart` spawns a
 detached process that runs the same `near_misses`/`same_procedure` comparison at
-a floor of **0.40** and writes a report. `skillpp near-misses` reads it.
+a floor of **0.40** and writes a report. `skill-plus-plus near-misses` reads it.
 Folding still needs `--apply`.
 
 `merge` keeps its own 0.70 default, unchanged. Two knobs rather than one
@@ -664,9 +664,9 @@ The pass now folds inline, and `decisions.jsonl` records each one with the
 dropped entry's id and title — the only place that identity survives once its
 file is gone. Deliberately *not* one of `decisions._TRUTH`'s labels: that dict
 scores a ranker's hint against a person's verdict, and a fold is neither.
-Verified — `skillpp accuracy` reports nothing after an auto-fold.
+Verified — `skill-plus-plus accuracy` reports nothing after an auto-fold.
 
-The report file and `skillpp near-misses` are deleted rather than repurposed.
+The report file and `skill-plus-plus near-misses` are deleted rather than repurposed.
 The report had exactly one reader, the command deciding whether to apply it;
 with nothing left to decide there is nothing left to read, and
 `decisions.jsonl` is a better record anyway — every pass, not just the last,
@@ -699,7 +699,7 @@ those findings carried over.
 The proposal, at the time: replace `is_marker`'s vocabulary of git verbs with a
 local model asked, on every tool call, whether the task ended there. `6ca48a5` above
 recorded the first attempt and did not wire it in. This is the second, wired in
-behind `SKILLPP_JUDGE` and measured properly.
+behind `SKILL_PLUS_PLUS_JUDGE` and measured properly.
 
 **Read this before proposing a tenth.** Every row is a real run against
 `tests/fixtures/sessions/`, which is the only yardstick here — the synthetic
@@ -770,7 +770,7 @@ is the only one. It cost six correct sessions to buy.
 
 ### Where it stands
 
-Wired in, default on, `SKILLPP_JUDGE=0` to disable. `render_step` deliberately
+Wired in, default on, `SKILL_PLUS_PLUS_JUDGE=0` to disable. `render_step` deliberately
 does **not** use `step["summary"]`; see the comment there. The describer stays —
 it produces a better record, verified separately — it simply does not feed this
 prompt.
@@ -963,7 +963,7 @@ unreachable.
 
 ### The vocabulary stops being a segmenter
 
-`skillpp` segmented two different ways depending on whether a local model
+`skill-plus-plus` segmented two different ways depending on whether a local model
 answered. With verdicts, the judge decided. Without them a **parallel** system
 took over: cut at every new prompt following two substantive steps, and at every
 git completion verb.
@@ -971,7 +971,7 @@ git completion verb.
 That parallel system produced the cuts three separate passes existed to undo —
 `_absorb_before_commit`, `_absorb_read_only_preamble`, and
 `trim_leading_exploration`'s MCP exemption — each added after a real session lost
-work to a boundary nobody wanted. **Now, when nothing judged the steps, skillpp
+work to a boundary nobody wanted. **Now, when nothing judged the steps, skill-plus-plus
 is offline: it does not segment and does not bank.**
 
 **Measured across the eleven live sessions:**
@@ -1028,7 +1028,7 @@ whether a commit happened, and a verdict is the better answer to that question.
   `_absorb_before_commit` re-merges the marker cuts anyway.
 - With no model, a session banks nothing. The session file is kept and stamped
   `held` instead of deleted, so being offline costs the candidate and never the
-  record, and `skillpp stats` reports what is waiting. Ollama was down twice
+  record, and `skill-plus-plus stats` reports what is waiting. Ollama was down twice
   during the day this landed, so the path is not hypothetical.
 - The marker vocabulary survives as a **test double**, standing in for a
   reachable model across the suite. That is where a hardcoded heuristic belongs.
@@ -1102,7 +1102,7 @@ The boundary the judge has to find is after step 6, the last step of task one.
 
 ### The prompt at the boundary, and what is fixed versus inserted
 
-`skillpp/prompts/task_end.md` — since deleted, replaced by `new_job.md` — was 16
+`skill_plus_plus/prompts/task_end.md` — since deleted, replaced by `new_job.md` — was 16
 lines with three slots. Lines 1, 5, the words "Just now, they", and 10-16 were
 constant on all 357 judgements ever made.
 `{GOAL}` is every prompt in the span, `{PRIOR}` the last 20 steps rendered by
@@ -1326,7 +1326,7 @@ it those two prompts look like a topic change rather than one correction.
 One call per prompt instead of one per tool call, and **off the hot path**: the
 judge runs at `SessionEnd`, because the question needs the steps that came after
 a gap. That removes a synchronous ~1.5s model call from every tool call a
-developer makes. `skillpp keep` folds mid-session, so it judges the buffer first,
+developer makes. `skill-plus-plus keep` folds mid-session, so it judges the buffer first,
 and banks the work as one task if no model answered — an explicit save is a
 person saying "save this", not a detector guessing.
 
@@ -1336,7 +1336,7 @@ could see it in principle, so this is a trade rather than a free win.
 
 ### Framings rejected, and what a call costs
 
-Moved here from `skillpp/boundary.py`, so that it is not tried again. On a
+Moved here from `skill_plus_plus/boundary.py`, so that it is not tried again. On a
 13-case probe of the gap question:
 
 - the step alone, with no goal and no span: 4/13, and every correct answer was a
@@ -1362,7 +1362,7 @@ Latency, measured warm on `gemma3n:e4b`, the default until 2026-09:
 ## gemma4:e4b as the judge: more to read, one input at a time
 
 Measured 21 Sep 2026 on the 21 live sessions, `tests/benchmarks/judge_replay.py`
-with `SKILLPP_MATCH=0` so a cut episode is never merged back before it is
+with `SKILL_PLUS_PLUS_MATCH=0` so a cut episode is never merged back before it is
 counted, one model resident, every run valid (45/45 gaps answered).
 
 **Read the gaps, not the sessions.** Only 2 of the 45 gaps are real boundaries
@@ -1516,7 +1516,7 @@ The reason given for lexical matching — no model inside a hook — stopped hol
 when `SessionEnd` began waiting on the boundary judge.
 
 **Now:** each episode is embedded once at fold time and compared by cosine with a
-cached vector for every entry of any status; at or above `SKILLPP_MATCH_FLOOR` it
+cached vector for every entry of any status; at or above `SKILL_PLUS_PLUS_MATCH_FLOOR` it
 joins that entry. Ids are random. The background pass is gone.
 
 ### The yardstick

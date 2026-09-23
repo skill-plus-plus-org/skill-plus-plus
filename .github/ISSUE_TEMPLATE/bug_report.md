@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something skillpp did that it should not have, or did not do
+about: Something skill-plus-plus did that it should not have, or did not do
 labels: bug
 ---
 
@@ -10,17 +10,17 @@ labels: bug
 
 **How to reproduce it**
 
-**`skillpp doctor`**
+**`skill-plus-plus doctor`**
 
 ```
 paste its output here
 ```
 
-**Versions**: `skillpp --version`, `python3 --version`, `claude --version`, and
+**Versions**: `skill-plus-plus --version`, `python3 --version`, `claude --version`, and
 your OS.
 
 <!--
 Before pasting a log, a candidate or a draft: they hold what you did in your
-sessions. `~/.claude/skillpp/skillpp.log` and `drafts/<id>/agent.log` can
+sessions. `~/.claude/skill-plus-plus/skill-plus-plus.log` and `drafts/<id>/agent.log` can
 contain paths, commands and prompts. Trim anything private.
 -->

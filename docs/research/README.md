@@ -1,6 +1,6 @@
 # Research log
 
-The measurements behind skillpp's defaults, in the order they were made. Each
+The measurements behind skill-plus-plus's defaults, in the order they were made. Each
 entry records what was tried, on what, and what was kept, including what did not
 work, so that it is not tried again.
 

@@ -35,18 +35,18 @@ REPO = HERE.parents[2]
 # recorded on work that cannot be published lives elsewhere and is scored by
 # pointing this at it. `expected.json` beside them holds the numbers that
 # belong to that set alone.
-SESSIONS = Path(os.environ.get("SKILLPP_FIXTURES") or HERE).expanduser()
+SESSIONS = Path(os.environ.get("SKILL_PLUS_PLUS_FIXTURES") or HERE).expanduser()
 FIXTURE_NAME = re.compile(r"^[0-9a-f]{8}-.+\.json$")
 sys.path.insert(0, str(REPO))
 # Folding names each banked candidate with the local LLM. Nothing scored here
 # reads the name, and it loaded a second model beside the embedder
 # (recurrence.py imports this module too).
-os.environ.setdefault("SKILLPP_NAME", "0")
+os.environ.setdefault("SKILL_PLUS_PLUS_NAME", "0")
 
-from skillpp.capture import fold_session  # noqa: E402
-from skillpp.config import Config  # noqa: E402
-from skillpp.ledger import Ledger  # noqa: E402
-from skillpp.segment import is_marker, is_prompt  # noqa: E402
+from skill_plus_plus.capture import fold_session  # noqa: E402
+from skill_plus_plus.config import Config  # noqa: E402
+from skill_plus_plus.ledger import Ledger  # noqa: E402
+from skill_plus_plus.segment import is_marker, is_prompt  # noqa: E402
 
 
 def expected() -> dict:
@@ -91,7 +91,7 @@ def bank(doc: dict) -> list:
     files.
     """
     with tempfile.TemporaryDirectory() as tmp:
-        config = Config(Path(tmp) / "skillpp")
+        config = Config(Path(tmp) / "skill-plus-plus")
         config.ensure_dirs()
         fold_session(config, {"session_id": doc["tag"], "cwd": "",
                               "prompts": [],

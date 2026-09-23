@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from skillpp.segment import (COMPLETION_MARKERS,  # noqa: F401
+from skill_plus_plus.segment import (COMPLETION_MARKERS,  # noqa: F401
                              PROMPT_TOOL, is_marker, is_prompt)
 
 BASE = 1_760_000_000.0  # arbitrary epoch anchor; only deltas matter

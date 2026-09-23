@@ -41,11 +41,11 @@ The drafting itself is a frontier-model call, so you run it.
 The sessions in this directory are public work and ship with the repo. A set
 recorded on work that cannot be published (anything from an employer, a client,
 or with other people's data in it) lives outside the repo, and is scored by
-pointing skillpp at it:
+pointing skill-plus-plus at it:
 
 ```bash
-SKILLPP_FIXTURES=~/path/to/private/sessions python3 -m unittest discover -s tests
-SKILLPP_FIXTURES=~/path/to/private/sessions python3 tests/fixtures/sessions/score.py
+SKILL_PLUS_PLUS_FIXTURES=~/path/to/private/sessions python3 -m unittest discover -s tests
+SKILL_PLUS_PLUS_FIXTURES=~/path/to/private/sessions python3 tests/fixtures/sessions/score.py
 ```
 
 Everything that reads sessions goes through `score.load`, so this one variable
@@ -124,7 +124,7 @@ python3 tests/fixtures/sessions/from_transcript.py <tag> --name <short-name> \
 It warns when a task has fewer than three work steps: below that, the two-step
 floor decides the result, not the judge.
 
-It writes beside the others (or into `SKILLPP_FIXTURES`, when set), scrubbed,
+It writes beside the others (or into `SKILL_PLUS_PLUS_FIXTURES`, when set), scrubbed,
 and refuses to write while your home path or account name is still in it.
 
 Three rules, all learned the hard way:

@@ -5,8 +5,8 @@ what was decided about them. Accept promotes, Decline dismisses, and an
 accepted candidate gets a Draft button that has the developer's agent
 write a draft. Everything else the ledger holds stays in the CLI.
 
-Every action runs an existing command — `skillpp promote`, `skillpp dismiss`,
-`skillpp draft --apply` — as a subprocess, so the page cannot drift from what
+Every action runs an existing command — `skill-plus-plus promote`, `skill-plus-plus dismiss`,
+`skill-plus-plus draft --apply` — as a subprocess, so the page cannot drift from what
 the commands do and there is no second copy of their rules to keep in step.
 
 Binds to 127.0.0.1 with no authentication; it must never be exposed.
@@ -40,12 +40,12 @@ from .sanitize import scrub
 from .segment import is_read_only
 from .signals import DESTRUCTIVE
 
-CLI = Path(__file__).resolve().parent.parent / "bin" / "skillpp"
+CLI = Path(__file__).resolve().parent.parent / "bin" / "skill-plus-plus"
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 # A session id reaches `_find_transcript` as a glob, so it is checked before it
 # gets there rather than trusted because the page sent it.
 _SAFE_SESSION = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
-# `skillpp draft` gives the agent 900 seconds by default. A job still marked
+# `skill-plus-plus draft` gives the agent 900 seconds by default. A job still marked
 # running well past that died with the server that started it.
 DRAFT_STALE_SECONDS = 1200
 
@@ -137,7 +137,7 @@ def row_state(config: Config, entry) -> dict:
 
 
 def days_left(config: Config, entry, now=None) -> int | None:
-    """Days until `skillpp expire` would delete this candidate, or None if it
+    """Days until `skill-plus-plus expire` would delete this candidate, or None if it
     never would. Mirrors `Ledger.expire`: a candidate, pending or still
     collecting, expires `candidate_ttl_days` after it was last recognized, so
     every new recognition resets the clock."""
@@ -359,7 +359,7 @@ def step_groups(entry) -> list[dict] | None:
     return groups
 
 
-# The cache and the model call live in `skillpp.summary`, because capture asks
+# The cache and the model call live in `skill_plus_plus.summary`, because capture asks
 # the same question when it banks a candidate (`capture._name_from_model`) and
 # stores the sentence there, so an opened row usually needs no model at all.
 _summaries_path = summaries_path
@@ -540,7 +540,7 @@ def split_open_questions(text: str) -> tuple[list[str], str]:
     """The draft's `## Open questions` and the SKILL.md without that section.
 
     The drafting agent cannot ask, so it writes what it could not tell from the
-    runs there (`skillpp/commands/skillpp-draft.md`, *Ask through open questions*). Those are gaps in the
+    runs there (`skill_plus_plus/commands/skill-plus-plus-draft.md`, *Ask through open questions*). Those are gaps in the
     skill, not part of it: the page shows them as answer fields, hides the
     section from the rendered draft, and refuses the download while any remain.
     The section ends at the next heading or horizontal rule.
@@ -706,7 +706,7 @@ def install_skill(config: Config, entry_id: str, target: str,
 
     `project` is `<repo>/.claude/skills/<name>/`, the repo the candidate belongs
     to: committed there, it reaches everyone who works in the repo. `personal`
-    is `~/.claude/skills/` (or the folder `skillpp web --skills-dir` names).
+    is `~/.claude/skills/` (or the folder `skill-plus-plus web --skills-dir` names).
     The folder is built from the ledger only, never from the request. A folder
     of the same name that this draft did not install is left alone; our own is
     replaced, which is how a revision reaches an installed skill.
@@ -815,17 +815,17 @@ def _decide(config: Config, entry_id: str, command: str) -> dict:
 
 
 def accept(config: Config, entry_id: str) -> dict:
-    """Promote: `skillpp promote <id>`, with no skill file yet."""
+    """Promote: `skill-plus-plus promote <id>`, with no skill file yet."""
     return _decide(config, entry_id, "promote")
 
 
 def decline(config: Config, entry_id: str) -> dict:
-    """Dismiss: `skillpp dismiss <id>`."""
+    """Dismiss: `skill-plus-plus dismiss <id>`."""
     return _decide(config, entry_id, "dismiss")
 
 
 def reinstate(config: Config, entry_id: str) -> dict:
-    """Reinstate a declined candidate: `skillpp reopen <id>`."""
+    """Reinstate a declined candidate: `skill-plus-plus reopen <id>`."""
     entry = Ledger(config).get(entry_id)
     if not entry:
         return {"ok": False, "error": "no such entry"}
@@ -847,7 +847,7 @@ def _draft_job(config: Config, entry_id: str, note: str = "") -> None:
         if proc.returncode != 0:
             _write_status(config, entry_id, state="failed", message=_tail(said))
         elif not sorted(_draft_dir(config, entry_id).rglob("SKILL.md")):
-            # `skillpp draft` exits 0 without a file only for a stated decline.
+            # `skill-plus-plus draft` exits 0 without a file only for a stated decline.
             _write_status(config, entry_id, state="declined", message=_tail(said, 1))
         else:
             _write_status(config, entry_id, state="ready")
@@ -863,7 +863,7 @@ MAX_NOTE = 2000
 
 
 def create_skill(config: Config, entry_id: str, note: str = "") -> dict:
-    """Draft: `skillpp draft <id> --apply`, in the background.
+    """Draft: `skill-plus-plus draft <id> --apply`, in the background.
 
     Only for an accepted candidate, and one run at a time per candidate. The
     draft lands in `<root>/drafts/<id>/` and is never installed from here. A
@@ -912,7 +912,7 @@ def _revise_job(config: Config, entry_id: str, instruction: str) -> None:
 
 def revise(config: Config, entry_id: str, instruction: str,
            limit: int = MAX_INSTRUCTION) -> dict:
-    """Revise: `skillpp revise <id> --instruction … --apply`, in the background."""
+    """Revise: `skill-plus-plus revise <id> --instruction … --apply`, in the background."""
     instruction = (instruction or "").strip()
     if not instruction:
         return {"ok": False, "error": "say what to change"}
@@ -939,7 +939,7 @@ MAX_ANSWERS = 6000
 
 
 def answer_questions(config: Config, entry_id: str, answers: list) -> dict:
-    """Send answers to a draft's open questions: one `skillpp revise` run that
+    """Send answers to a draft's open questions: one `skill-plus-plus revise` run that
     folds each answer into the skill and removes the questions it answers."""
     pairs = [(str(a.get("question", "")).strip(), str(a.get("answer", "")).strip())
              for a in answers if isinstance(a, dict)]
@@ -1083,7 +1083,7 @@ def serve(config: Config, skills_dir: Path | None = None, port: int = 8765,
 PAGE = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>skillpp</title>
+<title>skill-plus-plus</title>
 <style>
  :root{--bg:#0c0d10;--panel:#12141a;--surface:#171922;--line:#262935;
    --fg:#eceef2;--dim:#9da3b4;--muted:#63697a;
@@ -1271,7 +1271,7 @@ PAGE = r"""<!doctype html>
    color:var(--dim);border:1px solid var(--line);white-space:nowrap}
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
 </style></head><body>
-<header><span style="display:flex;align-items:center;gap:18px"><b>skillpp</b>
+<header><span style="display:flex;align-items:center;gap:18px"><b>skill-plus-plus</b>
 <select id="project" aria-label="Project" hidden></select>
 <nav id="nav"></nav></span><span id="where"></span></header>
 <main id="list"></main>
@@ -1345,7 +1345,7 @@ async function startDraft(id){
 // Which project the page shows, remembered in this browser: `null` is every
 // project, "" the entries that have none. A candidate belongs to one project
 // (`capture.project_of`); older ones may list several and show under each.
-const PROJECT_KEY = "skillpp.project";
+const PROJECT_KEY = "skill_plus_plus.project";
 let ALL = null, project = null;
 try { const v = localStorage.getItem(PROJECT_KEY); if (v !== null) project = JSON.parse(v); } catch (e) {}
 const inProject = x => project === null || (x.projects || [""]).includes(project);
@@ -1370,7 +1370,7 @@ function renderProjects(){
 // Which drafts this viewer has looked at, per version: a finished revision is
 // news again. Kept in the browser, because it is one viewer's attention and
 // nothing the ledger needs. On a first visit what already exists is not news.
-const SEEN_KEY = "skillpp.seen-drafts";
+const SEEN_KEY = "skill_plus_plus.seen-drafts";
 let seen = null;
 const stamp = iso => Date.parse(iso) || 0;
 function saveSeen(){ try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch(e){} }
@@ -1745,7 +1745,7 @@ function paint(){
       ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Promoted", drafted: "Drafted", declined: "Dismissed"}[highlight(r)]}</span>` : ""}
       <span class="acts">${actions(r)}</span>
       ${r.days_left === null ? `<span class="clock"></span>` : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
-        title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless you promote it first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
+        title="Deleted by skill-plus-plus expire ${S.ttl} days after it was last recognized, unless you promote it first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
       <span class="seen count ${r.occurrences >= S.threshold ? "reached" : ""}" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
       ${noteBlock(r)}
       <div class="body">${candidateBody(r)}</div></div>`;
@@ -1756,7 +1756,7 @@ function paint(){
   list.innerHTML = `
     ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>Candidates you promoted. Draft a skill from them; the draft appears in the Drafts tab.</span></div>
     ${promoted.map(card).join("")}` : ""}
-    <div class="section"><h2>Still collecting</h2><span>Work skillpp saw you repeat. Once something is seen ${S.threshold}×, you can promote or dismiss it.</span></div>
+    <div class="section"><h2>Still collecting</h2><span>Work skill-plus-plus saw you repeat. Once something is seen ${S.threshold}×, you can promote or dismiss it.</span></div>
     ${ready.length + collecting.length ? `<div class="collecting">
       <div class="thead"><span class="chev"></span><span class="title">Title</span>
         <span class="acts"></span><span class="clock">Time to expire</span><span class="count">Count</span></div>

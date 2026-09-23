@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.svg">
-  <img alt="skillpp: repeated work becomes a reviewed skill" src="docs/images/banner-light.svg" width="720">
+  <img alt="skill-plus-plus: repeated work becomes a reviewed skill" src="docs/images/banner-light.svg" width="720">
 </picture>
 
 # Spot the work you keep repeating. Turn it into skills.
@@ -78,7 +78,7 @@ its tests, turning a document into a talk, adding an eval case. An agent skill
 time, but almost nobody writes them: by the time a procedure is worth a skill,
 you have done it three times and moved on.
 
-skillpp finds those procedures for you. It watches your Claude Code sessions,
+skill-plus-plus finds those procedures for you. It watches your Claude Code sessions,
 notices when you repeat the same kind of work within a project, and shows it to
 you as a candidate. Promote one, and your own agent drafts the skill from what
 you actually did. Nothing is installed without you.
@@ -96,7 +96,7 @@ everyone working in the repo has it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/how-it-works-dark.svg">
-  <img alt="How skillpp works: 1, capture while you work: hooks, scrub, session buffer. 2, fold in the background after the session: cut, segment, extract, match. 3, review and draft when you choose: ledger, review page, Draft Skill, you." src="docs/images/how-it-works-light.svg">
+  <img alt="How skill-plus-plus works: 1, capture while you work: hooks, scrub, session buffer. 2, fold in the background after the session: cut, segment, extract, match. 3, review and draft when you choose: ledger, review page, Draft Skill, you." src="docs/images/how-it-works-light.svg">
 </picture>
 
 1. **Capture.** While you work, hooks record your prompts, the tools that ran,
@@ -125,8 +125,8 @@ logged in, and [Ollama](https://ollama.com) running (`brew install ollama` on a 
 
 ```bash
 pipx install git+https://github.com/himanshu096/skill-plus-plus
-skillpp install --project ~/code/my-repo --apply   # hooks, slash commands and the two local models
-skillpp doctor                                     # everything green?
+skill-plus-plus install --project ~/code/my-repo --apply   # hooks, slash commands and the two local models
+skill-plus-plus doctor                                     # everything green?
 ```
 
 Then start a new Claude Code session in that repo (a new chat in the CLI, or a
@@ -142,9 +142,9 @@ new Code session in the desktop app) and work as usual.
 - `--user` instead of `--project` captures every project on the machine.
 - The two models are about 10 GB on disk, and cutting a session needs about
   10 GB of free memory. `--no-models` leaves Ollama alone.
-- `skillpp install --project ~/code/my-repo --remove --apply` takes the hooks
+- `skill-plus-plus install --project ~/code/my-repo --remove --apply` takes the hooks
   and slash commands out again.
-- From a clone: `pip install -e .`, or run `python3 bin/skillpp` without
+- From a clone: `pip install -e .`, or run `python3 bin/skill-plus-plus` without
   installing anything.
 
 </details>
@@ -155,7 +155,7 @@ new Code session in the desktop app) and work as usual.
 
 1. **Work as usual.** Each session is cut into tasks when it ends, in the
    background.
-2. **Open the review page:** `skillpp web`. It is served on `127.0.0.1` and only
+2. **Open the review page:** `skill-plus-plus web`. It is served on `127.0.0.1` and only
    this machine can reach it.
 3. **Pick the project** in the menu beside the tabs, if you have more than one.
 <!-- SCREENSHOT: docs/images/review-candidates.png, a candidate opened, its steps grouped under the requests they served -->
@@ -171,9 +171,9 @@ new Code session in the desktop app) and work as usual.
 7. **Install in your project** (commit `.claude/skills/` to share it), or **just
    for you**. A later revision reaches it with **Update**.
 
-**Faster than three repeats:** `SKILLPP_RECURRENCE=1` makes a candidate ready the
+**Faster than three repeats:** `SKILL_PLUS_PLUS_RECURRENCE=1` makes a candidate ready the
 first time it is seen. **Describing a procedure instead of doing it** (work in
-progress): run `/skillpp-new` in a session and describe it.
+progress): run `/skill-plus-plus-new` in a session and describe it.
 
 ---
 
@@ -239,7 +239,7 @@ local model.
 
 **Skip it if you** mostly do one-off work, run Windows, or use another agent:
 capture is Claude Code only for now. Drafting can use any agent CLI
-(`SKILLPP_AGENT`).
+(`SKILL_PLUS_PLUS_AGENT`).
 
 **Known limits**
 - A task continued in a new chat becomes two half-tasks; nothing links one chat
@@ -253,7 +253,7 @@ capture is Claude Code only for now. Drafting can use any agent CLI
 
 ## 🔒 Privacy
 
-Everything skillpp captures stays in `~/.claude/skillpp/` on your machine,
+Everything skill-plus-plus captures stays in `~/.claude/skill-plus-plus/` on your machine,
 scrubbed of keys, tokens, cookies, connection strings and email addresses.
 Names, phone numbers and the content of your files are **not** recognised, and
 the folder you work in is kept as it is, so treat it like your shell history. Something leaves your machine only when you press **Draft

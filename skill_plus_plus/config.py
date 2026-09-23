@@ -10,7 +10,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DEFAULT_ROOT = Path.home() / ".claude" / "skillpp"
+DEFAULT_ROOT = Path.home() / ".claude" / "skill-plus-plus"
+# Where the ledger lived before the rename from skillpp.
+OLD_ROOT = Path.home() / ".claude" / "skillpp"
 
 
 def _int_env(name: str, default: int) -> int:
@@ -35,7 +37,7 @@ def _bool_env(name: str, default: bool) -> bool:
     """Unset means *default*; anything falsey-looking means off.
 
     Generous about what counts as off on purpose — someone reaching for this is
-    turning something off in a hurry, and `SKILLPP_JUDGE=false` failing open
+    turning something off in a hurry, and `SKILL_PLUS_PLUS_JUDGE=false` failing open
     because only "0" was handled is the wrong way to learn the spelling.
     """
     raw = os.environ.get(name)
@@ -50,68 +52,75 @@ class Config:
     def __init__(self, root: str | Path | None = None) -> None:
         if root is not None:
             self.root = Path(root).expanduser()
-        elif os.environ.get("SKILLPP_ROOT"):
-            self.root = Path(os.environ["SKILLPP_ROOT"]).expanduser()
+        elif os.environ.get("SKILL_PLUS_PLUS_ROOT"):
+            self.root = Path(os.environ["SKILL_PLUS_PLUS_ROOT"]).expanduser()
         else:
             self.root = DEFAULT_ROOT
+            # A ledger from before the rename moves into place the first time
+            # the new folder is looked for, so nothing recorded is left behind.
+            if not self.root.exists() and OLD_ROOT.is_dir():
+                try:
+                    OLD_ROOT.rename(self.root)
+                except OSError:
+                    pass
 
         # A workflow must recur this many times before it is proposed.
-        self.recurrence_threshold = _int_env("SKILLPP_RECURRENCE", 3)
-        # How long `skillpp expire` keeps a candidate that is not promoted,
+        self.recurrence_threshold = _int_env("SKILL_PLUS_PLUS_RECURRENCE", 3)
+        # How long `skill-plus-plus expire` keeps a candidate that is not promoted,
         # pending ones included, counted from the last time it was recognized.
         # Nothing runs it for you.
-        self.candidate_ttl_days = _int_env("SKILLPP_TTL_DAYS", 14)
+        self.candidate_ttl_days = _int_env("SKILL_PLUS_PLUS_TTL_DAYS", 14)
         # Hard caps so a runaway session cannot bloat the ledger.
-        self.max_steps_per_session = _int_env("SKILLPP_MAX_STEPS", 500)
-        self.max_field_chars = _int_env("SKILLPP_MAX_FIELD", 2000)
+        self.max_steps_per_session = _int_env("SKILL_PLUS_PLUS_MAX_STEPS", 500)
+        self.max_field_chars = _int_env("SKILL_PLUS_PLUS_MAX_FIELD", 2000)
         # Never ask the developer more than this many questions.
-        self.max_questions = _int_env("SKILLPP_MAX_QUESTIONS", 3)
+        self.max_questions = _int_env("SKILL_PLUS_PLUS_MAX_QUESTIONS", 3)
         # Ask the local model, once per prompt gap when a session is folded,
-        # whether a new task started there (`skillpp.boundary`). The fold runs
+        # whether a new task started there (`skill_plus_plus.boundary`). The fold runs
         # detached after the session ends, so nobody waits on it. Off, nothing
         # is judged, and an unjudged session is held rather than cut by guess:
         # guessing from git verbs measured worse than making no cuts at all.
         # Held sessions are banked once judging is back on.
-        self.judge_boundaries = _bool_env("SKILLPP_JUDGE", True)
+        self.judge_boundaries = _bool_env("SKILL_PLUS_PLUS_JUDGE", True)
         # Ask the same model, inside every PostToolUse hook, for one sentence
-        # saying what the step did (`skillpp.boundary.describe`). Off by
+        # saying what the step did (`skill_plus_plus.boundary.describe`). Off by
         # default: it made the developer wait 2-11s on every tool call, and its
         # only reader, the judge, was measured worse with it and stopped reading
-        # it (`boundary.JUDGE_READS_SUMMARY`). `SKILLPP_DESCRIBE=1` records it
+        # it (`boundary.JUDGE_READS_SUMMARY`). `SKILL_PLUS_PLUS_DESCRIBE=1` records it
         # again, for a benchmark that re-measures it.
-        self.describe_steps = _bool_env("SKILLPP_DESCRIBE", False)
+        self.describe_steps = _bool_env("SKILL_PLUS_PLUS_DESCRIBE", False)
         # Ask the same model, once per banked candidate, to name the procedure
         # and say in one sentence what the run did. Without it a candidate is
         # titled with a string capture happened to observe: on the real ledger
         # that produced `.pptx`, `go` and `Looks good. What's next?`. It runs
         # at fold time, not while the developer waits, and the sentence it also
-        # returns is what the review page shows. `SKILLPP_NAME=0` turns it off.
-        self.name_candidates = _bool_env("SKILLPP_NAME", True)
+        # returns is what the review page shows. `SKILL_PLUS_PLUS_NAME=0` turns it off.
+        self.name_candidates = _bool_env("SKILL_PLUS_PLUS_NAME", True)
         # Whether a banked episode is compared with the ledger at all. On in
         # use. Off only to measure detection on its own: scoring a session by
         # folding it runs matching too, and two episodes cut from one session
         # that look alike merge back into one entry — the count then reads as
-        # if the judge had never cut. `SKILLPP_MATCH=0` turns it off; that is
+        # if the judge had never cut. `SKILL_PLUS_PLUS_MATCH=0` turns it off; that is
         # a choice, and banks the episodes unmatched rather than holding the
         # session the way an unreachable embedding model does.
-        self.match_candidates = _bool_env("SKILLPP_MATCH", True)
+        self.match_candidates = _bool_env("SKILL_PLUS_PLUS_MATCH", True)
         # How to invoke the developer's own agent to write a draft. A command
         # template rather than an API call, so this needs no key and no
         # vendor: whatever agent the developer already uses writes the body,
         # authenticated as they already are. {PROMPT} is the only
         # substitution.
         self.agent_command = _str_env(
-            "SKILLPP_AGENT",
+            "SKILL_PLUS_PLUS_AGENT",
             "claude -p {PROMPT} --no-session-persistence "
-            '--allowed-tools "Bash(python3 bin/skillpp *),Read,Write,Edit"')
+            '--allowed-tools "Bash(python3 bin/skill-plus-plus *),Read,Write,Edit"')
         # Where the local model is served, and which one to ask. It judges
         # boundaries and names candidates when a session is folded, after the
         # session ends, and writes the summaries the review page shows. None
         # of it runs while the developer works.
-        self.ollama_url = _str_env("SKILLPP_OLLAMA", "http://127.0.0.1:11434")
-        self.local_model = _str_env("SKILLPP_LOCAL_MODEL", "gemma4:e4b")
-        # Which embedding model decides "same procedure" (`skillpp.matching`).
-        self.embed_model = _str_env("SKILLPP_EMBED_MODEL", "nomic-embed-text")
+        self.ollama_url = _str_env("SKILL_PLUS_PLUS_OLLAMA", "http://127.0.0.1:11434")
+        self.local_model = _str_env("SKILL_PLUS_PLUS_LOCAL_MODEL", "gemma4:e4b")
+        # Which embedding model decides "same procedure" (`skill_plus_plus.matching`).
+        self.embed_model = _str_env("SKILL_PLUS_PLUS_EMBED_MODEL", "nomic-embed-text")
         # Cosine at or above which an episode joins an existing entry. Set where
         # wrong merges stop, not where merges are most numerous: a wrong merge
         # silently mixes two procedures into one skill, a missed one only leaves
@@ -119,12 +128,12 @@ class Config:
         # sessions (`tests/fixtures/sessions/recurrence.py`), embedding the
         # steps alone: 0.93 is the lowest floor with no wrong merge; 0.86-0.92
         # merge more and put an unrelated run in with the eval cases.
-        self.match_floor = _float_env("SKILLPP_MATCH_FLOOR", 0.93)
+        self.match_floor = _float_env("SKILL_PLUS_PLUS_MATCH_FLOOR", 0.93)
         # Conversation text scores on its own scale; see `matching`.
-        self.match_floor_turns = _float_env("SKILLPP_MATCH_FLOOR_TURNS", 0.85)
+        self.match_floor_turns = _float_env("SKILL_PLUS_PLUS_MATCH_FLOOR_TURNS", 0.85)
         # A boundary that would close an episode smaller than this is ignored:
         # one step is not a workflow.
-        self.min_episode_steps = _int_env("SKILLPP_MIN_EPISODE_STEPS", 2)
+        self.min_episode_steps = _int_env("SKILL_PLUS_PLUS_MIN_EPISODE_STEPS", 2)
 
     @property
     def decisions_file(self) -> Path:
@@ -157,7 +166,7 @@ class Config:
 
     @property
     def log_file(self) -> Path:
-        return self.root / "skillpp.log"
+        return self.root / "skill-plus-plus.log"
 
     def ensure_dirs(self) -> None:
         for d in (self.ledger_dir, self.sessions_dir, self.cold_dir, self.archive_dir):

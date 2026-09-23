@@ -283,10 +283,10 @@ def _cli_of(entry, steps: list[dict]) -> list[str]:
 
 
 # The marker a facts-only scaffold leaves where the procedure belongs. Fixed
-# text on purpose: skillpp's own `<!-- TODO: replace with the real trigger
+# text on purpose: skill-plus-plus's own `<!-- TODO: replace with the real trigger
 # condition -->` shipped verbatim into two real skills because nothing could
 # tell a finished draft from an untouched one.
-WRITE_HERE = "<!-- skillpp:write-the-procedure -->"
+WRITE_HERE = "<!-- skill-plus-plus:write-the-procedure -->"
 
 
 def scaffold_skill(
@@ -381,7 +381,7 @@ def scaffold_skill(
     else:
         lines += [WRITE_HERE, "",
                   "Write the procedure here, from the turns in "
-                  "`skillpp show <id> --json --draft`: what was asked, what "
+                  "`skill-plus-plus show <id> --json --draft`: what was asked, what "
                   "came back, which skills did the work. Leave the frontmatter "
                   "and the sections above as they are.", ""]
 

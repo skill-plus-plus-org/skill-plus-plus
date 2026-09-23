@@ -27,7 +27,7 @@ the draft, you still write only to that directory, and you still never install.
 ## 1. Load it
 
 ```bash
-python3 bin/skillpp show <id> --json --draft
+python3 bin/skill-plus-plus show <id> --json --draft
 ```
 
 If it has `turns`, that is the run as it happened: each thing the person asked,
@@ -42,7 +42,7 @@ dependencies and the questions the engine generated.
 ## 2. Name it, before deciding anything else
 
 ```bash
-python3 bin/skillpp name <id> --title "<what the task is>" \
+python3 bin/skill-plus-plus name <id> --title "<what the task is>" \
   --description "<one line: when does this apply?>"
 ```
 
@@ -67,7 +67,7 @@ hard limit.
 ## 3. Write the body
 
 ```bash
-python3 bin/skillpp scaffold <id> --name <skill-name> \
+python3 bin/skill-plus-plus scaffold <id> --name <skill-name> \
   --description "<one line>" --out <draft-dir>/SKILL.md    # the literal path from the arguments
 ```
 
@@ -88,7 +88,7 @@ preview images before rendering new ones, leave it out: a warning that fires on
 everything is a warning nobody reads. Never paste the command or its paths.
 
 Where the candidate has `turns`, that is all the scaffold writes: it leaves a
-`<!-- skillpp:write-the-procedure -->` marker where the procedure belongs.
+`<!-- skill-plus-plus:write-the-procedure -->` marker where the procedure belongs.
 Replace the marker. Write, in your own words:
 
 - `## When to use` — the trigger, not a summary.
@@ -118,7 +118,7 @@ default?", not by quoting where it went.
 
 Do not paste the shell back in. If the conversation is too thin to write a
 procedure from — the replies are short and the work happened entirely in tool
-calls — the steps are still there: `python3 bin/skillpp show <id> --json`
+calls — the steps are still there: `python3 bin/skill-plus-plus show <id> --json`
 (without `--draft`) lists them, and you can write the procedure from those
 instead. Say in your reply that you did.
 
@@ -141,7 +141,7 @@ are folded back into the draft.
 
 ## 5. Stop before installing
 
-**Do not run `python3 bin/skillpp promote`. Do not write into the skills directory.** Leave
+**Do not run `python3 bin/skill-plus-plus promote`. Do not write into the skills directory.** Leave
 the draft where the scaffold put it and print the path.
 
 Installing is the developer's decision and this run does not have their
@@ -155,7 +155,7 @@ particular bug, a session of looking around, work that never finished — write
 nothing and print exactly this line, on its own:
 
 ```
-SKILLPP-DECLINE: <one short reason>
+SKILL-PLUS-PLUS-DECLINE: <one short reason>
 ```
 
 A wrong draft costs more than no draft.

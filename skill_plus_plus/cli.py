@@ -1,13 +1,13 @@
 """Command line interface.
 
 Division of labour: this CLI does everything deterministic. The
-``/skillpp-review`` slash command drives an agent through the parts that need
+``/skill-plus-plus-review`` slash command drives an agent through the parts that need
 judgement — reading the proposal, resolving what the repo can answer, asking
 the developer at most three questions, and writing the final prose.
 
-skillpp's own modules are mostly imported inside the command that needs them,
+skill-plus-plus's own modules are mostly imported inside the command that needs them,
 to keep them off the hook's path: the hook runs on every prompt. Over five cold
-processes, `import skillpp.cli` took 55-68 ms, with `matching`, `similar`,
+processes, `import skill_plus_plus.cli` took 55-68 ms, with `matching`, `similar`,
 `decisions`, `install`, `web`, `boundary` and `episode` all left unloaded;
 importing `matching` alone costs about as much again. No import cycle requires
 this, so a move back to the top is only a startup cost, not a breakage.
@@ -64,10 +64,10 @@ def cmd_hook(args: argparse.Namespace) -> int:
     """
     # A `draft` run is an agent session like any other, so its own poking
     # around gets captured and banked as a candidate — measured: two junk
-    # entries titled `/skillpp-draft <id>` after two runs. Automation observing
+    # entries titled `/skill-plus-plus-draft <id>` after two runs. Automation observing
     # itself is a feedback loop, and the marker is set by the process that
     # spawns it.
-    if os.environ.get("SKILLPP_INTERNAL"):
+    if os.environ.get("SKILL_PLUS_PLUS_INTERNAL"):
         return 0
 
     config = Config(args.root)
@@ -134,33 +134,33 @@ def _agent_workspace(entry_id: str) -> Path:
     temp and this process moves the result into place.
     (docs/research/benchmarks.md, "Five defects, all found by running it")
     """
-    return Path(tempfile.mkdtemp(prefix=f"skillpp-{entry_id[:8]}-"))
+    return Path(tempfile.mkdtemp(prefix=f"skill-plus-plus-{entry_id[:8]}-"))
 
 
 def _agent_home(entry_id: str) -> Path:
     """Where the drafting agent runs: a directory holding the two things its
-    prompt relies on, `/skillpp-draft` and `python3 bin/skillpp`.
+    prompt relies on, `/skill-plus-plus-draft` and `python3 bin/skill-plus-plus`.
 
     An installed package has neither beside it, so the agent cannot run from
-    this checkout: a `pipx` install could draft nothing. The `bin/skillpp`
-    written here runs whichever skillpp started the agent. Kept apart from the
+    this checkout: a `pipx` install could draft nothing. The `bin/skill-plus-plus`
+    written here runs whichever skill-plus-plus started the agent. Kept apart from the
     draft workspace, because everything beside a written SKILL.md is collected
     into the draft.
     """
     from .install import COMMANDS
-    home = Path(tempfile.mkdtemp(prefix=f"skillpp-agent-{entry_id[:8]}-"))
+    home = Path(tempfile.mkdtemp(prefix=f"skill-plus-plus-agent-{entry_id[:8]}-"))
     commands = home / ".claude" / "commands"
     commands.mkdir(parents=True)
-    shutil.copy2(COMMANDS / "skillpp-draft.md", commands / "skillpp-draft.md")
-    shim = home / "bin" / "skillpp"
+    shutil.copy2(COMMANDS / "skill-plus-plus-draft.md", commands / "skill-plus-plus-draft.md")
+    shim = home / "bin" / "skill-plus-plus"
     shim.parent.mkdir()
     package_parent = Path(__file__).resolve().parent.parent
     shim.write_text(
         "#!/usr/bin/env python3\n"
-        '"""The skillpp that started this agent (see `cli._agent_home`)."""\n'
+        '"""The skill-plus-plus that started this agent (see `cli._agent_home`)."""\n'
         "import sys\n"
         f"sys.path.insert(0, {str(package_parent)!r})\n"
-        "from skillpp.cli import main\n"
+        "from skill_plus_plus.cli import main\n"
         "raise SystemExit(main())\n", encoding="utf-8")
     shim.chmod(0o755)
     return home
@@ -186,7 +186,7 @@ def _write_agent_log(out_dir: Path, argv: list[str], started: float,
     """Keep what the drafting agent said, beside the draft, on every run.
 
     The draft stage's only other output is the file, and two real runs produced
-    a SKILL.md that was pure scaffold — no prose, skillpp's own TODO comment
+    a SKILL.md that was pure scaffold — no prose, skill-plus-plus's own TODO comment
     shipped verbatim — while exiting 0. Nothing recorded whether a tool call
     was refused, what the agent thought it was doing, or which model answered,
     so the runs could not be diagnosed at all. Written for successes too: a
@@ -229,10 +229,10 @@ def cmd_draft(args: argparse.Namespace) -> int:
     # variable for the agent to expand. A sandboxed Bash call containing `$VAR`
     # is rejected outright — "Contains expansion" — because an allowed-tools
     # pattern cannot be checked against a command whose text is not yet known.
-    # SKILLPP_ROOT below still works, because that is read by the Python
+    # SKILL_PLUS_PLUS_ROOT below still works, because that is read by the Python
     # process rather than expanded in a shell.
     work = _agent_workspace(entry.id)
-    prompt = f"/skillpp-draft {entry.id} {work}"
+    prompt = f"/skill-plus-plus-draft {entry.id} {work}"
     # The developer's note goes in the prompt itself, after the two arguments,
     # not into what `show` prints: a tool's output is read as evidence, and
     # this is an instruction from the person the skill is for. Claude Code
@@ -244,7 +244,7 @@ def cmd_draft(args: argparse.Namespace) -> int:
     try:
         argv = _agent_argv(config, prompt)
     except ValueError as exc:
-        print(f"SKILLPP_AGENT is not a valid command: {exc}", file=sys.stderr)
+        print(f"SKILL_PLUS_PLUS_AGENT is not a valid command: {exc}", file=sys.stderr)
         return 1
 
     found = shutil.which(argv[0])
@@ -256,31 +256,31 @@ def cmd_draft(args: argparse.Namespace) -> int:
     print(f"agent      {' '.join(shlex.quote(a) for a in argv)}")
     # Said before the call rather than discovered during it: `claude` is often
     # not on PATH even where Claude Code is in use.
-    print(f"resolves   {found or 'NO — not on PATH; set SKILLPP_AGENT'}")
+    print(f"resolves   {found or 'NO — not on PATH; set SKILL_PLUS_PLUS_AGENT'}")
     if not args.apply:
         print("\nDry run. Re-run with --apply to spend one model call.")
         return 0
 
     out_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
-    # The allowed-tools pattern names `python3 bin/skillpp`, and the prompt is
-    # `/skillpp-draft`: both resolve from the agent's home, installed or not.
+    # The allowed-tools pattern names `python3 bin/skill-plus-plus`, and the prompt is
+    # `/skill-plus-plus-draft`: both resolve from the agent's home, installed or not.
     home = None if args.cwd else _agent_home(entry.id)
     where = args.cwd or home
     try:
         # Captured rather than streamed so the decline sentinel can be read out
         # of it; echoed below so nothing is hidden.
-        # The agent runs `python3 bin/skillpp show <id>` with no --root, so
+        # The agent runs `python3 bin/skill-plus-plus show <id>` with no --root, so
         # without this it reads the default ledger and cannot find a candidate
         # that lives anywhere else. Passed as the environment variable Config
         # already honours rather than asking the prompt to thread a flag.
-        env = dict(os.environ, SKILLPP_INTERNAL="1",
-                   SKILLPP_ROOT=str(config.root),
+        env = dict(os.environ, SKILL_PLUS_PLUS_INTERNAL="1",
+                   SKILL_PLUS_PLUS_ROOT=str(config.root),
                    # Where the draft belongs. The prompt used to say
                    # `<draft-dir>` with nothing substituting it, so the agent
                    # invented a path in its own scratchpad and the draft was
                    # written correctly to somewhere nobody would look.
-                   SKILLPP_DRAFT_DIR=str(work))
+                   SKILL_PLUS_PLUS_DRAFT_DIR=str(work))
         proc = subprocess.run(argv, cwd=where, timeout=args.timeout,
                               capture_output=True, text=True, env=env,
                               # Without this the agent waits on a tty it will
@@ -292,7 +292,7 @@ def cmd_draft(args: argparse.Namespace) -> int:
         print(said, end="")
     except FileNotFoundError:
         _write_agent_log(out_dir, argv, started, "", "agent not found")
-        print(f"\nNo such agent: {argv[0]}. Set SKILLPP_AGENT to how yours is "
+        print(f"\nNo such agent: {argv[0]}. Set SKILL_PLUS_PLUS_AGENT to how yours is "
               f"invoked.", file=sys.stderr)
         return 1
     except subprocess.TimeoutExpired:
@@ -330,7 +330,7 @@ def cmd_draft(args: argparse.Namespace) -> int:
         # working filter.
         said = (proc.stdout or "") + (proc.stderr or "")
         for line in said.splitlines():
-            if line.strip().startswith("SKILLPP-DECLINE:"):
+            if line.strip().startswith("SKILL-PLUS-PLUS-DECLINE:"):
                 reason = line.split(":", 1)[1].strip()
                 print(f"\nNo draft — the agent judged there was no reusable "
                       f"procedure here: {reason}")
@@ -341,7 +341,7 @@ def cmd_draft(args: argparse.Namespace) -> int:
         return 1
     for path in written:
         print(f"\ndrafted {path}")
-    print("Read it, then install with: skillpp promote "
+    print("Read it, then install with: skill-plus-plus promote "
           f"{entry.id} --skill-path <path>")
     return proc.returncode
 
@@ -361,11 +361,11 @@ Rules:
   characters that says when the skill applies.
 - Change what was asked and keep everything else as it is.
 - To look at the evidence the draft was written from, run
-  `python3 bin/skillpp show {entry_id}`.
-- Do not run `python3 bin/skillpp promote` and do not write into any skills
+  `python3 bin/skill-plus-plus show {entry_id}`.
+- Do not run `python3 bin/skill-plus-plus promote` and do not write into any skills
   directory.
 - If the request cannot be done, say why in one line starting with
-  SKILLPP-DECLINE: and leave the file unchanged."""
+  SKILL-PLUS-PLUS-DECLINE: and leave the file unchanged."""
 
 
 def cmd_revise(args: argparse.Namespace) -> int:
@@ -386,7 +386,7 @@ def cmd_revise(args: argparse.Namespace) -> int:
     drafted = sorted((config.root / "drafts" / entry.id).rglob("SKILL.md"))
     drafted = [p for p in drafted if ".revisions" not in p.parts]
     if not drafted:
-        print(f"No draft for {entry.id}. Create one first: skillpp draft "
+        print(f"No draft for {entry.id}. Create one first: skill-plus-plus draft "
               f"{entry.id} --apply", file=sys.stderr)
         return 1
     skill_md = drafted[0]
@@ -401,7 +401,7 @@ def cmd_revise(args: argparse.Namespace) -> int:
     try:
         argv = _agent_argv(config, prompt)
     except ValueError as exc:
-        print(f"SKILLPP_AGENT is not a valid command: {exc}", file=sys.stderr)
+        print(f"SKILL_PLUS_PLUS_AGENT is not a valid command: {exc}", file=sys.stderr)
         return 1
     print(f"candidate  {entry.id}  {entry.title[:60]}")
     print(f"draft      {skill_md}")
@@ -416,9 +416,9 @@ def cmd_revise(args: argparse.Namespace) -> int:
     history = skill_md.parent / ".revisions"
     history.mkdir(exist_ok=True)
     (history / f"SKILL.{stamp}.md").write_bytes(before)
-    env = dict(os.environ, SKILLPP_INTERNAL="1", SKILLPP_ROOT=str(config.root),
-               SKILLPP_DRAFT_DIR=str(work))
-    # The prompt says `python3 bin/skillpp show`; see `_agent_home`.
+    env = dict(os.environ, SKILL_PLUS_PLUS_INTERNAL="1", SKILL_PLUS_PLUS_ROOT=str(config.root),
+               SKILL_PLUS_PLUS_DRAFT_DIR=str(work))
+    # The prompt says `python3 bin/skill-plus-plus show`; see `_agent_home`.
     home = None if args.cwd else _agent_home(entry.id)
     try:
         proc = subprocess.run(argv, cwd=args.cwd or home,
@@ -430,7 +430,7 @@ def cmd_revise(args: argparse.Namespace) -> int:
         print(said, end="")
     except FileNotFoundError:
         _write_agent_log(skill_md.parent, argv, started, "", "agent not found")
-        print(f"\nNo such agent: {argv[0]}. Set SKILLPP_AGENT to how yours is "
+        print(f"\nNo such agent: {argv[0]}. Set SKILL_PLUS_PLUS_AGENT to how yours is "
               f"invoked.", file=sys.stderr)
         return 1
     except subprocess.TimeoutExpired:
@@ -447,7 +447,7 @@ def cmd_revise(args: argparse.Namespace) -> int:
         return proc.returncode
     said = (proc.stdout or "") + (proc.stderr or "")
     for line in said.splitlines():
-        if line.strip().startswith("SKILLPP-DECLINE:"):
+        if line.strip().startswith("SKILL-PLUS-PLUS-DECLINE:"):
             print(f"\nNot revised: {line.split(':', 1)[1].strip()}", file=sys.stderr)
             return 1
     if not working_copy.exists():
@@ -474,7 +474,7 @@ _MAX_TITLE = 80
 def cmd_name(args: argparse.Namespace) -> int:
     """Give a candidate a task-shaped name and a description.
 
-    Written by the agent during `skillpp draft`, because this is the half code
+    Written by the agent during `skill-plus-plus draft`, because this is the half code
     cannot do. Capture can only reuse a string it observed, so an unnamed
     candidate carries whatever the developer typed — and a skill named after a
     greeting never fires, however correct its steps are.
@@ -508,7 +508,7 @@ def cmd_name(args: argparse.Namespace) -> int:
 def cmd_split(args: argparse.Namespace) -> int:
     """Split a candidate that holds two procedures, at a step boundary.
 
-    Reached from `skillpp draft`, where a frontier model is already reading the
+    Reached from `skill-plus-plus draft`, where a frontier model is already reading the
     candidate. Code banks one candidate per episode and cuts only at markers and
     prompt boundaries, so a single request that did two things with no
     recognisable finish between them arrives as one entry. A local model can
@@ -551,7 +551,7 @@ def cmd_split(args: argparse.Namespace) -> int:
     print(f"split {entry.id} at step {at}:")
     for part in made:
         print(f"  {part.id}  {len(part.steps)} steps")
-    print("Name each half with: skillpp name <id> --title … --description …")
+    print("Name each half with: skill-plus-plus name <id> --title … --description …")
     return 0
 
 
@@ -694,7 +694,7 @@ def cmd_fold_session(args: argparse.Namespace) -> int:
 
 
 def _spawn_background_process(config: Config, *argv: str):
-    """Start a skillpp command detached, and do not wait for it.
+    """Start a skill-plus-plus command detached, and do not wait for it.
 
     `start_new_session` matters: without it the child is in the hook's process
     group, so the terminal closing — or Claude Code reaping the hook — can
@@ -703,7 +703,7 @@ def _spawn_background_process(config: Config, *argv: str):
     import subprocess
     package_root = Path(__file__).resolve().parent.parent
     return subprocess.Popen(
-        [sys.executable, "-m", "skillpp", "--root", str(config.root), *argv],
+        [sys.executable, "-m", "skill-plus-plus", "--root", str(config.root), *argv],
         cwd=str(package_root),
         env={**os.environ, "PYTHONPATH": str(package_root)},
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -794,7 +794,7 @@ def cmd_ignored(args: argparse.Namespace) -> int:
     wrong = [e for e in parked if e.parking_looks_wrong(threshold)]
     if wrong:
         print(f"\n{len(wrong)} parked {threshold}+ times since. Not a "
-              f"re-proposal — put one back with: skillpp reopen <id>")
+              f"re-proposal — put one back with: skill-plus-plus reopen <id>")
     return 0
 
 
@@ -814,7 +814,7 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
         print(f"            {row['skill_path']}")
     print("\nNothing was changed. A promoted entry with no file keeps matching "
           "future work while never surfacing for review — decide with "
-          "`skillpp reopen <id>` or `skillpp dismiss <id>`.")
+          "`skill-plus-plus reopen <id>` or `skill-plus-plus dismiss <id>`.")
     return 1
 
 
@@ -969,7 +969,7 @@ def cmd_sift(args: argparse.Namespace) -> int:
     counts = {k: sum(1 for e, _ in judged if e.hint == k) for k in label}
     print(f"\n{counts['method']} repeatable · {counts['one-off']} probably "
           f"one-off · {counts['']} no opinion")
-    print("Ranking only — nothing was removed. `skillpp review` now lists "
+    print("Ranking only — nothing was removed. `skill-plus-plus review` now lists "
           "these in this order.")
 
     if not args.park:
@@ -989,7 +989,7 @@ def cmd_sift(args: argparse.Namespace) -> int:
         ledger.save(entry)
     print(f"\nparked {len(parkable)} on a local model's opinion. Measured at "
           f"roughly 1 in 3 real procedures lost — read them and reopen with: "
-          f"skillpp reopen <id>")
+          f"skill-plus-plus reopen <id>")
     return 0
 
 
@@ -1017,7 +1017,7 @@ def cmd_review(args: argparse.Namespace) -> int:
         flag = f"  {n_q} question(s)" if n_q else "  no open questions"
         print(f"  {entry.id}  ×{entry.occurrences}  {entry.title[:58]}")
         print(f"            {len(entry.steps)} steps ·{flag} · last seen {entry.last_seen[:10]}")
-    print(f"\nInspect one:  skillpp show <id>")
+    print(f"\nInspect one:  skill-plus-plus show <id>")
     return 0
 
 
@@ -1197,7 +1197,7 @@ def _waiting_sessions(config: Config) -> dict:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    """Is skillpp actually running? The question nothing could answer.
+    """Is skill-plus-plus actually running? The question nothing could answer.
 
     Hooks were wired into one project and nowhere else for weeks, and the only
     symptom was an empty review page — which looks exactly like having done no
@@ -1220,7 +1220,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         missing = [e for e in HOOK_EVENTS if e not in wired]
         if not wired:
             flag = f"--{label}" if label in ("user", "project") else f"--settings {path}"
-            print(f"hooks     {label:8} not wired — skillpp install {flag} --apply")
+            print(f"hooks     {label:8} not wired — skill-plus-plus install {flag} --apply")
         elif missing:
             # Naming the missing ones matters: PostToolUse without SessionEnd
             # captures every step and banks none of it, and reads as working.
@@ -1249,7 +1249,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             parts.append(f"{len(s['folding'])} folding now")
         print(f"sessions  {'':8} {', '.join(parts)}")
         if pending:
-            print(f"          {'':8} run `skillpp fold-pending` to bank them now")
+            print(f"          {'':8} run `skill-plus-plus fold-pending` to bank them now")
     else:
         print(f"sessions  {'':8} nothing waiting"
               + (f", {len(s['live'])} live" if s["live"] else ""))
@@ -1272,7 +1272,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
     print(f"size        {stats['bytes'] / 1024:.1f} KB")
 
     # Held sessions. `fold_session` refuses to bank a stream no model judged and
-    # keeps the file instead, so a stack of these means skillpp has been running
+    # keeps the file instead, so a stack of these means skill-plus-plus has been running
     # offline and the work is waiting, not lost. Silence here would be the same
     # trap as a harness that scores green with the model down.
     # Only sessions `handle_session_end` stamped as held. A session still being
@@ -1514,7 +1514,7 @@ def _settings_target(args: argparse.Namespace) -> tuple[Path, Path] | None:
 
 
 def _usable_interpreter(python: str | None) -> str:
-    """Empty if this interpreter can run skillpp, else why it cannot.
+    """Empty if this interpreter can run skill-plus-plus, else why it cannot.
 
     Checked before writing, because a hook whose command cannot start fails
     silently: Claude Code runs it, it exits non-zero, and nothing is captured
@@ -1538,7 +1538,7 @@ def _usable_interpreter(python: str | None) -> str:
     except ValueError:
         return f"{name} did not report a version: {out.stdout.strip()[:60]}"
     if (major, minor) < (3, 10):
-        return f"{name} is {major}.{minor}; skillpp needs 3.10 or newer"
+        return f"{name} is {major}.{minor}; skill-plus-plus needs 3.10 or newer"
     return ""
 
 
@@ -1586,7 +1586,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             _install_models(Config(args.root), apply=False)
         return 0
 
-    settled = ("no change", "nothing to remove", "skillpp is not wired")
+    settled = ("no change", "nothing to remove", "skill-plus-plus is not wired")
     if all(change.endswith("no change") or change.startswith(settled[1:])
            for change in changes):
         print("\nAlready in that state. Nothing written.")
@@ -1623,10 +1623,10 @@ def cmd_install(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="skillpp",
+        prog="skill-plus-plus",
         description="Skill Plus Plus — capture workflows passively, promote them deliberately.")
-    parser.add_argument("--version", action="version", version=f"skillpp {__version__}")
-    parser.add_argument("--root", help="ledger root (default ~/.claude/skillpp)")
+    parser.add_argument("--version", action="version", version=f"skill-plus-plus {__version__}")
+    parser.add_argument("--root", help="ledger root (default ~/.claude/skill-plus-plus)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("hook", help="hook entry point (reads JSON on stdin)")
@@ -1682,7 +1682,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="actually fold them; the second entry is absorbed")
     p.add_argument("--floor", type=float,
                    help="cosine at or above which two entries fold "
-                        "(default: SKILLPP_MATCH_FLOOR)")
+                        "(default: SKILL_PLUS_PLUS_MATCH_FLOOR)")
     p.set_defaults(func=cmd_merge)
 
 
@@ -1736,7 +1736,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also set the one-off ones aside. Lossy: a local model "
                         "dropped about a third of real procedures in testing")
     p.add_argument("--model", help="local model to ask; defaults to "
-                                   "SKILLPP_LOCAL_MODEL")
+                                   "SKILL_PLUS_PLUS_LOCAL_MODEL")
     p.set_defaults(func=cmd_sift)
 
     p = sub.add_parser("retitle",
@@ -1772,7 +1772,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("doctor",
-                       help="is skillpp wired, reachable and keeping up?")
+                       help="is skill-plus-plus wired, reachable and keeping up?")
     p.add_argument("--settings", help="check this settings file instead of "
                                       "the project and user ones")
     p.set_defaults(func=cmd_doctor)
@@ -1836,7 +1836,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--skills-dir")
     p.add_argument("--include-cold", action="store_true")
     p.add_argument("--with-commands", action="store_true",
-                   help="include the skillpp slash commands")
+                   help="include the skill-plus-plus slash commands")
     p.add_argument("--zip", action="store_true", help="also produce a .zip")
     p.set_defaults(func=cmd_bundle)
 
@@ -1851,7 +1851,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-models", action="store_true",
                    help="leave the Ollama models alone (by default --apply pulls missing ones)")
     p.add_argument("--remove", action="store_true",
-                   help="take skillpp's hooks back out, leaving any others")
+                   help="take skill-plus-plus's hooks back out, leaving any others")
     p.add_argument("--python",
                    help="interpreter for the hook command (default: python3 from PATH)")
     p.set_defaults(func=cmd_install)

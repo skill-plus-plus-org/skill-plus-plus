@@ -6,11 +6,11 @@
 
 Drafting is a frontier-model call, so it is not part of the unit suite: the
 developer runs it. Everything around it is scripted, so a change to the draft
-prompt (`skillpp/commands/skillpp-draft.md`) can be judged the same way every
+prompt (`skill_plus_plus/commands/skill-plus-plus-draft.md`) can be judged the same way every
 time.
 
 `prepare` folds one recorded session, alone, into its own ledger and prints the
-`skillpp draft` command to run. `check` reads what the draft wrote and prints
+`skill-plus-plus draft` command to run. `check` reads what the draft wrote and prints
 every criterion in `tests/fixtures/sessions/draft_cases.json` as pass or fail,
 with the line that decided it.
 
@@ -32,13 +32,13 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SESSIONS = REPO / "tests" / "fixtures" / "sessions"
 CASES = SESSIONS / "draft_cases.json"
-DEFAULT_OUT = Path.home() / "skillpp-draft-check"
+DEFAULT_OUT = Path.home() / "skill-plus-plus-draft-check"
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(SESSIONS))
 
-from skillpp.lifecycle import parse_frontmatter  # noqa: E402
+from skill_plus_plus.lifecycle import parse_frontmatter  # noqa: E402
 
-MARKER = "<!-- skillpp:write-the-procedure -->"
+MARKER = "<!-- skill-plus-plus:write-the-procedure -->"
 STEP = re.compile(r"^\s{0,3}\d+\.\s")
 SUBSTEP = re.compile(r"^###\s+(step\s+)?\d+[.):]?\s", re.IGNORECASE)
 HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -152,7 +152,7 @@ def result(cid: str, label: str, ok: bool, evidence: str = "") -> dict:
 def general_checks(text: str, log: str, entry_id: str, fixture: dict | None) -> list[dict]:
     out = []
     header = log.splitlines()[0] if log else ""
-    declined = next((l for l in log.splitlines() if l.strip().startswith("SKILLPP-DECLINE:")), "")
+    declined = next((l for l in log.splitlines() if l.strip().startswith("SKILL-PLUS-PLUS-DECLINE:")), "")
     out.append(result("G1", "the run finished", re.search(r"\bexit 0\b", header) and not declined,
                       declined or header or "no agent.log"))
 
@@ -315,7 +315,7 @@ def _digest(text: str) -> str:
 
 def run_judge(name: str, skill: Path, case: dict, data: dict, timeout: int = 300) -> dict:
     """One Claude call, from an empty folder so no project instructions leak
-    in, and marked internal so skillpp's own hooks do not capture it."""
+    in, and marked internal so skill-plus-plus's own hooks do not capture it."""
     import subprocess
     import tempfile
     text = skill.read_text(encoding="utf-8")
@@ -323,7 +323,7 @@ def run_judge(name: str, skill: Path, case: dict, data: dict, timeout: int = 300
         proc = subprocess.run(
             ["claude", "-p", judge_prompt(text, case, data), "--no-session-persistence"],
             cwd=tmp, capture_output=True, text=True, timeout=timeout,
-            env=dict(os.environ, SKILLPP_INTERNAL="1"))
+            env=dict(os.environ, SKILL_PLUS_PLUS_INTERNAL="1"))
     return {"case": name, "skill_sha256": _digest(text), "exit": proc.returncode,
             "answers": parse_judge(proc.stdout), "raw": proc.stdout[-4000:]}
 
@@ -356,7 +356,7 @@ def prepare(check: str, out: Path, force: bool) -> int:
         raise SystemExit(f"unknown check {check!r}; known: {', '.join(cases)}")
     fixture = _fixture_for(cases[check]["session"])
     here = out / check
-    root = here / "skillpp"
+    root = here / "skill-plus-plus"
     if root.exists() and not force:
         raise SystemExit(f"{root} exists; pass --force to prepare it again")
 
@@ -364,13 +364,13 @@ def prepare(check: str, out: Path, force: bool) -> int:
     # embedding cannot change the outcome: a fixed vector stands in, and no
     # local model is started. Naming is off for the same reason — the draft
     # names the skill itself.
-    os.environ["SKILLPP_NAME"] = "0"
-    from skillpp import matching
+    os.environ["SKILL_PLUS_PLUS_NAME"] = "0"
+    from skill_plus_plus import matching
     matching.embed = lambda text, **kw: [1.0, 0.0, 0.0]
     matching.model_reachable = lambda config: True
-    from skillpp.capture import fold_session
-    from skillpp.config import Config
-    from skillpp.ledger import Ledger
+    from skill_plus_plus.capture import fold_session
+    from skill_plus_plus.config import Config
+    from skill_plus_plus.ledger import Ledger
 
     if root.exists():
         import shutil
@@ -395,7 +395,7 @@ def prepare(check: str, out: Path, force: bool) -> int:
             "4. Are the open questions sensible?\n5. Is anything invented?\n")
     print(f"prepared {check}: candidate {entry.id} from {fixture['tag']} "
           f"({cases[check]['session']})")
-    print(f"\nrun:\n  python3 {REPO / 'bin' / 'skillpp'} --root {root} draft {entry.id} --apply")
+    print(f"\nrun:\n  python3 {REPO / 'bin' / 'skill-plus-plus'} --root {root} draft {entry.id} --apply")
     print(f"\nthen review it in {review}")
     return 0
 
@@ -410,7 +410,7 @@ def check(out: Path, only: list[str]) -> int:
             print(f"-- {name}: not prepared")
             continue
         meta = json.loads(meta_path.read_text())
-        draft_dir = out / name / "skillpp" / "drafts" / meta["entry"]
+        draft_dir = out / name / "skill-plus-plus" / "drafts" / meta["entry"]
         skill = draft_dir / "SKILL.md"
         if not skill.exists():
             print(f"-- {name}: no draft yet in {draft_dir}")
@@ -440,7 +440,7 @@ def judge(out: Path, only: list[str]) -> int:
         if not meta_path.exists():
             continue
         entry = json.loads(meta_path.read_text())["entry"]
-        skill = out / name / "skillpp" / "drafts" / entry / "SKILL.md"
+        skill = out / name / "skill-plus-plus" / "drafts" / entry / "SKILL.md"
         if skill.exists():
             jobs.append((name, skill))
     with ThreadPoolExecutor(max_workers=4) as pool:

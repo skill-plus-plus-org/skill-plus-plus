@@ -1,6 +1,6 @@
 # Privacy
 
-skillpp records what you do with Claude Code so it can recognise the work you
+skill-plus-plus records what you do with Claude Code so it can recognise the work you
 repeat. This page says exactly what that record holds, where it is kept, what
 is removed from it, and the one way any of it leaves your machine.
 
@@ -21,7 +21,7 @@ anything from sessions in projects where the hooks are not wired.
 
 ## Where it lives
 
-Everything is under `~/.claude/skillpp/` (or `SKILLPP_ROOT`):
+Everything is under `~/.claude/skill-plus-plus/` (or `SKILL_PLUS_PLUS_ROOT`):
 
 | Path | Holds |
 | --- | --- |
@@ -32,11 +32,11 @@ Everything is under `~/.claude/skillpp/` (or `SKILLPP_ROOT`):
 | `review_summaries.json` | the one-line summaries the review page shows |
 | `decisions.jsonl`, `usage.json` | what you promoted and dismissed, and which skills were used |
 | `cold/`, `archive/` | skills you moved out of the loaded index |
-| `skillpp.log` | errors and one line per fold |
+| `skill-plus-plus.log` | errors and one line per fold |
 
 **Nothing expires on its own.** A held session waits until it can be folded;
-drafts and their logs stay until you delete them. `skillpp expire` removes
-candidates that stopped recurring, and `rm -rf ~/.claude/skillpp/` removes
+drafts and their logs stay until you delete them. `skill-plus-plus expire` removes
+candidates that stopped recurring, and `rm -rf ~/.claude/skill-plus-plus/` removes
 everything.
 
 ## What is removed before anything is written
@@ -81,7 +81,7 @@ served on `127.0.0.1` only. It refuses requests that come from any other page in
 your browser.
 
 Something leaves only when you ask for a draft. **Draft Skill** and **Revise**
-(or `skillpp draft` / `skillpp revise` with `--apply`) start your agent, `claude
+(or `skill-plus-plus draft` / `skill-plus-plus revise` with `--apply`) start your agent, `claude
 -p` by default, which reads that one candidate, its first run's conversation and
 steps, and your note or instruction, and sends them to its model provider as any
 prompt you type would be. Nothing else from the ledger is sent, and nothing is
@@ -96,7 +96,7 @@ Two things you can do that publish more than that, and should read first:
 
 ## Leaving things out
 
-- One session: start it as `SKILLPP_INTERNAL=1 claude`.
+- One session: start it as `SKILL_PLUS_PLUS_INTERNAL=1 claude`.
 - One project: wire the hooks with `--project` into the repos you want captured,
   rather than `--user` into every project.
 - A candidate: dismiss it on the review page, or delete its file in `ledger/`.

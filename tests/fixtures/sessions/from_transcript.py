@@ -36,11 +36,11 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO))
 
-from skillpp.capture import (_ENVELOPE_PREFIXES, _KEEP_INPUT,  # noqa: E402
+from skill_plus_plus.capture import (_ENVELOPE_PREFIXES, _KEEP_INPUT,  # noqa: E402
                              _NOT_A_PROMPT, _REPLY_CHARS, _clip,
                              _reply_text)
-from skillpp.sanitize import scrub, scrub_obj               # noqa: E402
-from skillpp.segment import PROMPT_TOOL, is_prompt, segment  # noqa: E402
+from skill_plus_plus.sanitize import scrub, scrub_obj               # noqa: E402
+from skill_plus_plus.segment import PROMPT_TOOL, is_prompt, segment  # noqa: E402
 
 HOME = os.path.expanduser("~")
 # What is not a prompt: the envelopes live capture ignores, and a tool's image
@@ -314,7 +314,7 @@ def write_fixture(transcript: Path, name: str, truth: dict, extra: dict | None =
     if HOME in blob or Path(HOME).name in blob:
         raise SystemExit("refusing to write: $HOME or the account name survived templating")
     # The same check the repo runs before anything is published, including the
-    # private denylist when SKILLPP_DENYLIST names one.
+    # private denylist when SKILL_PLUS_PLUS_DENYLIST names one.
     sys.path.insert(0, str(REPO / "scripts"))
     import leak_guard
     leaks = leak_guard.scan_text("fixture", json.dumps(steps, indent=1),
@@ -339,7 +339,7 @@ def write_fixture(transcript: Path, name: str, truth: dict, extra: dict | None =
         "steps": steps,
     }
     # Beside the others it will be scored with, public or private.
-    out = Path(os.environ.get("SKILLPP_FIXTURES") or HERE).expanduser() / f"{tag}-{name}.json"
+    out = Path(os.environ.get("SKILL_PLUS_PLUS_FIXTURES") or HERE).expanduser() / f"{tag}-{name}.json"
     out.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
     return out, doc
 

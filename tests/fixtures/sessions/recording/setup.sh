@@ -7,7 +7,7 @@
 # Code sessions get a fresh copy of the seed repo, committed once by a neutral
 # author, so the developer's name never reaches a transcript. Procedure
 # sessions get exactly the files their prompts read, and the deck sessions
-# copy skillpp's own docs, so every run reads the same text.
+# copy skill-plus-plus's own docs, so every run reads the same text.
 set -eu
 
 if [ $# -lt 1 ]; then
