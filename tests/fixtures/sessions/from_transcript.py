@@ -37,8 +37,8 @@ REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO))
 
 from skillpp.capture import (_ENVELOPE_PREFIXES, _KEEP_INPUT,  # noqa: E402
-                             _NOT_A_PROMPT, _REPLY_CHARS,
-                             _RESPONSE_CHARS, _reply_text)
+                             _NOT_A_PROMPT, _REPLY_CHARS, _clip,
+                             _reply_text)
 from skillpp.sanitize import scrub, scrub_obj               # noqa: E402
 from skillpp.segment import PROMPT_TOOL, is_prompt, segment  # noqa: E402
 
@@ -161,14 +161,16 @@ def extract(path: Path) -> list[dict]:
                     "serves": asks or 1}
             # What the tool sent back, and what was said going in — both were
             # in the transcript all along and neither reached the old fixtures.
-            returned = scrub(_reply_text(replies.get(block.get("id"))))
+            # Capture's own functions, which scrub before they cut: a cut can
+            # leave a secret too short for the scrubber to recognise.
+            returned = _reply_text(replies.get(block.get("id")))
             if returned:
                 step["tool_returned"] = returned
-            note = scrub(" ".join(" ".join(pending).split())[:_RESPONSE_CHARS])
+            note = _clip(pending)
             if note:
                 step["assistant_note"] = note
             if closing:
-                back = scrub(" ".join(" ".join(closing).split())[:_RESPONSE_CHARS])
+                back = _clip(closing)
                 earlier = [s for s in steps if not is_prompt(s)]
                 if back and earlier:
                     earlier[-1].setdefault("closing_note", back)
@@ -184,7 +186,7 @@ def extract(path: Path) -> list[dict]:
             reply = reply[:_REPLY_CHARS].rsplit(" ", 1)[0] + " …"
         if reply:
             marker["reply"] = reply
-    tail = scrub(" ".join(" ".join(pending).split())[:_RESPONSE_CHARS])
+    tail = _clip(pending)
     work = [s for s in steps if not is_prompt(s)]
     if tail and work:
         work[-1].setdefault("closing_note", tail)

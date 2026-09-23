@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Iterable
 from urllib.parse import unquote
 
 # (label, pattern, group-to-redact). Group 0 means "the whole match".
@@ -84,7 +83,6 @@ _PATTERNS: list[tuple[str, re.Pattern[str], int]] = [
 # base64's own URL escapes (`%2B`, `%2F`, `%3D`) join a run; `%20` and the rest
 # still split it.
 _TOKEN_RE = re.compile(r"(?:[A-Za-z0-9+/=_-]|%(?:2[BbFf]|3[Dd])){40,}")
-_HEX_RE = re.compile(r"\A[0-9a-fA-F]+\Z")
 # One word: all lower, all digits, or Capitalised. Not `OObjTXEYQHXlFd4`.
 _WORDLIKE = re.compile(r"\A(?:[a-z][a-z0-9]*|[0-9]+|[A-Z][a-z0-9]*)\Z")
 
@@ -101,15 +99,13 @@ def _shannon(s: str) -> float:
 
 def _looks_like_secret(token: str) -> bool:
     """Conservative high-entropy fallback for credentials we have no rule for."""
-    if _HEX_RE.match(token):
-        return False  # git SHAs, checksums — normalised elsewhere, not secrets
-    if any(sep in token for sep in "/-_."):
+    if any(sep in token for sep in "/-_"):
         # A name is words joined by separators; a credential is one long run of
         # entropy. Two things have to hold, and segment *length* alone is not
         # enough — a base64 blob containing a `/` splits into short pieces too,
         # which is how an earlier version of this guard let a real secret past.
         # The pieces of a name also *look* like words.
-        pieces = [x for x in re.split(r"[/\-_.]", token) if len(x) > 2]
+        pieces = [x for x in re.split(r"[/\-_]", token) if len(x) > 2]
         wordlike = sum(1 for x in pieces if _WORDLIKE.match(x))
         if (len(pieces) >= 3 and wordlike >= 0.6 * len(pieces)
                 and max(len(x) for x in pieces) < 40):
@@ -147,10 +143,6 @@ def scrub(text: str) -> str:
             _TOKEN_RE.fullmatch(r) and _looks_like_secret(r) for r in runs) else token)
 
     return _TOKEN_RE.sub(_entropy_repl, out)
-
-
-def scrub_all(values: Iterable[str]) -> list[str]:
-    return [scrub(v) for v in values]
 
 
 def scrub_obj(obj, max_chars: int = 2000):

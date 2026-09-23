@@ -297,7 +297,7 @@ class TestSanitize(unittest.TestCase):
         self.assertEqual(scrub(cmd), cmd)
 
     def test_git_sha_is_not_treated_as_secret(self):
-        sha = "a" * 40
+        sha = "11f6ad8ec52a2984abaafd7c3b516503785c2072"   # real, single-case hex
         self.assertEqual(scrub(f"git checkout {sha}"), f"git checkout {sha}")
 
     def test_an_ssh_remote_is_not_an_email_address(self):
@@ -6363,6 +6363,32 @@ class TestTranscriptExtract(TempRoot):
                  "content": f"-rw-r--r-- 1 {user} staff 10 notes.md"}]}},
         ])
         self.assertNotIn(user, json.dumps(steps))
+
+    def test_narration_is_scrubbed_before_it_is_cut(self):
+        """The builder cut each note to `_RESPONSE_CHARS` and scrubbed after, the
+        order live capture had until it was fixed: a token straddling the cut came
+        out too short for the scrubber, and its first half went into a fixture."""
+        from skillpp.capture import _RESPONSE_CHARS
+        token = "q8Zr4Lm2Xv9Kp1Wd7Ns3Hc6Yb0Tf5Jg8Rk2Ue4Ao1"
+        said = {"type": "text",
+                "text": ("/srv/app/build/" * 40)[:_RESPONSE_CHARS - 25] + token + " then more"}
+
+        def call(tid):
+            return {"type": "tool_use", "id": tid, "name": "Bash",
+                    "input": {"command": "make " + tid}}
+
+        steps = self._extract([
+            {"type": "user", "message": {"content": "first"}},
+            {"type": "assistant", "message": {"content": [said, call("t1")]}},
+            {"type": "assistant", "message": {"content": [said]}},
+            {"type": "user", "message": {"content": "second"}},
+            {"type": "assistant", "message": {"content": [call("t2")]}},
+            {"type": "assistant", "message": {"content": [said]}},
+        ])
+        work = [st for st in steps if not is_prompt(st)]
+        self.assertTrue(work[0].get("assistant_note") and work[0].get("closing_note")
+                        and work[1].get("closing_note"))
+        self.assertNotIn(token[:16], json.dumps(steps))
 
     def test_the_judge_waits_long_enough_to_answer(self):
         import skillpp.boundary as boundary
