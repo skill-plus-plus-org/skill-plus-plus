@@ -136,7 +136,7 @@ Nothing is written to the skill library without passing this gate.
 Only after approval is a `SKILL.md` generated.
 
 * **Parameterization:** Local paths (`/Users/dev/project/...`) and environment-specific values become template variables (`${PROJECT_PATH}`).
-* **Deduplication:** Each saved episode's steps, one numbered line each, are embedded and compared with every existing entry; a match at or above `SKILLPP_MATCH_FLOOR` (0.93) joins that entry rather than spawning a near-duplicate. The floor is set where wrong merges stop, not where merges are most numerous.
+* **Deduplication:** Each saved episode is embedded and compared with every existing entry of the same kind: a run with a conversation by its prompts and the openings of the replies, at `SKILLPP_MATCH_FLOOR_TURNS` (0.85); a run without one by its steps, one numbered line each, at `SKILLPP_MATCH_FLOOR` (0.93). A match at or above the floor joins that entry rather than spawning a near-duplicate. Each floor is set where wrong merges stop, not where merges are most numerous.
 * **Hierarchical composition:** Atomic sub-routines (e.g. `git-commit`) are extracted once and invoked as sub-skills by higher-level orchestrators, forming a DAG rather than a flat pile of prompts.
 
 ---
