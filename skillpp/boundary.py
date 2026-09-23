@@ -1,64 +1,29 @@
 """Did the developer start a new job here? Asked once per prompt, at session end.
 
-`segment.is_marker` answered the same question from a fixed vocabulary, and that
-vocabulary is entirely code: `git commit`, `gh pr create`, `glab mr create`.
-Work done through tools has no entry in it, so a productivity session never ends
-anything, and 9 of 24 benchmark cases hold no ending signal at all. That
-vocabulary no longer decides boundaries anywhere — it survives as the trailing
-flag's test and as the suite's stand-in judge.
-
-This asks a small local model instead, and records the verdict on the step.
-Recording rather than re-deriving is what makes the rest testable: `segment`,
-the fixtures and the tests all read a plain boolean afterwards.
-
-**It used to ask, once per tool call, whether the whole request was finished.**
-Measured across the eleven live sessions that answered 3 endings in 357 steps,
-declined a completed `git commit` it accepted in a neighbouring session, and
-missed `241955c7` entirely. `docs/research/benchmarks.md` lists what was ruled out —
-four rewordings of the definition, the tool output, the completion report, two
-other phrasings, both polarities, three context sizes. The polarity test settled
-it: 0/24 endings asking "is the request done" against 17/24 asking "is more work
-needed", same steps, same context, temperature 0. It was answering the shape of
-the question, not reading the step.
-
-So the question moved to where a boundary can actually be — a gap between two
-tool calls that a prompt landed in — and became a comparison rather than an
-assessment: here is what they asked for, here is what they just said, here is
-what they did next; is that a new job? 10/11 on the corpus at **33 calls
-instead of 357**, and it finds `241955c7` and `263d65ce` in the right places
-where the old one found only `263d65ce`.
+A local model is asked at each gap between two tool calls that a prompt landed
+in, and the question is a comparison rather than an assessment: what they asked
+for, what they just said, what they did next — is that a new job? The verdict is
+recorded on the step, so `segment`, the fixtures and the tests all read a plain
+boolean afterwards. `segment.is_marker`'s fixed vocabulary no longer decides
+boundaries; it survives as the trailing flag's test and the suite's stand-in
+judge.
 
 **Every failure is a `None`.** No local model, a timeout, an answer that is
 neither yes nor no — all return `None`, and `segment` treats `None` as "not an
 ending". A boundary detector that stops a developer's session to think is worse
 than one that misses a boundary.
 
-Measured on `gemma3n:e4b`, the default until 2026-09, warm, on this prompt:
+Two things keep each call fast, and neither may be undone:
 
-* the one-word instruction is what buys the latency: 4.42s against **0.49s**,
-  because generation length dominates, not prompt processing. The instruction in
-  `prompts/task_end.md` is load-bearing, not tidiness.
-* ~0.73s per call with the full context prompt below.
-* `think=False` costs nothing and buys nothing *here*. An earlier note in this
-  docstring claimed 11.5s unset against 4.2s with it off; re-measured warm, three
-  runs each, it is 1.10s against 1.09s — the original 11.5s was the model
-  loading. `gemma3n:e4b` has no thinking capability at all and `think=True`
-  returns HTTP 400. The flag stays because it is free and because it matters
-  enormously on a model that *can* think: `local.ask` records 113.8s against
-  0.5s on `qwen3.5:9b` for the same one-word question. The default is now
-  `gemma4:e4b`, which can think, so the flag is load-bearing.
+* the one-word answer that `prompts/new_job.md` ends by asking for, because the
+  length of what is generated, not of what is read, sets the time a call takes;
+* thinking off (`JUDGE_THINKS`): the default model, `gemma4:e4b`, can think,
+  and on a model that thinks the same one-word question takes minutes instead
+  of a second.
 
-Framings tried and rejected, on a 13-case probe:
-
-* the step alone, no goal and no span — 4/13, and every one of its correct
-  answers was a "no". It answered "no" to everything, which is exactly what
-  `docs/research/benchmarks.md` recorded the first time this was attempted.
-* the same, plus the goal and the steps behind it — also 4/13, same shape. The
-  context alone changes nothing.
-* adding what an *ending is* — 11/13. This is the whole difference.
-* adding a deterministic prior ("that step only looked things up") for the model
-  to confirm or override — 10/13, and it broke a case that had been passing.
-  Not kept; noted here so it is not tried again.
+Why the question is asked here and in this shape — the per-tool-call judge it
+replaced, the polarity test that settled it, the framings rejected since and
+what each cost — is in docs/research/benchmarks.md, "The question moved".
 """
 
 from __future__ import annotations
@@ -96,8 +61,8 @@ NEXT_STEPS = 3
 PRIOR_STEPS = 3
 
 # How much of the developer's instruction to show. It is the load-bearing slot:
-# removing it drops the corpus from 10/11 to 8/11, and `241955c7` starts cutting
-# at "Regenerate the evalset" as well as at "Separate job:".
+# without it the judge cuts at follow-up instructions as well as at real
+# switches of task.
 _PROMPT_CHARS = 400
 
 # The judge runs at session end or in `fold-pending`, never while someone waits
@@ -293,10 +258,10 @@ def build_prompt(goal: str, prior: list[str], step: dict,
     """The question, filled in. Every slot in it was measured.
 
     `{PRIOR}` falls back to "(nothing yet)" rather than rendering an empty
-    section, and that is load-bearing rather than tidiness: on `95b6bde7` a
-    blank block under the header flips the verdict from "no" to "yes" on its
-    own, because a session with nothing behind it reads as one that has not
-    started. Removing the section entirely fails the same way.
+    section, and that is load-bearing rather than tidiness: a blank block
+    under the header flips the verdict from "no" to "yes" on its own, because
+    a session with nothing behind it reads as one that has not started.
+    Removing the section entirely fails the same way.
     """
     template = (PROMPTS / "new_job.md").read_text(encoding="utf-8")
     lines = "\n".join(f"    {p}" for p in prior) or "    (nothing yet)"
@@ -399,12 +364,10 @@ def gaps(steps: list[dict]) -> list[tuple[int, list[dict], list[dict]]]:
             continue
         # *Every* prompt in the gap, not the first. A developer often sends a
         # challenge and then the instruction behind it, and the first alone can
-        # be unreadable: `1c3c9422` has "did you call MCP for this?" followed
-        # immediately by "Use the adk-docs MCP tool to look up how ADK eval
-        # cases and evalsets are structured" — a restatement of the opening
-        # request. Shown only the first, the model called it a new job and the
-        # session banked two episodes against a truth of one; shown both, it
-        # reads it as the redo it is. That was the corpus's last gap.
+        # be unreadable: a question about how the agent went about it, then a
+        # restatement of the opening request. Shown only the first, the model
+        # calls it a new job and banks two episodes where there is one; shown
+        # both, it reads it as the redo it is.
         said = [s for s in after[:nxt] if is_prompt(s)]
         if said:
             out.append((index, said,

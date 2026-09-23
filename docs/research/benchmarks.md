@@ -1334,6 +1334,31 @@ Given up: **a boundary with no prompt in the gap** — a task ending where the
 developer says nothing. No live session shows that shape, and the per-step judge
 could see it in principle, so this is a trade rather than a free win.
 
+### Framings rejected, and what a call costs
+
+Moved here from `skillpp/boundary.py`, so that it is not tried again. On a
+13-case probe of the gap question:
+
+- the step alone, with no goal and no span: 4/13, and every correct answer was a
+  "no" — it answered "no" to everything, as the first attempt at this did;
+- the same plus the goal and the steps behind it: also 4/13, same shape. The
+  context alone changes nothing;
+- adding what an *ending is*: 11/13. This is the whole difference;
+- adding a deterministic prior ("that step only looked things up") for the model
+  to confirm or override: 10/13, and it broke a case that had been passing. Not
+  kept.
+
+Latency, measured warm on `gemma3n:e4b`, the default until 2026-09:
+
+- the one-word answer instruction took a call from 4.42 s to 0.49 s, because
+  generation length dominates, not prompt processing; ~0.73 s per call with the
+  full context prompt;
+- `think=False` changed nothing on that model, which cannot think: 1.10 s
+  against 1.09 s over three runs each. An earlier 11.5 s was the model loading,
+  and `think=True` returns HTTP 400. On a model that can think, the same
+  one-word question took 113.8 s against 0.5 s (`qwen3.5:9b`, `local.ask`),
+  which is why the judge keeps thinking off on `gemma4:e4b`.
+
 ## gemma4:e4b as the judge: more to read, one input at a time
 
 Measured 21 Sep 2026 on the 21 live sessions, `tests/benchmarks/judge_replay.py`
