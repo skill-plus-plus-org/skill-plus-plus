@@ -751,7 +751,7 @@ command and after it; byte-identical results, so not a phrasing effect. The
 extra detail itself pushes the model toward "delivered".
 
 **Generated summaries as the judge's context** — 1 fixed / 6 broken, and every
-session gained episodes: desk-booking 1→4, failed-retry 1→4, long-session 1→8,
+session gained episodes: expense-report 1→4, failed-retry 1→4, long-session 1→8,
 with three losing `must_contain` steps as content scattered across fragments.
 The cause is in the summaries: each ends by tying the step to the request —
 "fulfilling the developer's request", "informing the developer's next task" —
@@ -864,7 +864,7 @@ at `_VALUE_CHARS=80`, ten sessions, `263d65ce` skipped:
 
 | session | work steps | rule ON | rule OFF |
 | --- | --- | --- | --- |
-| `1c3c9422` desk-booking | 54 | **BROKE** 0/1 | ok 1/1 |
+| `1c3c9422` expense-report | 54 | **BROKE** 0/1 | ok 1/1 |
 | `2095a8af` timesheet | 50 | **BROKE** 0/1 | ok 1/1 |
 | `a8b61dae` failed-commit-then-retry | 28 | **BROKE** 0/1 | ok 1/1 |
 | `5c7b0f81` coverage-writeup-run2 | | FIXED | FIXED |

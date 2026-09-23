@@ -804,7 +804,7 @@ class TestCapture(TempRoot):
         from skillpp.capture import _subject_of, _title_for
         heredoc = ("git add -A && git commit -m \"$(cat <<'EOF'\n"
                    "test(eval): add tutorial-card case for Expense Report\n\n"
-                   "Sibling to desk_booking_local.\nEOF\n)\"")
+                   "Sibling to expense_report_local.\nEOF\n)\"")
         steps = [bash(heredoc)]
         self.assertEqual(_subject_of(steps),
                          "add tutorial-card case for Expense Report")
@@ -1557,7 +1557,7 @@ class TestSegmentBoundaries(unittest.TestCase):
         and the session is one episode because nothing claimed it ended until
         the commit.
         """
-        steps = [self._prompt("add an eval case for the desk-booking card"),
+        steps = [self._prompt("add an eval case for the expense-report card"),
                  {"tool": "ToolSearch", "input": {}, "failed": False},
                  self._mcp("adk-docs__fetch_docs"),
                  self._prompt("now write the case"),
@@ -1569,7 +1569,7 @@ class TestSegmentBoundaries(unittest.TestCase):
                  bash("grep -n TITLES page.py"),
                  self._prompt("looks good — commit"),
                  bash("git diff --stat"),
-                 bash("git commit -m 'test(eval): add desk-booking case'")]
+                 bash("git commit -m 'test(eval): add expense-report case'")]
         episodes = segment(steps)
         self.assertEqual(len(episodes), 1)
         self.assertEqual(episodes[0].ended_by, "judged")

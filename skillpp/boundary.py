@@ -125,37 +125,20 @@ def render_step(step: dict) -> str:
     ledger entry; this renders for a model judging completion, which wants the
     verb and the intent.
 
-    **Nothing captured is dropped here.** An earlier version rendered from a
-    per-tool branch and silently discarded everything it did not name — in one
-    54-step live session that was every `Bash` step's `description` (35 of them,
-    the developer's own statement of what the command was for) and every
-    `Read`'s path, which rendered as the bare words "used Read". Capture already
-    decided what was worth keeping, and scrubbed it; a renderer that then throws
-    two thirds of it away is answering a question the model was never shown.
-
-    So the tool-specific branch consumes the keys it knows how to phrase, and
-    whatever is left is appended rather than lost.
+    **Nothing captured is dropped here, with one switch.** The tool-specific
+    branch phrases the keys it knows, and every other key is appended rather
+    than lost: capture already decided what was worth keeping, and scrubbed it.
+    The exception is a `Bash` step's `description`, which reaches the model only
+    when `SEND_DESCRIPTION` is on.
     """
     if JUDGE_READS_SUMMARY:
         did = str(step.get("summary") or "").strip()
         if did:
             return f"{did}{' — and it failed' if step.get('failed') else ''}"
 
-    # `step["summary"]` is deliberately NOT used here, and that is a
-    # measurement. Rendering the judge's context as summaries instead of raw
-    # commands took it from 3 fixed / 5 broken to 1 fixed / 6 broken on the live
-    # sessions, over-cutting every one: desk-booking 1 -> 4 episodes,
-    # failed-retry 1 -> 4, long-session 1 -> 8, and three of them lost
-    # `must_contain` steps as the content scattered.
-    #
-    # The cause is in the summaries themselves. Each ends by tying the step to
-    # the request — "fulfilling the developer's request", "informing the
-    # developer's next task" — and the judge is then asked whether the request
-    # is done while reading twenty such sentences. The phrasing that makes a
-    # summary readable is the phrasing that reads as completion.
-    #
-    # See `docs/research/benchmarks.md`. The summary stays on the step for readers and
-    # later stages; it just does not feed this prompt.
+    # `step["summary"]` feeds this only when `JUDGE_READS_SUMMARY` is on; its
+    # comment says why it is off. The summary stays on the step for readers and
+    # later stages.
     tool = str(step.get("tool") or "")
     payload = {k: v for k, v in (step.get("input") or {}).items()
                if v not in (None, "")}
@@ -410,8 +393,11 @@ _REPLY_CHARS = 1200
 SUMMARY_CHARS = 300
 
 # Whether the judge's context renders steps as their summaries instead of raw
-# commands. Off: measured 1 fixed / 6 broken against 3 fixed / 5 broken, every
-# session gaining episodes. See `docs/research/benchmarks.md`. The benchmarks flip it.
+# commands. Off. It was measured only against the old per-step question, where
+# every session gained episodes: a summary ties its step to the request, and that
+# phrasing reads as completion (docs/research/benchmarks.md, "The boundary judge:
+# nine configurations, measured"). The benchmarks flip it to measure it against
+# the current question.
 JUDGE_READS_SUMMARY = False
 
 

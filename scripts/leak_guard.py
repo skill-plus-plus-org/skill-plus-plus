@@ -49,8 +49,8 @@ SKIP = {"scripts/leak_guard.py"}
 
 def denylist(path: str | None) -> list[re.Pattern]:
     """Each term as a whole word, case-insensitive. A plain substring found
-    `timesheet` inside `TestMergeCommand`. Underscores count as a boundary, so
-    `timesheet_project` still matches."""
+    `cat` inside `concatenate`. Underscores count as a boundary, so
+    `cat_project` still matches."""
     source = path or os.environ.get("SKILLPP_DENYLIST")
     if not source:
         return []
