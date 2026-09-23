@@ -32,31 +32,14 @@ import re
 
 from .local import PROMPTS, LocalModelUnavailable, ask, yes_no
 
-# How much of the span behind the step to show. Measured on the live sessions,
-# lean rendering, everything else held: 6 steps scored 2/5, 10 scored 3/5, 20
-# scored 4/5 — and 20 is where the one multi-task session first came out right,
-# the shape that had collapsed to a single episode in every earlier run. The
-# work that finished had simply scrolled out of a 6-step window.
+# How many steps the judge sees after and before a gap. Both are windows, not
+# knobs: change one only by measuring the recorded sessions again
+# (docs/research/benchmarks.md, "The question moved").
 #
-# It buys nothing on the synthetic corpus, and that is not a contradiction:
-# every task there runs 3-4 steps, so the whole of one already fits in a 6-step
-# window and a wider one shows the model nothing new.
-#
-# Cost is bounded. The widest prompt across the live sessions is 8.5 KB, about
-# 2.1k tokens, still under `local._CTX_FLOOR` — so `num_ctx` does not grow and
-# nothing is truncated.
-# How many steps of context each slot carries. Both are windows, not knobs, and
-# both were measured across the eleven live sessions.
-#
-# `NEXT_STEPS` is the sharp one: 1 step scores 7/11, 3 scores 10/11, 5 scores
-# 8/11. One step is too little to tell two jobs apart — `find cases.json` could
-# belong to either. Five reaches far enough into the next task to echo the old
-# one, and sessions start failing again.
-#
-# `PRIOR_STEPS` at 3 beat the old 20: a long history made a late gap look like a
-# continuation whatever it said. Proved by swapping the text between an early
-# and a late gap, holding everything else — the verdict followed the position,
-# not the words.
+# `NEXT_STEPS`: one step is too few to tell two jobs apart, and five reach far
+# enough into the next task to echo the old one.
+# `PRIOR_STEPS`: a long history makes a late gap read as a continuation,
+# whatever was said in it.
 NEXT_STEPS = 3
 PRIOR_STEPS = 3
 
@@ -83,15 +66,13 @@ _VALUE_CHARS = 80
 
 # Whether the developer's own `description` of a Bash step reaches the model.
 #
-# Off, and that is a measurement rather than an opinion. On the live sessions it
-# scored 2/5 against 4/5 with it withheld, and it never fixed a session that was
-# not already right; on the synthetic corpus it changed nothing at all — 16/24
-# either way, the same cases failing. Both placements were tried, before the
-# command and after it, and they produced byte-identical results, so it is not a
-# phrasing effect: the extra detail itself pushes the model toward "delivered".
+# Off. It was measured only against the old per-step question, where it pushed
+# the model toward "done" (docs/research/benchmarks.md, "The boundary judge:
+# nine configurations, measured"). Against the current gap question it has not
+# been measured; `tests/benchmarks/judge_replay.py --describe` does that.
 #
-# Capture still stores it, and the ledger still shows it. This governs one thing
-# — what the judge is shown. The benchmarks flip it to re-measure.
+# Capture still stores it, and the ledger still shows it. This governs only what
+# the judge is shown.
 SEND_DESCRIPTION = False
 
 # Three things the judge has never been shown, each off by default so the
@@ -120,11 +101,10 @@ STEP_OUTPUT_CHARS = 0
 JUDGE_THINKS = False
 _THINK_TIMEOUT = 180.0
 _THINK_RESERVE = 4096
-# One context size for every thinking call. Sized per prompt, it differed on
-# every call, and Ollama reloads the model whenever it changes: 44 of 45 calls
-# reloaded, 311s of a 1,013s run. The largest judge prompt is ~10k characters
-# (~2.6k tokens) and the longest reasoning seen ~870 tokens, so 8,192 holds
-# both with room to spare.
+# One context size for every thinking call: Ollama reloads the model whenever
+# the size changes, so sizing it per prompt reloaded on nearly every call. 8,192
+# tokens holds the largest judge prompt and the longest reasoning seen, with room
+# to spare.
 _THINK_CTX = 8192
 
 # The section showing what the assistant did after the developer spoke. With
@@ -413,11 +393,10 @@ def judge_session(config, session: dict) -> int:
 # other context, it started rewriting the document.
 _DESCRIBE_CHARS = 700
 
-# How much of the tool's reply the describer sees. This was 220 and the number
-# was a guess. Measured on a real `grep` whose reply ran 4,623 characters, with
-# nothing else changed: at 220 the description was "identified relevant Python
-# files using grep" and named nothing; at 1200 it was "located relevant code in
-# `cards.py` and `skillset.py`", which is the answer.
+# How much of the tool's reply the describer sees. A reply's paths, matches and
+# counts are what let a description name what the step found: cut to a couple of
+# hundred characters, a `grep` over a long result is described as having
+# searched files, and names none of them.
 #
 # It does not have the failure mode raw file *content* has, where more input made
 # the model continue the document instead of describing the step. Command output

@@ -48,8 +48,8 @@ from .summary import clip_title
 # stays, and it needs the path to be recognised.
 #
 # A step that keeps only a path cannot be described. Asked what the `Write` that
-# produced COVERAGE.md did, a model shown `{"file_path": ".../COVERAGE.md"}`
-# answered "Analyze the existing coverage report" — it wrote one. Every field
+# produced a report did, a model shown `{"file_path": ".../REPORT.md"}` answered
+# "Analyze the existing report" — the step wrote it. Every field
 # here is bounded by `max_field_chars`, so widening it costs length, not shape.
 _KEEP_INPUT = {
     "Bash": ("command", "description"),
