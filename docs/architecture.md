@@ -16,7 +16,7 @@ Claude Code session
   ▼
 fold_session_now                               capture, one lock per session
   ├─ boundary.judge_session                    the local model, once per prompt gap:
-  │                                            "is that a new job?"
+  │                                            "does the new message start a new task?"
   ├─ segment.segment                           cut at the judged boundaries
   ├─ capture._fold_steps                       drop thin episodes, keep the work
   ├─ matching.find_same                        embed and compare with every entry

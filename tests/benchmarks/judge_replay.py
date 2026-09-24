@@ -160,11 +160,17 @@ def save_verdicts(doc: dict, judged: dict, config: Config, boundary) -> None:
             stored.pop("end", None)
         if replayed.get("summary"):
             stored["summary"] = replayed["summary"]
+    template = (boundary.PROMPTS / "new_job.md").read_bytes()
     on_disk["judged"] = {
         "model": config.local_model,
+        # Which question: verdicts from another wording are a different
+        # measurement, and without this they look the same on disk.
+        "question": __import__("hashlib").sha256(template).hexdigest()[:12],
         "prior_steps": boundary.PRIOR_STEPS,
         "next_steps": boundary.NEXT_STEPS,
         "value_chars": boundary._VALUE_CHARS,
+        "prompt_chars": boundary._PROMPT_CHARS,
+        "reply_before": boundary.REPLY_BEFORE_CHARS,
         "send_description": boundary.SEND_DESCRIPTION,
         "endings": sum(1 for s in judged["steps"] if s.get("end") is True),
         "answered": judged.get("_answered", 0),

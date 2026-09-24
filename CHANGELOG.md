@@ -30,6 +30,15 @@ The first public release.
   `install` replaces hooks written under the old name. Settings still named
   `SKILLPP_*` are no longer read. The product is called Skill++ in the docs and
   on the review page; everything you type keeps `skill-plus-plus`.
+- The judge that cuts a session into tasks asks a new question. It reads named
+  sections (the earlier task, the new message, what the assistant did after it)
+  and a definition of what counts as a new task, and asks whether the new
+  message starts a new task, separate from the earlier one. It now cuts the
+  code sessions it used to leave whole: an announced switch, an unannounced
+  one, and a second feature of the same kind. No new false cut in 143 places
+  across the public, private and holdout sessions
+  ([docs/research/benchmarks.md](docs/research/benchmarks.md), "The question
+  restructured").
 - A candidate at the recurrence threshold that nobody promotes expires like
   any other, `SKILL_PLUS_PLUS_TTL_DAYS` after it was last recognized.
 - Installable with `pipx`, with a `skill-plus-plus` console script; an installed copy

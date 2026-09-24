@@ -46,7 +46,7 @@
     ]
   },
   "why": "Recorded from catalogue.json (C-3, code, cli), truth fixed before recording. Three tasks, one switch announced and one not. New tasks start at prompt(s) 5, 9.",
-  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "history": "Recorded 2026-09-22 for the public catalogue.\n\nKnown gap until then: gemma4:e4b (2026-09-22) cuts at the announced switch (prompt 5) but not at prompt 9, the unannounced switch to refactoring wordfreq, so the Makefile and the refactor bank as one episode.\n\nCLOSED 2026-09-24 by the sectioned question: gemma4:e4b, asked whether the new message starts a new task, separate from the earlier task, cuts here (docs/research/benchmarks.md, \"The question restructured\").",
   "shape": {
     "steps": 24,
     "prompts": 12,
@@ -320,7 +320,7 @@
       "serves": 8,
       "tool_returned": "[master eb5ca0c] Add Makefile with test, clean, help targets 1 file changed, 16 insertions(+) create mode 100644 Makefile On branch master Changes not staged for commit: (use \"git add/rm <file>...\" to update what will be committed) (use \"git restore <file>...\" to discard changes in working directory) deleted: textkit/__pycache__/__init__.cpython-314.pyc deleted: textkit/__pycache__/slugify.cpython",
       "closing_note": "Committed `eb5ca0c`. **Heads up:** `make clean` deleted 4 `__pycache__/*.pyc` files that were tracked in `097e890 Initial textkit` — now showing as unstaged deletions. Options: (1) commit deletions + add `.gitignore` for `__pycache__/`, (2) restore them. Recommend (1). Want me to do it?",
-      "end": false
+      "end": true
     },
     {
       "tool": "UserPrompt",
@@ -427,13 +427,15 @@
   ],
   "judged": {
     "model": "gemma4:e4b",
+    "question": "6b453520d07d",
     "prior_steps": 3,
     "next_steps": 3,
     "value_chars": 80,
+    "prompt_chars": -1,
+    "reply_before": 0,
     "send_description": false,
-    "endings": 1,
+    "endings": 2,
     "answered": 10,
-    "replayed": "2026-09-22"
-  },
-  "expected_fail": "gemma4:e4b (2026-09-22) cuts at the announced switch (prompt 5) but not at prompt 9, the unannounced switch to refactoring wordfreq, so the Makefile and the refactor bank as one episode."
+    "replayed": "2026-09-24"
+  }
 }

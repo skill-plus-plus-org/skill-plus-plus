@@ -207,12 +207,15 @@
   ],
   "judged": {
     "model": "gemma4:e4b",
+    "question": "6b453520d07d",
     "prior_steps": 3,
     "next_steps": 3,
     "value_chars": 80,
+    "prompt_chars": -1,
+    "reply_before": 0,
     "send_description": false,
     "endings": 0,
     "answered": 3,
-    "replayed": "2026-09-22"
+    "replayed": "2026-09-24"
   }
 }
