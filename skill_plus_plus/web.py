@@ -1102,7 +1102,7 @@ def serve(config: Config, skills_dir: Path | None = None, port: int = 8765,
 PAGE = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>skill-plus-plus</title>
+<title>Skill++</title>
 <style>
  :root{--bg:#0c0d10;--panel:#12141a;--surface:#171922;--line:#262935;
    --fg:#eceef2;--dim:#9da3b4;--muted:#63697a;
@@ -1320,7 +1320,7 @@ PAGE = r"""<!doctype html>
    color:var(--dim);border:1px solid var(--line);white-space:nowrap}
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
 </style></head><body>
-<header><span style="display:flex;align-items:center;gap:18px"><b>skill-plus-plus</b>
+<header><span style="display:flex;align-items:center;gap:18px"><b>Skill++</b>
 <select id="project" aria-label="Project" hidden></select>
 <nav id="nav"></nav></span><span id="where"></span></header>
 <main id="list"></main>
@@ -1842,7 +1842,7 @@ function paint(){
   list.innerHTML = `
     ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>Candidates you promoted. Draft a skill from them; the draft appears in the Drafts tab.</span></div>
     ${promoted.map(card).join("")}` : ""}
-    <div class="section"><h2>Still collecting</h2><span>Work skill-plus-plus saw you repeat. Once something is seen ${S.threshold}×, you can promote or dismiss it.</span></div>
+    <div class="section"><h2>Still collecting</h2><span>Work Skill++ saw you repeat. Once something is seen ${S.threshold}×, you can promote or dismiss it.</span></div>
     ${ready.length + collecting.length ? `<div class="collecting">
       <div class="thead"><span class="chev"></span><span class="title">Title</span>
         <span class="acts"></span><span class="clock">Time to expire</span><span class="count">Count</span></div>
