@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,9 @@ dynamic = ["version"]
 description = "Spot the work you keep repeating with Claude Code, and turn it into skills you review."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Luca Zagaia" }, { name = "Himanshu Yadav" }]
 # Standard library only, at runtime and in the tests.
 dependencies = []
 keywords = ["claude-code", "agent-skills", "skills", "ollama", "developer-tools"]
@@ -16,11 +18,14 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development",
 ]
 
@@ -30,14 +35,19 @@ skill-plus-plus = "skill_plus_plus.cli:main"
 [project.urls]
 Repository = "https://github.com/himanshu096/skill-plus-plus"
 Issues = "https://github.com/himanshu096/skill-plus-plus/issues"
+Changelog = "https://github.com/himanshu096/skill-plus-plus/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/himanshu096/skill-plus-plus/blob/main/docs/usage.md"
 
 [tool.setuptools]
-packages = ["skill_plus_plus"]
+# The two folders hold only Markdown, but Python can import them, so setuptools
+# wants them named; left out, a later setuptools drops them from the package.
+packages = ["skill_plus_plus", "skill_plus_plus.commands", "skill_plus_plus.prompts"]
 
 [tool.setuptools.package-data]
 # The prompts the local model is asked, and the slash commands `install` copies
 # and `draft` hands to its agent. Without them an installed copy cannot run.
-skill_plus_plus = ["prompts/*.md", "commands/*.md"]
+"skill_plus_plus.commands" = ["*.md"]
+"skill_plus_plus.prompts" = ["*.md"]
 
 [tool.setuptools.dynamic]
 version = { attr = "skill_plus_plus.__version__" }

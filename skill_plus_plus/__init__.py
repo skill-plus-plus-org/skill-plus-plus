@@ -1,4 +1,4 @@
-"""Skill Plus Plus — capture workflows passively, promote them deliberately.
+"""Skill++ — capture workflows passively, promote them deliberately.
 
 The engine does the deterministic work: capture, scrub, deduplicate, detect
 gaps, summarise effects, manage lifecycle. The judgement work — writing the

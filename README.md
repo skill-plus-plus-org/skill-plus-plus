@@ -9,8 +9,6 @@
 
 **Detection runs on your machine and costs nothing. Your agent writes a skill only when you ask.**
 
-<!-- VIDEO/GIF: the review page, candidate → Promote → Draft Skill → answer a question → Install; at most 880 px wide -->
-
 https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT license"></a>
@@ -126,7 +124,7 @@ You need macOS or Linux, Python 3.10+, [Claude Code](https://docs.anthropic.com/
 logged in, and [Ollama](https://ollama.com) running (`brew install ollama` on a Mac).
 
 ```bash
-pipx install git+https://github.com/himanshu096/skill-plus-plus
+pipx install skill-plus-plus
 skill-plus-plus install --project ~/code/my-repo --apply   # hooks, slash commands and the two local models
 skill-plus-plus doctor                                     # everything green?
 ```
@@ -146,6 +144,8 @@ new Code session in the desktop app) and work as usual.
   10 GB of free memory. `--no-models` leaves Ollama alone.
 - `skill-plus-plus install --project ~/code/my-repo --remove --apply` takes the hooks
   and slash commands out again.
+- The latest `main`, before it is released:
+  `pipx install git+https://github.com/himanshu096/skill-plus-plus`.
 - From a clone: `pip install -e .`, or run `python3 bin/skill-plus-plus` without
   installing anything.
 
@@ -272,6 +272,13 @@ model needed, about ten seconds) and measure a change.
 ## 📜 License
 
 [MIT](LICENSE).
+
+## 🏠 Where it was made
+
+<p align="center">
+  <img src="docs/images/headquarters.jpg" width="360" alt="A small glass meeting pod with two benches and a table: the Skill++ headquarters">
+</p>
+<p align="center"><sub>Skill++ headquarters: one meeting pod, where it all started.</sub></p>
 
 ---
 

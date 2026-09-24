@@ -420,9 +420,9 @@ def scaffold_skill(
     lines += [
         "---",
         "",
-        (f"_Described by the developer and scaffolded by Skill Plus Plus. "
+        (f"_Described by the developer and scaffolded by Skill++. "
          f"Tier: {tier}._" if dictated else
-         f"_Captured by Skill Plus Plus from {entry.occurrences} observed "
+         f"_Captured by Skill++ from {entry.occurrences} observed "
          f"occurrence(s). Tier: {tier}._"),
         "",
     ]

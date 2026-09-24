@@ -5515,6 +5515,33 @@ Someone asks for slides drawn from a document they point at.
         self.assertIn("G10", self._failed(self.GOOD + "\n## Open questions\n\n- The limit is unclear.\n"))
 
 
+class TestPypiReadme(unittest.TestCase):
+    """PyPI shows the README from the release build, where a relative path
+    resolves against pypi.org; `scripts/pypi_readme.py` makes them absolute."""
+
+    def setUp(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        import pypi_readme
+        self.readme = pypi_readme
+
+    def test_relative_targets_become_absolute_and_nothing_else_moves(self):
+        text = ('<img src="docs/images/a.svg"> <source srcset="./docs/images/b.svg">\n'
+                '<a href="LICENSE">l</a> [usage](docs/usage.md) [log](docs/research/)\n'
+                '![pod](docs/images/pod.jpg) [top](#-quick-start) [ext](https://example.com/x)\n')
+        out = self.readme.absolute(text)
+        raw, blob, tree = self.readme.RAW, self.readme.BLOB, self.readme.TREE
+        for target in (f'src="{raw}docs/images/a.svg"', f'srcset="{raw}docs/images/b.svg"',
+                       f'href="{blob}LICENSE"', f"]({blob}docs/usage.md)",
+                       f"]({tree}docs/research/)", f"]({raw}docs/images/pod.jpg)",
+                       "](#-quick-start)", "](https://example.com/x)"):
+            self.assertIn(target, out)
+
+    def test_the_real_readme_keeps_no_relative_target(self):
+        out = self.readme.absolute(self.readme.README.read_text(encoding="utf-8"))
+        left = re.findall(r'(?:src|srcset|href)="(?![a-z]+:|#|/)[^"]+"|\]\((?![a-z]+:|#|/)[^)]+\)', out)
+        self.assertEqual(left, [])
+
+
 class TestNothingPrivateIsTracked(unittest.TestCase):
     """Everything tracked here is published. Real sessions once carried a
     colleague's name, an internal hostname and an account id into the repo;
@@ -5541,6 +5568,17 @@ class TestNothingPrivateIsTracked(unittest.TestCase):
              re.compile(r"(?<![A-Za-z0-9])command(?![A-Za-z0-9])", re.I)])
         kinds = [hit.split(": ")[1] for hit in hits]
         self.assertEqual(kinds, ["home path", "email", "uuid", "secret", "denylist"])
+
+    def test_a_github_asset_link_is_not_a_session_id(self):
+        """The README's video is a GitHub upload whose link ends in a UUID; that
+        names a public file, not a session, and it turned `main`'s CI red."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        import leak_guard
+        uid = "-".join(["12345678", "90ab", "cdef", "1234", "567890abcdef"])
+        hits = leak_guard.scan_text("x", "\n".join([
+            "https://github.com/user-attachments/assets/" + uid, "session " + uid]), [])
+        self.assertEqual([hit.split(": ")[1] for hit in hits], ["uuid"])
+        self.assertTrue(hits[0].startswith("x:2:"), "the bare id is still found")
 
     def test_a_recorded_session_cannot_keep_half_a_home_path(self):
         """The fixture builder cut each field to 2,000 characters before

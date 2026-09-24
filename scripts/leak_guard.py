@@ -38,6 +38,9 @@ EMAIL_ALLOWED = re.compile(
     r"users\.noreply\.github\.com|3\.14)$", re.IGNORECASE)
 UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
                   re.IGNORECASE)
+# A file uploaded to GitHub, such as the README's video, is linked by a UUID
+# that names the file, not a session.
+UUID_ALLOWED_AFTER = "github.com/user-attachments/assets/"
 SECRET = re.compile(r"ghp_[A-Za-z0-9]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{32,}"
                     r"|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}")
 # The fake credentials the scrubber's own tests and the demo are built around.
@@ -72,7 +75,8 @@ def scan_text(where: str, text: str, terms: list[re.Pattern],
             found += [("home path", m.group()) for m in HOME_PATH.finditer(line)]
             found += [("email", m.group()) for m in EMAIL.finditer(line)
                       if not EMAIL_ALLOWED.search(m.group())]
-            found += [("uuid", m.group()) for m in UUID.finditer(line)]
+            found += [("uuid", m.group()) for m in UUID.finditer(line)
+                      if not line[:m.start()].endswith(UUID_ALLOWED_AFTER)]
             found += [("secret", m.group()) for m in SECRET.finditer(line)
                       if m.group() not in SECRET_ALLOWED]
         found += [("denylist", m.group()) for term in terms for m in term.finditer(line)]
