@@ -119,11 +119,11 @@ def row_state(config: Config, entry) -> dict:
                      if ".revisions" not in p.parts)
     if status.get("state") == "running":
         if fresh:
-            return {"state": "creating"}
+            return {"state": "creating", "since": status.get("started")}
         return {"state": "failed", "message": "the server restarted while the draft ran"
                 if orphaned else "the draft run did not finish"}
     if drafted and status.get("state") == "revising" and fresh:
-        return {"state": "revising", "path": str(drafted[0])}
+        return {"state": "revising", "path": str(drafted[0]), "since": status.get("started")}
     if drafted:
         stale = status.get("state") == "revising"
         message = ("the server restarted while the revision ran" if stale and orphaned else
@@ -650,6 +650,7 @@ def list_drafts(config: Config) -> list[dict]:
             "files": [str(p.relative_to(_draft_dir(config, entry.id)))
                       for p in _draft_files(config, entry.id)],
             "revising": state["state"] == "revising",
+            "since": state.get("since"),
             "message": state.get("message", ""),
             "downloaded_at": _downloaded_at(config, entry.id, skill_md),
             # When SKILL.md was last written, by the draft or a revision. Drafts
@@ -1142,6 +1143,24 @@ PAGE = r"""<!doctype html>
    border:2px solid var(--line);border-top-color:var(--go);animation:s 1s linear infinite;
    vertical-align:-1px}
  @keyframes s{to{transform:rotate(360deg)}}
+ /* An agent at work on this card: the notice stays in view, the draft it is
+    replacing is blurred, and a bar sweeps along the card's top edge. */
+ .busy{position:relative;overflow:hidden}
+ .busy::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;z-index:6;
+   background:linear-gradient(90deg,transparent,var(--go),transparent);background-size:50% 100%;
+   background-repeat:no-repeat;animation:sweep 1.3s ease-in-out infinite}
+ @keyframes sweep{from{background-position:-50% 0}to{background-position:150% 0}}
+ .busy .body > :not(.working){filter:blur(3px);opacity:.35;pointer-events:none;user-select:none;
+   transition:filter .3s,opacity .3s}
+ .working{position:sticky;top:12px;z-index:5;display:flex;align-items:center;gap:14px;margin:0 0 14px;
+   padding:14px 16px;border:1px solid color-mix(in srgb,var(--go) 45%,transparent);border-radius:10px;
+   background:color-mix(in srgb,var(--panel) 92%,transparent);backdrop-filter:blur(4px)}
+ .working .ring{flex:none;width:22px;height:22px;border-radius:50%;
+   border:2.5px solid color-mix(in srgb,var(--go) 25%,transparent);border-top-color:var(--go);
+   animation:s .8s linear infinite}
+ .working b{display:block;font-size:14px;color:var(--fg);margin-bottom:2px}
+ .working .working-note{display:block;font-size:12px;color:var(--dim)}
+ .working .elapsed{margin-left:auto;font:12px var(--mono);color:var(--dim)}
  .empty{color:var(--muted);padding:32px 0;text-align:center}
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
  .cand.ready{border-left:3px solid #fbbf24;background:linear-gradient(90deg,rgba(251,191,36,.07),var(--panel) 40%)}
@@ -1523,6 +1542,18 @@ function md(src){
   return head + out.join("\n");
 }
 
+const elapsed = since => {
+  const t = Math.max(0, Date.now() / 1000 - Number(since));
+  return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+};
+function working(title, note, since){
+  return `<div class="working"><span class="ring"></span><div><b>${title}</b><span class="working-note">${note}</span></div>
+    ${since ? `<span class="elapsed" data-since="${since}">${elapsed(since)}</span>` : ""}</div>`;
+}
+// Every running notice counts up on its own; the page polls the server only every few seconds.
+if (typeof document !== "undefined") setInterval(() => document.querySelectorAll("[data-since]")
+  .forEach(el => { el.textContent = elapsed(el.dataset.since); }), 1000);
+
 function questionsBlock(d){
   if(!d.questions.length || d.revising) return "";
   const id = esc(d.id), given = answers[d.id] || {};
@@ -1548,7 +1579,7 @@ function questionsBlock(d){
 function reviseBlock(d){
   const id = esc(d.id);
   const err = d.message ? `<p class="err">Last revision: ${esc(d.message)}</p>` : "";
-  if(d.revising) return `<div class="revise"><span class="state"><span class="spin"></span>Revising… the draft below updates when the agent is done</span></div>`;
+  if(d.revising) return "";   // the notice at the top of the card says it
   if(!writing.has(d.id)) return `<div class="revise">${err}<button class="create" data-revise-open="${id}">Revise</button></div>`;
   return `<div class="revise">${err}
     <textarea data-instruction="${id}" placeholder="What should change? e.g. cover the case where the file does not exist yet">${esc(drafts[d.id] || "")}</textarea>
@@ -1568,12 +1599,12 @@ function renderDrafts(list){
       + `<button data-install="${esc(d.id)}" data-target="personal" title="Into ~/.claude/skills/, only for you">${d.project_name ? "Just for me" : "Install for me"}</button>`
       + `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">Download</a>`;
   const kind = d => d.installed ? "installed" : d.downloaded_at ? "downloaded" : "review";
-  const card = d => `<div class="draft ${kind(d)} ${open.has(d.id)?"open":""} ${isNew(d)?"fresh":""}">
+  const card = d => `<div class="draft ${kind(d)} ${open.has(d.id) || d.revising ? "open" : ""} ${d.revising ? "busy" : ""} ${isNew(d)?"fresh":""}">
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
         ${isNew(d) ? `<span class="new" title="Written since you last opened it">New</span>` : ""}
-        <span class="ago" title="${esc(when(d.drafted_at))}">${d.revising ? "revising" : "drafted " + ago(d.drafted_at)}</span>
+        <span class="ago" title="${esc(when(d.drafted_at))}">${d.revising ? `<span class="spin"></span>Revising…` : "drafted " + ago(d.drafted_at)}</span>
         <span class="badge ${kind(d)}">${{installed: "Installed", downloaded: "Downloaded", review: "To review"}[kind(d)]}</span>
         <span class="acts">${d.questions.length
           ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
@@ -1581,6 +1612,7 @@ function renderDrafts(list){
       </div>
       <p class="desc">${esc(d.description)}</p>
       <div class="body">
+        ${d.revising ? working("Revising the skill", "The agent is working your answers into the draft. It updates here when it is done.", d.since) : ""}
         <p class="files">${d.files.map(esc).join(" · ")}</p>
         ${questionsBlock(d)}
         <div class="md">${md(d.body)}</div>
@@ -1791,7 +1823,7 @@ function paint(){
     : ["drafted", "revising", "installed"].includes(r.state) ? "drafted"
     : ["undecided", "collecting"].includes(r.state) ? (r.ready ? "ready" : "")
     : "accepted";
-  const card = r => `<div class="cand ${highlight(r)} ${openRows.has(r.id)?"open":""}" title="${
+  const card = r => `<div class="cand ${highlight(r)} ${openRows.has(r.id) || r.state === "creating" ? "open" : ""} ${r.state === "creating" ? "busy" : ""}" title="${
     {ready: `${S.threshold}× reached: ready to decide`, accepted: "promoted", drafted: "drafted", declined: "dismissed"}[highlight(r)] || ""}">
       <div class="row" data-row="${esc(r.id)}">
       <span class="chev">›</span>
@@ -1802,7 +1834,7 @@ function paint(){
         title="Deleted by skill-plus-plus expire ${S.ttl} days after it was last recognized, unless you promote it first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
       <span class="seen count ${r.occurrences >= S.threshold ? "reached" : ""}" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
       ${noteBlock(r)}
-      <div class="body">${candidateBody(r)}</div></div>`;
+      <div class="body">${r.state === "creating" ? working("Writing the skill", "The agent reads the first run and drafts the skill. It appears under Drafts when it is done.", r.since) : ""}${candidateBody(r)}</div></div>`;
   const declined = S.rows.filter(r => r.state === "dismissed");
   const promoted = S.rows.filter(r => !["undecided", "collecting", "dismissed"].includes(r.state) && !inDrafts(r));
   const open_ = S.rows.filter(r => ["undecided", "collecting"].includes(r.state));
