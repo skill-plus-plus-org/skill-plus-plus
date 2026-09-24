@@ -703,7 +703,7 @@ def _spawn_background_process(config: Config, *argv: str):
     import subprocess
     package_root = Path(__file__).resolve().parent.parent
     return subprocess.Popen(
-        [sys.executable, "-m", "skill-plus-plus", "--root", str(config.root), *argv],
+        [sys.executable, "-m", "skill_plus_plus", "--root", str(config.root), *argv],
         cwd=str(package_root),
         env={**os.environ, "PYTHONPATH": str(package_root)},
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,

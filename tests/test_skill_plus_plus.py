@@ -671,6 +671,22 @@ class TestRootFromBeforeTheRename(unittest.TestCase):
         Config()
         self.assertTrue(self.old.exists(), "both exist: nothing is moved or merged")
 
+    def test_an_entry_written_before_the_rename_still_reads(self):
+        text = Entry(id="abc123", title="run the tests", occurrences=3).to_markdown()
+        old = text.replace("<!-- skill-plus-plus:data", "<!-- skillpp:data")
+        self.assertNotEqual(old, text)
+        entry = Entry.from_markdown(old)
+        self.assertEqual((entry.id, entry.occurrences), ("abc123", 3))
+
+
+class TestBackgroundProcess(TempRoot):
+    def test_a_detached_command_starts_the_package(self):
+        """What SessionEnd spawns runs with its output discarded, so a module
+        name that does not import fails where nobody can see it."""
+        from skill_plus_plus.cli import _spawn_background_process
+        proc = _spawn_background_process(self.config, "--version")
+        self.assertEqual(proc.wait(timeout=30), 0)
+
 
 class TestLedger(TempRoot):
     def test_roundtrip_preserves_everything(self):

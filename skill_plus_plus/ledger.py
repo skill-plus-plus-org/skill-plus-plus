@@ -20,7 +20,8 @@ from typing import Any, Iterator
 
 from .config import Config
 
-_DATA_RE = re.compile(r"<!--\s*skill-plus-plus:data\s*\n(.*?)\n-->", re.DOTALL)
+# `skillpp:data` is how entries were written before the rename; they still read.
+_DATA_RE = re.compile(r"<!--\s*(?:skill-plus-plus|skillpp):data\s*\n(.*?)\n-->", re.DOTALL)
 
 STATUS_CANDIDATE = "candidate"
 STATUS_PROMOTED = "promoted"
