@@ -2162,6 +2162,24 @@ class TestNarrationIsAttributedToTheRightStep(TempRoot):
         self.assertEqual(closes_previous, "Scan done. All 4 resolve to keys.")
         self.assertEqual(lead_in, "starting on that now")
 
+    def test_a_reply_with_no_tool_call_is_not_the_previous_steps_report(self):
+        """A request answered in words alone sits between two prompts. Its reply
+        is that request's, not a report on the step before it: filed there, it
+        named a later request than the step's own lead-in, and the review page
+        could no longer place any step under its request."""
+        from skill_plus_plus.capture import _narration
+        payload = self._transcript([
+            self._assistant(self._call()),
+            self._assistant(self._text("Two bullets are not backed.")),
+            self._prompt_row("Fix those."),
+            self._assistant(self._text("Revised outline, five slides.")),
+            self._prompt_row("Approved. Build it."),
+            self._assistant(self._text("Building now."), self._call()),
+        ])
+        lead_in, closes_previous = _narration(payload)
+        self.assertEqual(closes_previous, "Two bullets are not backed.")
+        self.assertEqual(lead_in, "Building now.")
+
     def test_the_report_lands_on_the_step_it_describes(self):
         """End to end through the hook, not just the parser."""
         from skill_plus_plus.capture import handle_prompt, handle_tool
@@ -6145,6 +6163,27 @@ class TestStepGroups(unittest.TestCase):
         self.assertEqual([d["text"] for d in add["digest"]], ["Edit cases.json", "Validate JSON"])
         self.assertEqual(add["looks"], 2)
         self.assertEqual(groups[0]["lines"][0]["text"], "adk-docs: fetch docs")
+
+    def test_a_misfiled_closing_note_does_not_undo_the_lead_ins(self):
+        """Captured before `_narration` stopped at the first prompt: a request
+        answered in words alone had its reply filed as the previous step's
+        report, one request too late. The lead-ins, said before each call,
+        cannot be misfiled that way, and they agree."""
+        from skill_plus_plus.web import step_groups
+        entry = self._entry(
+            [("prepare the review", "Here is the proposed outline, six slides."),
+             ("check every bullet", "Let me verify the merged pull requests first. Two bullets are not backed."),
+             ("fix those", "Revised outline, five slides, all backed."),
+             ("build it", "Let me inspect the template layouts before writing. Built.")],
+            [self._step(1, closing="Here is the proposed outline, six slides."),
+             {**self._step(2, "mcp__github__list_pull_requests",
+                           closing="Revised outline, five slides, all backed."),
+              "assistant_note": "Let me verify the merged pull requests first."},
+             {**self._step(4, command="python3 build.py"),
+              "assistant_note": "Let me inspect the template layouts before writing."}])
+        groups = step_groups(entry)
+        self.assertIsNotNone(groups)
+        self.assertEqual([g["tools"] for g in groups], [1, 1, 0, 1])
 
     def test_steps_that_cannot_be_placed_for_certain_keep_the_flat_list(self):
         """A list shifted under the wrong requests reads worse than a flat one."""

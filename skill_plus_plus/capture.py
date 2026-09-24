@@ -246,8 +246,11 @@ def _narration(payload: dict) -> tuple[str, str]:
     before_last_call: list[str] = []
     # Text that was already closed off by a prompt before this call ran. Held
     # separately so it can be attributed backwards rather than to this step.
+    # Only the first prompt after a call closes its report: a request answered
+    # in words alone, with no call of its own, is that request's reply.
     closing: list[str] = []
     closes_previous: list[str] = []
+    reported = False
     for row in _transcript_rows(payload.get("transcript_path"), _TRANSCRIPT_TAIL):
         message = row.get("message") or {}
         # A real prompt, not an envelope the harness injected. Everything said
@@ -255,7 +258,9 @@ def _narration(payload: dict) -> tuple[str, str]:
         if row.get("type") == "user" and isinstance(message.get("content"), str):
             text = message["content"].strip()
             if text and not text.startswith(_ENVELOPE_PREFIXES):
-                closing, pending = pending, []
+                if not reported:
+                    closing, reported = pending, True
+                pending = []
             continue
         if row.get("type") != "assistant" or not isinstance(
                 message.get("content"), list):
@@ -276,7 +281,7 @@ def _narration(payload: dict) -> tuple[str, str]:
                 # text back; by the second, the hook for the first has already
                 # attributed it. Captured before clearing, because this call may
                 # be the last one in the window and is the one being reported.
-                closes_previous, closing = closing, []
+                closes_previous, closing, reported = closing, [], False
     return _clip(before_last_call), _clip(closes_previous)
 
 

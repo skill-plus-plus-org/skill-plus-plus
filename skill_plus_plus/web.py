@@ -219,6 +219,11 @@ def _placement(entry) -> list[int] | None:
     agent's words: what it said while serving a request is part of that
     request's reply. Every anchor must agree, or nothing is placed: steps
     shifted under the wrong requests would read worse than the flat list.
+
+    The lead-ins, said before a call, decide when there are any. A closing
+    note captured before `capture._narration` stopped at the first prompt can
+    carry the next request's reply when that request made no call of its own,
+    and a lead-in cannot be misfiled that way.
     """
     turns, steps = entry.turns or [], entry.steps or []
     if not turns or not steps:
@@ -233,16 +238,17 @@ def _placement(entry) -> list[int] | None:
         return None
     cwd = (entry.projects or [None])[0]
     replies = [_squash(turn.get("reply")) for turn in turns]
-    offsets = set()
+    offsets: dict[str, set[int]] = {"assistant_note": set(), "closing_note": set()}
     for step, number in zip(steps, serves):
-        for said in (step.get("assistant_note"), step.get("closing_note")):
+        for key, found in offsets.items():
             # Parameterised as the reply was, so a path in it still matches.
-            anchor = _squash(parameterize(str(said or ""), cwd))[:60]
+            anchor = _squash(parameterize(str(step.get(key) or ""), cwd))[:60]
             if len(anchor) < 12:
                 continue
             hits = [i for i, reply in enumerate(replies) if anchor in reply]
             if len(hits) == 1:
-                offsets.add(hits[0] - number)
+                found.add(hits[0] - number)
+    offsets = offsets["assistant_note"] or offsets["closing_note"]
     if len(offsets) != 1:
         return None
     offset = offsets.pop()
