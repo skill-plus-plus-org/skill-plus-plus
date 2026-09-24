@@ -1,14 +1,14 @@
-# Skill Plus Plus — the design
+# Skill++ — the design
 
 > This is the design document the project started from. Parts of it describe
 > plans that were changed or never built, and some numbers are from before
-> later measurements. For how skill-plus-plus works today, read the
+> later measurements. For how Skill++ works today, read the
 > [README](../README.md), [usage.md](usage.md) and
 > [architecture.md](architecture.md); the measurements are in
 > [research/](research/). Code comments cite its sections as
 > `docs/design.md §N`.
 
-**Skill Plus Plus** is a background-observing knowledge engine for developers and technical teams. It watches how work actually gets done, keeps a searchable **ledger** of candidate workflows, and — only on explicit human approval — promotes them into modular, enterprise-ready `SKILL.md` files.
+**Skill++** is a background-observing knowledge engine for developers and technical teams. It watches how work actually gets done, keeps a searchable **ledger** of candidate workflows, and — only on explicit human approval — promotes them into modular, enterprise-ready `SKILL.md` files.
 
 Capture is passive. Promotion is always deliberate.
 
@@ -143,7 +143,7 @@ Only after approval is a `SKILL.md` generated.
 
 ## 4. Clarification at Approval
 
-A trace records what happened, not why. The missing half — the diagnosis behind a retry, the rule behind a parameter, the check that happened in a browser — lives only in the developer's head, and approval is the one moment they are already looking at the workflow. Skill Plus Plus uses that moment to close the gap.
+A trace records what happened, not why. The missing half — the diagnosis behind a retry, the rule behind a parameter, the check that happened in a browser — lives only in the developer's head, and approval is the one moment they are already looking at the workflow. Skill++ uses that moment to close the gap.
 
 It is not a questionnaire. A fixed set of questions gets skipped by the third proposal. Instead **the ambiguity in the trace generates the question**, which means a clean candidate asks nothing and a messy one asks precisely about the part that is messy.
 
@@ -200,7 +200,7 @@ On a clean candidate that is often zero questions. When it is three, all three a
 
 ## 5. Output Formats
 
-A `SKILL.md` is an instruction file, not a tool definition. It cannot declare a tool or provision an MCP server. Skill Plus Plus therefore emits along three tracks:
+A `SKILL.md` is an instruction file, not a tool definition. It cannot declare a tool or provision an MCP server. Skill++ therefore emits along three tracks:
 
 | Captured pattern | Emitted as | Why |
 | --- | --- | --- |
@@ -208,7 +208,7 @@ A `SKILL.md` is an instruction file, not a tool definition. It cannot declare a 
 | Judgment-shaped procedure | Instruction-only `SKILL.md` | Decision points, conventions, and escalation paths belong in prose. |
 | MCP-dependent workflow | `SKILL.md` referencing tools by name + declared deps | Skills reference the host's existing tools; they never install them. |
 
-**MCP handling.** Skill Plus Plus references only MCP servers already connected in the session, and never attempts to bundle or provision one. Three rules keep that safe once a skill travels to a teammate:
+**MCP handling.** Skill++ references only MCP servers already connected in the session, and never attempts to bundle or provision one. Three rules keep that safe once a skill travels to a teammate:
 
 * **Prefer the portable path.** Where the ledger shows the same outcome is reachable through a CLI (`gh` instead of a GitHub MCP, `psql` instead of a Postgres MCP), the shell form is generated — it runs anywhere. MCP references are reserved for capabilities with no CLI equivalent.
 * **Declare dependencies** — required servers and CLIs — in the `metadata` frontmatter key, which is already supported in the wild and requires no spec extension.
@@ -276,7 +276,7 @@ It earns its keep twice over, because a prompt is also a **task boundary**. Prom
 
 ### Surface mapping
 
-| Skill Plus Plus concept | Claude Code primitive |
+| Skill++ concept | Claude Code primitive |
 | --- | --- |
 | Trace capture | `PostToolUse` / `PreToolUse` hooks |
 | Intent capture | `UserPromptSubmit` hook |
@@ -318,7 +318,7 @@ whereas a bare `SKILL.md` cannot.
 
 ## 9. Key Differentiators
 
-| Metric | Dust.tt | Superpowers | IDE-native memory (Cursor, Copilot, Claude Code) | **Skill Plus Plus** |
+| Metric | Dust.tt | Superpowers | IDE-native memory (Cursor, Copilot, Claude Code) | **Skill++** |
 | --- | --- | --- | --- | --- |
 | **Primary focus** | Team knowledge RAG | Engineering process rules (TDD, planning) | Per-developer context recall | **Operational workflow capture** |
 | **Creation effort** | High (manual prompting) | Manual (maintainer-authored) | Low, but per-session and personal | **Passive capture, deliberate promotion** |
@@ -328,7 +328,7 @@ whereas a bare `SKILL.md` cannot.
 | **Skill structure** | Flat assistant prompts | Flat prompt files | Flat memory entries | **Sub-skill composition (DAG)** |
 | **Team distribution** | Native | Manual repo sync | Weak / personal by design | **One-click PR + dep check at pull** |
 
-The competitive pressure worth taking seriously is the fourth column: memory and rule-generation features bundled free with the IDE. Skill Plus Plus differentiates on the two things those do not do — a searchable ledger of past work, and team-grade distribution with dependency and lifecycle management.
+The competitive pressure worth taking seriously is the fourth column: memory and rule-generation features bundled free with the IDE. Skill++ differentiates on the two things those do not do — a searchable ledger of past work, and team-grade distribution with dependency and lifecycle management.
 
 ---
 

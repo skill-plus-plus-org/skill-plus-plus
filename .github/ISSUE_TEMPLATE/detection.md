@@ -9,7 +9,7 @@ labels: detection
 1.
 2.
 
-**What skill-plus-plus made of it**: how many candidates, with which titles, and what
+**What Skill++ made of it**: how many candidates, with which titles, and what
 you expected instead.
 
 **Was the work continued in a second chat?** yes / no

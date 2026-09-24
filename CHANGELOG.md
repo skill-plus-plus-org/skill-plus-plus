@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to skill-plus-plus. The format follows
+All notable changes to Skill++. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
@@ -28,7 +28,8 @@ The first public release.
   the slash commands and the `SKILL_PLUS_PLUS_*` settings. An existing
   `~/.claude/skillpp/` moves to the new folder the first time it runs, and
   `install` replaces hooks written under the old name. Settings still named
-  `SKILLPP_*` are no longer read.
+  `SKILLPP_*` are no longer read. The product is called Skill++ in the docs and
+  on the review page; everything you type keeps `skill-plus-plus`.
 - A candidate at the recurrence threshold that nobody promotes expires like
   any other, `SKILL_PLUS_PLUS_TTL_DAYS` after it was last recognized.
 - Installable with `pipx`, with a `skill-plus-plus` console script; an installed copy

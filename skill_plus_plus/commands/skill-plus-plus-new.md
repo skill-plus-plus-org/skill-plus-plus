@@ -2,7 +2,7 @@
 description: (Work in progress) Turn a described workflow into a skill, after asking what the description leaves out
 ---
 
-# Skill Plus Plus — new skill from a description
+# Skill++ — new skill from a description
 
 The developer wants a skill for something they are telling you about rather
 than something you watched them do. Everything after the command name is the

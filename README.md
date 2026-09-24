@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.svg">
-  <img alt="skill-plus-plus: repeated work becomes a reviewed skill" src="docs/images/banner-light.svg" width="720">
+  <img alt="Skill++: repeated work becomes a reviewed skill" src="docs/images/banner-light.svg" width="720">
 </picture>
 
 # Spot the work you keep repeating. Turn it into skills.
@@ -78,7 +78,7 @@ its tests, turning a document into a talk, adding an eval case. An agent skill
 time, but almost nobody writes them: by the time a procedure is worth a skill,
 you have done it three times and moved on.
 
-skill-plus-plus finds those procedures for you. It watches your Claude Code sessions,
+Skill++ finds those procedures for you. It watches your Claude Code sessions,
 notices when you repeat the same kind of work within a project, and shows it to
 you as a candidate. Promote one, and your own agent drafts the skill from what
 you actually did. Nothing is installed without you.
@@ -96,7 +96,7 @@ everyone working in the repo has it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/how-it-works-dark.svg">
-  <img alt="How skill-plus-plus works: 1, capture while you work: hooks, scrub, session buffer. 2, fold in the background after the session: cut, segment, extract, match. 3, review and draft when you choose: ledger, review page, Draft Skill, you." src="docs/images/how-it-works-light.svg">
+  <img alt="How Skill++ works: 1, capture while you work: hooks, scrub, session buffer. 2, fold in the background after the session: cut, segment, extract, match. 3, review and draft when you choose: ledger, review page, Draft Skill, you." src="docs/images/how-it-works-light.svg">
 </picture>
 
 1. **Capture.** While you work, hooks record your prompts, the tools that ran,
@@ -253,7 +253,7 @@ capture is Claude Code only for now. Drafting can use any agent CLI
 
 ## 🔒 Privacy
 
-Everything skill-plus-plus captures stays in `~/.claude/skill-plus-plus/` on your machine,
+Everything Skill++ captures stays in `~/.claude/skill-plus-plus/` on your machine,
 scrubbed of keys, tokens, cookies, connection strings and email addresses.
 Names, phone numbers and the content of your files are **not** recognised, and
 the folder you work in is kept as it is, so treat it like your shell history. Something leaves your machine only when you press **Draft

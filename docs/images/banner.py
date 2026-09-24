@@ -30,7 +30,7 @@ def build(theme: str) -> str:
     out = []
     # 128: centres the whole group, measured at 623 px wide with the system font
     # (fonts elsewhere differ by a few pixels; it stays near the middle).
-    x0, y0 = 98, (H - (RUN_H + 2 * RUN_STEP)) / 2
+    x0, y0 = 128, (H - (RUN_H + 2 * RUN_STEP)) / 2
     for i in range(3):             # the repeats, back to front
         x, y = x0 + i * RUN_STEP, y0 + i * RUN_STEP
         out.append(f'<rect x="{x}" y="{y}" width="{RUN_W}" height="{RUN_H}" rx="9" '
@@ -56,14 +56,14 @@ def build(theme: str) -> str:
         out.append(f'<rect x="{sx + 29}" y="{cy - 2.5}" width="{SKILL_W - 45 - (k % 2) * 16}" '
                    f'height="5" rx="2.5" fill="{t["line"]}"/>')
     wx = sx + SKILL_W + 48                      # the wordmark
-    out.append(f'<text x="{wx}" y="{mid + 14}" font-family="{FONT}" font-size="50" '
-               f'font-weight="800" letter-spacing="-1.2">'
-               f'<tspan fill="{t["text"]}">skill</tspan><tspan fill="{t["accent"]}">-plus-plus</tspan></text>')
+    out.append(f'<text x="{wx}" y="{mid + 14}" font-family="{FONT}" font-size="64" '
+               f'font-weight="800" letter-spacing="-1.5">'
+               f'<tspan fill="{t["text"]}">Skill</tspan><tspan fill="{t["accent"]}">++</tspan></text>')
     out.append(f'<text x="{wx + 2}" y="{mid + 44}" font-family="{MONO}" font-size="14" '
                f'fill="{t["muted"]}">repeated work → reviewed skills</text>')
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
-            f'viewBox="0 0 {W} {H}" role="img" aria-label="skill-plus-plus: repeated work becomes a reviewed skill">'
-            f'<title>skill-plus-plus</title>' + "".join(out) + "</svg>\n")
+            f'viewBox="0 0 {W} {H}" role="img" aria-label="Skill++: repeated work becomes a reviewed skill">'
+            f'<title>Skill++</title>' + "".join(out) + "</svg>\n")
 
 
 here = Path(__file__).parent

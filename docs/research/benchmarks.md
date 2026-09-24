@@ -971,7 +971,7 @@ git completion verb.
 That parallel system produced the cuts three separate passes existed to undo —
 `_absorb_before_commit`, `_absorb_read_only_preamble`, and
 `trim_leading_exploration`'s MCP exemption — each added after a real session lost
-work to a boundary nobody wanted. **Now, when nothing judged the steps, skill-plus-plus
+work to a boundary nobody wanted. **Now, when nothing judged the steps, Skill++
 is offline: it does not segment and does not bank.**
 
 **Measured across the eleven live sessions:**

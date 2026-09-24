@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something skill-plus-plus did that it should not have, or did not do
+about: Something Skill++ did that it should not have, or did not do
 labels: bug
 ---
 

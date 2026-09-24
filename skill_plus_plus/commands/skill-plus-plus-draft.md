@@ -2,7 +2,7 @@
 description: Draft a SKILL.md for one captured candidate; questions go into the draft
 ---
 
-# Skill Plus Plus — draft
+# Skill++ — draft
 
 Turn one captured candidate into a **draft** `SKILL.md`. Nobody is watching this
 run, which changes two things: your questions go into the draft instead of the

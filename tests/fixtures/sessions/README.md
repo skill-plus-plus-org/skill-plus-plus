@@ -41,7 +41,7 @@ The drafting itself is a frontier-model call, so you run it.
 The sessions in this directory are public work and ship with the repo. A set
 recorded on work that cannot be published (anything from an employer, a client,
 or with other people's data in it) lives outside the repo, and is scored by
-pointing skill-plus-plus at it:
+pointing Skill++ at it:
 
 ```bash
 SKILL_PLUS_PLUS_FIXTURES=~/path/to/private/sessions python3 -m unittest discover -s tests

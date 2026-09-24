@@ -1,4 +1,4 @@
-# Using skill-plus-plus
+# Using Skill++
 
 The README has the quickstart. This page covers each part in more depth: where
 capture works, installing, daily use, turning a candidate into a skill,
@@ -64,7 +64,7 @@ the same way; `python3 bin/skill-plus-plus` works without installing anything.
 
 ## Daily use
 
-Work as usual. When a session ends, skill-plus-plus cuts it into tasks and compares each
+Work as usual. When a session ends, Skill++ cuts it into tasks and compares each
 with what it has seen before. Two thresholds decide what you see:
 
 - a task needs at least **two substantive steps** to be kept at all, so a lone
@@ -231,6 +231,6 @@ rm -rf ~/.claude/skill-plus-plus/                                   # the ledger
 pipx uninstall skill-plus-plus
 ```
 
-`--remove` takes out only skill-plus-plus's own hook entries and the slash commands it
+`--remove` takes out only Skill++'s own hook entries and the slash commands it
 copied, and keeps a command file you edited. Skills you installed keep working:
-they are ordinary `SKILL.md` files that do not depend on skill-plus-plus.
+they are ordinary `SKILL.md` files that do not depend on Skill++.

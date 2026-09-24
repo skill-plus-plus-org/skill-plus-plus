@@ -126,8 +126,8 @@ def build(theme: str) -> str:
             y += LINK_H
     h = y + PAD
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{h}" viewBox="0 0 {W} {h}" '
-            f'role="img" aria-label="How skill-plus-plus works: capture, fold, review and draft">'
-            f'<title>How skill-plus-plus works</title>' + "".join(out) + "</svg>\n")
+            f'role="img" aria-label="How Skill++ works: capture, fold, review and draft">'
+            f'<title>How Skill++ works</title>' + "".join(out) + "</svg>\n")
 
 
 here = Path(__file__).parent

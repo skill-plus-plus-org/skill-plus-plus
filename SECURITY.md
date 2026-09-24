@@ -13,7 +13,7 @@ get the reasoning, and you are free to write about it publicly.
 
 Only the latest release is supported.
 
-## What skill-plus-plus can touch
+## What Skill++ can touch
 
 Useful context for judging whether something is a vulnerability:
 
@@ -32,7 +32,7 @@ Useful context for judging whether something is a vulnerability:
   `SKILL_PLUS_PLUS_AGENT` names, by default `claude -p` allowed `Read`, `Write`, `Edit`
   and `python3 bin/skill-plus-plus`. It runs in a temporary folder and reads one
   candidate. What it can reach beyond that is decided by the agent and its
-  permissions, not by skill-plus-plus.
+  permissions, not by Skill++.
 - **Scrubbing** removes credential-shaped strings and email addresses from
   prompts, tool calls and replies; the working directory is kept as it is. It is
   a net, not a guarantee; what it does not catch is listed in

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking. skill-plus-plus is small, standard-library-only Python, and most of
+Thanks for looking. Skill++ is small, standard-library-only Python, and most of
 it is explained in its own comments. This page covers setting up, the tests,
 the conventions the code follows, and how to show that a change is better, not
 just different.
@@ -16,7 +16,7 @@ pip install -e .          # puts `skill-plus-plus` on your PATH; or run python3 
 Python 3.10 or newer. Nothing else is needed for the tests. `node`, if you have
 it, runs two extra tests of the review page's JavaScript; without it they skip.
 Ollama and the two models (see the README) are only needed to measure detection
-and matching, and to use skill-plus-plus for real.
+and matching, and to use Skill++ for real.
 
 ## Tests
 

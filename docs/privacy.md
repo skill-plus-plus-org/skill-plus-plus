@@ -1,6 +1,6 @@
 # Privacy
 
-skill-plus-plus records what you do with Claude Code so it can recognise the work you
+Skill++ records what you do with Claude Code so it can recognise the work you
 repeat. This page says exactly what that record holds, where it is kept, what
 is removed from it, and the one way any of it leaves your machine.
 
