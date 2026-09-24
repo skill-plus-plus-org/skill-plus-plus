@@ -39,7 +39,7 @@
     ]
   },
   "why": "Recorded from catalogue.json (C-same, code, desktop), truth fixed before recording. A second task of the same kind is still a new task. New tasks start at prompt(s) 5.",
-  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "history": "Recorded 2026-09-22 for the public catalogue.\n\nKnown gap until then: gemma4:e4b (2026-09-22) does not cut at prompt 5, the second feature of the same kind (titlecase small_words after slugify max_length), so both features bank as one episode.\n\nCLOSED 2026-09-24 by the sectioned question: gemma4:e4b, asked whether the new message starts a new task, separate from the earlier task, cuts here (docs/research/benchmarks.md, \"The question restructured\").",
   "shape": {
     "steps": 21,
     "prompts": 8,
@@ -218,7 +218,7 @@
       "serves": 4,
       "tool_returned": "[master 32863b9] Add max_length arg to slugify with word-boundary cut 2 files changed, 32 insertions(+), 1 deletion(-)",
       "closing_note": "Committed `32863b9`. Skipped `__pycache__` (build artifacts, not tracked with intent).",
-      "end": false
+      "end": true
     },
     {
       "tool": "UserPrompt",
@@ -360,13 +360,15 @@
   ],
   "judged": {
     "model": "gemma4:e4b",
+    "question": "6b453520d07d",
     "prior_steps": 3,
     "next_steps": 3,
     "value_chars": 80,
+    "prompt_chars": -1,
+    "reply_before": 0,
     "send_description": false,
-    "endings": 0,
+    "endings": 1,
     "answered": 7,
-    "replayed": "2026-09-22"
-  },
-  "expected_fail": "gemma4:e4b (2026-09-22) does not cut at prompt 5, the second feature of the same kind (titlecase small_words after slugify max_length), so both features bank as one episode."
+    "replayed": "2026-09-24"
+  }
 }

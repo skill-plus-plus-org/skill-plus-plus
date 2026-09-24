@@ -39,7 +39,7 @@
     ]
   },
   "why": "Recorded from catalogue.json (C-2said, code, cli), truth fixed before recording. The task changes where the developer says so. New tasks start at prompt(s) 5.",
-  "history": "Recorded 2026-09-22 for the public catalogue.",
+  "history": "Recorded 2026-09-22 for the public catalogue.\n\nKnown gap until then: gemma4:e4b (2026-09-22) does not cut at prompt 5, the announced switch to a Makefile (\"Okay, now we will do something else.\"), so the wordfreq --json feature and the Makefile bank as one episode.\n\nCLOSED 2026-09-24 by the sectioned question: gemma4:e4b, asked whether the new message starts a new task, separate from the earlier task, cuts here (docs/research/benchmarks.md, \"The question restructured\").",
   "shape": {
     "steps": 18,
     "prompts": 8,
@@ -214,7 +214,7 @@
       "serves": 4,
       "tool_returned": "[master e37d5f3] Add --json flag to wordfreq CLI 2 files changed, 19 insertions(+), 2 deletions(-) On branch master Changes not staged for commit: (use \"git add <file>...\" to update what will be committed) (use \"git restore <file>...\" to discard changes in working directory) modified: textkit/__pycache__/__init__.cpython-314.pyc modified: textkit/__pycache__/slugify.cpython-314.pyc modified: textk",
       "closing_note": "Committed `e37d5f3`. Skipped `.pyc` churn — repo lacks `.gitignore`, tracked `__pycache__` from initial commit. Want gitignore added?",
-      "end": false
+      "end": true
     },
     {
       "tool": "UserPrompt",
@@ -320,13 +320,15 @@
   ],
   "judged": {
     "model": "gemma4:e4b",
+    "question": "6b453520d07d",
     "prior_steps": 3,
     "next_steps": 3,
     "value_chars": 80,
+    "prompt_chars": -1,
+    "reply_before": 0,
     "send_description": false,
-    "endings": 0,
+    "endings": 1,
     "answered": 7,
-    "replayed": "2026-09-22"
-  },
-  "expected_fail": "gemma4:e4b (2026-09-22) does not cut at prompt 5, the announced switch to a Makefile (\"Okay, now we will do something else.\"), so the wordfreq --json feature and the Makefile bank as one episode."
+    "replayed": "2026-09-24"
+  }
 }

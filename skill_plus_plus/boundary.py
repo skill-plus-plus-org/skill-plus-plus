@@ -1,10 +1,13 @@
-"""Did the developer start a new job here? Asked once per prompt, at session end.
+"""Did the developer start a new task here? Asked once per prompt, at session end.
 
 A local model is asked at each gap between two tool calls that a prompt landed
-in, and the question is a comparison rather than an assessment: what they asked
-for, what they just said, what they did next — is that a new job? The verdict is
-recorded on the step, so `segment`, the fixtures and the tests all read a plain
-boolean afterwards. `segment.is_marker`'s fixed vocabulary no longer decides
+in, and the question is a comparison rather than an assessment. The prompt is in
+named sections — the earlier task (what was asked for, the assistant's last
+actions), the new message, what the assistant did after it, what counts as a
+new task — and the question compares two of them by name: does the new message
+start a new task, separate from the earlier task? The verdict is recorded on the
+step, so `segment`, the fixtures and the tests all read a plain boolean
+afterwards. `segment.is_marker`'s fixed vocabulary no longer decides
 boundaries; it survives as the trailing flag's test and the suite's stand-in
 judge.
 
@@ -21,9 +24,12 @@ Two things keep each call fast, and neither may be undone:
   and on a model that thinks the same one-word question takes minutes instead
   of a second.
 
-Why the question is asked here and in this shape — the per-tool-call judge it
-replaced, the polarity test that settled it, the framings rejected since and
-what each cost — is in docs/research/benchmarks.md, "The question moved".
+Why the question is asked here — the per-tool-call judge it replaced, the
+polarity test that settled it, the framings rejected since and what each cost —
+is in docs/research/benchmarks.md, "The question moved". Why it is asked in this
+shape — the prose question it replaced, which read "the request above" as the
+new message and so missed every task switch in the code sessions — is in
+"The question restructured".
 """
 
 from __future__ import annotations
@@ -42,11 +48,6 @@ from .local import PROMPTS, LocalModelUnavailable, ask, yes_no
 # whatever was said in it.
 NEXT_STEPS = 3
 PRIOR_STEPS = 3
-
-# How much of the developer's instruction to show. It is the load-bearing slot:
-# without it the judge cuts at follow-up instructions as well as at real
-# switches of task.
-_PROMPT_CHARS = 400
 
 # The judge runs at session end or in `fold-pending`, never while someone waits
 # on a reply. It was 5 s when it ran per tool call, and at session end that made
@@ -88,6 +89,13 @@ REPLY_BEFORE_CHARS = 0
 REPLY_AFTER_CHARS = 0
 STEP_OUTPUT_CHARS = 0
 
+# How much of each message the developer sent in the gap to show. It is the
+# load-bearing slot: without it the judge cuts at follow-up instructions as well
+# as at real switches of task. All of it, which is how the sectioned question
+# was measured; on the prose question before it, 800, 1,600 and all of it
+# scored the same as 400 (docs/research/benchmarks.md).
+_PROMPT_CHARS = FULL
+
 # Whether the judge may reason before answering. Off: it is asked for one word.
 # `gemma4:e4b` can think, and with thinking on it caught both real boundaries
 # on the private set but cut three single tasks, at about ten times the cost
@@ -108,21 +116,21 @@ _THINK_RESERVE = 4096
 _THINK_CTX = 8192
 
 # The section showing what the assistant did after the developer spoke, and its
-# label. On. A model can take the question's "that" to mean these steps rather
-# than the instruction (it did with thinking on), so both are settings: whether
-# the section helps, hurts or only needs another label is measured with
-# `tests/benchmarks/judge_replay.py --no-next` and `--next-label`.
+# heading. On. Under the prose question a model took its "that" to mean these
+# steps rather than the instruction (it did with thinking on), so both are
+# settings: whether the section helps, hurts or only needs another heading is
+# measured with `tests/benchmarks/judge_replay.py --no-next` and `--next-label`.
 SHOW_NEXT = True
-NEXT_LABEL = "What they do next:"
+NEXT_LABEL = "## What the assistant did after the new message"
 
 
 def render_step(step: dict) -> str:
-    """One clause describing what the developer just did.
+    """One clause describing what the assistant just did: "ran `…`".
 
-    Reads as the continuation of "they ...", so the prompt stays a sentence
-    rather than a table. `ledger.describe_step` renders for a human reading a
-    ledger entry; this renders for a model judging completion, which wants the
-    verb and the intent.
+    The question lists these one per line, under the earlier task and under
+    what came after the new message. `ledger.describe_step` renders for a human
+    reading a ledger entry; this renders for a model judging where a task
+    starts, which wants the verb and the intent.
 
     **Nothing captured is dropped here, with one switch.** The tool-specific
     branch phrases the keys it knows, and every other key is appended rather
@@ -170,13 +178,19 @@ def render_step(step: dict) -> str:
     return core
 
 
-_SLOT_RE = re.compile(r"\{(GOAL|PRIOR|STEP_OUTPUT|STEP|REPLY_BEFORE|PROMPT|"
+_SLOT_RE = re.compile(r"\{(GOAL|PRIOR|STEP_OUTPUT|REPLY_BEFORE|PROMPT|"
                       r"REPLY_AFTER|NEXT_BLOCK)\}")
 
 
 def _block(label: str, text: str) -> str:
     """A labelled, indented slot — or nothing, so an off slot adds no bytes."""
     return f"\n\n{label}\n\n    {text}" if text else ""
+
+
+def _item(text: str) -> str:
+    """One action as a list line. A step's own line breaks — a heredoc, a
+    file's opening — are layout, not content, and would break the list."""
+    return "- " + " ".join(str(text).split())
 
 
 def _head(text: str, limit: int) -> str:
@@ -219,27 +233,32 @@ def build_prompt(goal: str, prior: list[str], step: dict,
                  said: str, follow: list[str], extras: dict | None = None) -> str:
     """The question, filled in. Every slot in it was measured.
 
-    `{PRIOR}` falls back to "(nothing yet)" rather than rendering an empty
-    section, and that is load-bearing rather than tidiness: a blank block
-    under the header flips the verdict from "no" to "yes" on its own, because
-    a session with nothing behind it reads as one that has not started.
-    Removing the section entirely fails the same way.
+    *prior* is the rendered history before the gap and *step* the step the gap
+    follows; that step closes the list of the assistant's actions, so the list
+    is never empty. That is load-bearing rather than tidiness: under the prose
+    question an empty history flipped the verdict from "no" to "yes" on its
+    own, because a session with nothing behind it reads as one that has not
+    started. *said* is the new message as `said_text` quotes it.
+
+    The file ends in a newline and the question as measured does not, so the
+    newline is dropped: a test pins every prompt over the recorded sessions
+    byte for byte.
     """
-    template = (PROMPTS / "new_job.md").read_text(encoding="utf-8")
-    lines = "\n".join(f"    {p}" for p in prior) or "    (nothing yet)"
-    nxt = "\n".join(f"    {p}" for p in follow) or "    (nothing yet)"
+    template = (PROMPTS / "new_job.md").read_text(encoding="utf-8").rstrip("\n")
+    actions = "\n".join(_item(p) for p in [*prior, render_step(step)])
+    nxt = "\n".join(_item(p) for p in follow) or "- (nothing yet)"
     extras = extras or {}
     values = {
         "GOAL": goal.strip() or "(not stated)",
-        "PRIOR": lines,
-        "STEP": render_step(step),
-        "STEP_OUTPUT": _block("It returned:", extras.get("step_output", "")),
-        "REPLY_BEFORE": _block("After that, the assistant told them:",
+        "PRIOR": actions,
+        "STEP_OUTPUT": _block("What the last action returned:",
+                              extras.get("step_output", "")),
+        "REPLY_BEFORE": _block("Then the assistant told the developer:",
                                extras.get("reply_before", "")),
-        "PROMPT": said.strip()[:_PROMPT_CHARS] or "(nothing)",
+        "PROMPT": said.strip() or "> (nothing)",
         "REPLY_AFTER": _block("The assistant answered:",
                               extras.get("reply_after", "")),
-        "NEXT_BLOCK": f"{NEXT_LABEL}\n{nxt}\n\n" if SHOW_NEXT else "",
+        "NEXT_BLOCK": f"{NEXT_LABEL}\n\n{nxt}\n\n" if SHOW_NEXT else "",
     }
     # One pass, not a chain of `replace`: a reply can contain braces and JSON,
     # and text already filled in must never be read as a placeholder again.
@@ -250,7 +269,7 @@ def judge(step: dict, *, goal: str = "", prior: list[str] | None = None,
           said: str = "", follow: list[str] | None = None,
           model: str, host: str, timeout: float = DEFAULT_TIMEOUT,
           extras: dict | None = None, meta: dict | None = None) -> bool | None:
-    """Did the developer start a new job after *step*?
+    """Did the developer start a new task after *step*?
 
     ``None`` means no opinion — no model, a timeout, an answer that is neither
     yes nor no — and `segment` treats it as "not a boundary". *meta*, when
@@ -328,7 +347,7 @@ def gaps(steps: list[dict]) -> list[tuple[int, list[dict], list[dict]]]:
         # challenge and then the instruction behind it, and the first alone can
         # be unreadable: a question about how the agent went about it, then a
         # restatement of the opening request. Shown only the first, the model
-        # calls it a new job and banks two episodes where there is one; shown
+        # calls it a new task and banks two episodes where there is one; shown
         # both, it reads it as the redo it is.
         said = [s for s in after[:nxt] if is_prompt(s)]
         if said:
@@ -338,9 +357,11 @@ def gaps(steps: list[dict]) -> list[tuple[int, list[dict], list[dict]]]:
 
 
 def said_text(prompts: list[dict]) -> str:
-    """What the developer said in one gap, in order, as the prompt renders it."""
-    out = [str((p.get("input") or {}).get("text", "")).strip() for p in prompts]
-    return "\n\n    ".join(t for t in out if t)
+    """What the developer said in one gap, in order, as the prompt renders it:
+    each message quoted on its own, cut to `_PROMPT_CHARS`."""
+    out = [" ".join(str((p.get("input") or {}).get("text", "")).split())
+           for p in prompts]
+    return "\n\n".join(f"> {_head(t, _PROMPT_CHARS)}" for t in out if t)
 
 
 def judge_session(config, session: dict) -> int:

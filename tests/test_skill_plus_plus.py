@@ -5994,7 +5994,7 @@ class TestJudgeInput(unittest.TestCase):
         saved = {k: getattr(boundary, k) for k in (
             "REPLY_BEFORE_CHARS", "REPLY_AFTER_CHARS", "STEP_OUTPUT_CHARS",
             "JUDGE_THINKS", "PRIOR_STEPS", "NEXT_STEPS", "SHOW_NEXT",
-            "NEXT_LABEL", "ask")}
+            "NEXT_LABEL", "_PROMPT_CHARS", "ask")}
         self.addCleanup(lambda: [setattr(boundary, k, v) for k, v in saved.items()])
 
     def _prompts(self):
@@ -6046,22 +6046,71 @@ class TestJudgeInput(unittest.TestCase):
         text = self._gap(REPLY_BEFORE_CHARS=400, REPLY_AFTER_CHARS=400,
                          STEP_OUTPUT_CHARS=400)
         order = [text.index(s) for s in (
-            "Now they ran", "It returned:", "12: card tutorial",
-            "After that, the assistant told them:", "Where do you suspect",
-            "Then they say:", "Separate job", "The assistant answered:",
-            "Added chart_card_staged", "What they do next:")]
+            "## Earlier task", "- ran `grep -n card page.py`",
+            "What the last action returned:", "12: card tutorial",
+            "Then the assistant told the developer:", "Where do you suspect",
+            "## New message from the developer", "> Separate job",
+            "The assistant answered:", "Added chart_card_staged",
+            "## What the assistant did after the new message", "- ran `npm test`",
+            "## What counts as a new task", "## Question")]
         self.assertEqual(order, sorted(order))
 
     def test_an_off_slot_adds_nothing(self):
         text = self._gap()
-        for label in ("It returned:", "assistant told them", "assistant answered"):
+        for label in ("last action returned", "assistant told the developer",
+                      "assistant answered"):
             self.assertNotIn(label, text)
+
+    def test_the_question_compares_two_sections_by_name(self):
+        """The prose question asked whether "that" was "a new job, unrelated to
+        the request above". gemma4 read the request above as the new message —
+        the one printed right above the question — found the steps after it
+        fitting, and answered "no" at every task switch in the code sessions.
+        Naming both sides leaves nothing to resolve."""
+        text = self._gap()
+        self.assertIn("## Earlier task", text)
+        self.assertIn("## New message from the developer", text)
+        self.assertIn("Does the new message start a new task, separate from the "
+                      "earlier task?", text)
+        self.assertNotIn("the request above", text)
+
+    def test_the_step_before_the_gap_closes_the_earlier_actions(self):
+        text = self._gap()
+        self.assertIn("The assistant's last actions on it:\n\n"
+                      "- ran `grep -n card page.py`\n\n"
+                      "## New message from the developer\n\n"
+                      "> Separate job: add a case", text)
+
+    def test_each_message_in_a_gap_is_quoted_on_its_own(self):
+        """A challenge and the instruction behind it arrive as two messages;
+        joined into one, the model could not tell where one ends."""
+        said = [{"tool": "UserPrompt", "input": {"text": "did you call MCP\nfor this?"}},
+                {"tool": "UserPrompt", "input": {"text": "Use the docs tool instead."}}]
+        self.assertEqual(self.boundary.said_text(said),
+                         "> did you call MCP for this?\n\n> Use the docs tool instead.")
+
+    def test_the_message_is_shown_whole_unless_cut(self):
+        b = self.boundary
+        said = [{"tool": "UserPrompt", "input": {"text": "one two three four five six"}}]
+        self.assertEqual(b.said_text(said), "> one two three four five six")
+        b._PROMPT_CHARS = 12
+        self.assertEqual(b.said_text(said), "> one two …")
+
+    def test_a_step_over_several_lines_stays_one_action(self):
+        """A heredoc commit or a file's opening lines would otherwise break out
+        of the list and read as text of their own."""
+        text = self.boundary.build_prompt(
+            "- commit it", [], {"tool": "Bash", "input": {
+                "command": "git commit -m \"$(cat <<'EOF'\nAdd --json\n\nBody\nEOF\n)\""}},
+            "> next", [])
+        self.assertIn("- ran `git commit -m \"$(cat <<'EOF' Add --json Body EOF )\"`\n\n"
+                      "## New message", text)
 
     def test_the_reply_before_is_its_tail_and_after_is_its_head(self):
         """The hand-off is at the end of what was said; how the new instruction
         was read is at the start of the answer to it."""
         text = self._gap(REPLY_BEFORE_CHARS=30, REPLY_AFTER_CHARS=30)
-        before = text.split("assistant told them:\n\n    ")[1].split("\n")[0]
+        before = text.split("assistant told the developer:\n\n    ")[1].split("\n")[0]
         after = text.split("assistant answered:\n\n    ")[1].split("\n")[0]
         # The end of what was said, cut at a word, never mid-word.
         self.assertEqual(before, "… you suspect the blanks are?")
@@ -6070,17 +6119,21 @@ class TestJudgeInput(unittest.TestCase):
         self.assertEqual(after, "Added chart_card_staged to …")
 
     def test_the_next_steps_section_can_be_removed_or_relabelled(self):
-        """With thinking on, the model judged the steps under "What they do
-        next" instead of the instruction; both settings exist to measure that."""
+        """With thinking on, the model once judged the steps after the
+        instruction instead of the instruction; both settings exist to measure
+        that."""
+        heading = "## What the assistant did after the new message"
         shown = self._gap()
-        self.assertIn("What they do next:\n    ran `npm test`\n\nIs that", shown)
+        self.assertIn(f"{heading}\n\n- ran `npm test`\n\n## What counts as a new task",
+                      shown)
         removed = self._gap(SHOW_NEXT=False)
-        self.assertNotIn("What they do next", removed)
+        self.assertNotIn(heading, removed)
         self.assertNotIn("npm test", removed)
-        self.assertIn("Separate job: add a case\n\nIs that a new job", removed)
+        self.assertIn("> Separate job: add a case\n\n## What counts as a new task",
+                      removed)
         relabelled = self._gap(SHOW_NEXT=True,
-                               NEXT_LABEL="In answer to that, the assistant then:")
-        self.assertIn("In answer to that, the assistant then:\n    ran `npm test`",
+                               NEXT_LABEL="## In answer to it, the assistant then")
+        self.assertIn("## In answer to it, the assistant then\n\n- ran `npm test`",
                       relabelled)
 
     def test_thinking_runs_at_one_context_size(self):
