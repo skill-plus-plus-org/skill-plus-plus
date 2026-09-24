@@ -9,8 +9,6 @@
 
 **Detection runs on your machine and costs nothing. Your agent writes a skill only when you ask.**
 
-<!-- VIDEO/GIF: the review page, candidate → Promote → Draft Skill → answer a question → Install; at most 880 px wide -->
-
 https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT license"></a>
@@ -272,6 +270,13 @@ model needed, about ten seconds) and measure a change.
 ## 📜 License
 
 [MIT](LICENSE).
+
+## 🏠 Where it was made
+
+<p align="center">
+  <img src="docs/images/headquarters.jpg" width="360" alt="A small glass meeting pod with two benches and a table: the Skill++ headquarters">
+</p>
+<p align="center"><sub>Skill++ headquarters: one meeting pod, where it all started.</sub></p>
 
 ---
 
