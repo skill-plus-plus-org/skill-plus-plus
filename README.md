@@ -11,6 +11,8 @@
 
 <!-- VIDEO/GIF: the review page, candidate → Promote → Draft Skill → answer a question → Install; at most 880 px wide -->
 
+https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
+
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT license"></a>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square" alt="Python 3.10+">
 <img src="https://img.shields.io/badge/detection-runs_locally-orange?style=flat-square" alt="Detection runs locally">
