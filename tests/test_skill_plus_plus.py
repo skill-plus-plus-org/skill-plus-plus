@@ -5542,6 +5542,17 @@ class TestNothingPrivateIsTracked(unittest.TestCase):
         kinds = [hit.split(": ")[1] for hit in hits]
         self.assertEqual(kinds, ["home path", "email", "uuid", "secret", "denylist"])
 
+    def test_a_github_asset_link_is_not_a_session_id(self):
+        """The README's video is a GitHub upload whose link ends in a UUID; that
+        names a public file, not a session, and it turned `main`'s CI red."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        import leak_guard
+        uid = "-".join(["12345678", "90ab", "cdef", "1234", "567890abcdef"])
+        hits = leak_guard.scan_text("x", "\n".join([
+            "https://github.com/user-attachments/assets/" + uid, "session " + uid]), [])
+        self.assertEqual([hit.split(": ")[1] for hit in hits], ["uuid"])
+        self.assertTrue(hits[0].startswith("x:2:"), "the bare id is still found")
+
     def test_a_recorded_session_cannot_keep_half_a_home_path(self):
         """The fixture builder cut each field to 2,000 characters before
         templating `$HOME`, so a path crossing the cut kept the home folder and
