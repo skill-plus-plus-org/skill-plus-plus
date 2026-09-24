@@ -1,0 +1,60 @@
+name: publish
+
+# A published GitHub release goes to PyPI. Run by hand from the Actions tab,
+# the same build goes to TestPyPI instead: the dry run before a release.
+#
+# Trusted Publishing: PyPI accepts the upload because GitHub vouches for this
+# workflow in this repo, so no token is stored anywhere. Each site needs the
+# publisher registered once (CONTRIBUTING.md, "Releasing").
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The release tag names the package's version
+        if: github.event_name == 'release'
+        run: |
+          version=$(python -c "import skill_plus_plus; print(skill_plus_plus.__version__)")
+          test "$GITHUB_REF_NAME" = "v$version" \
+            || { echo "release tag $GITHUB_REF_NAME does not match version $version"; exit 1; }
+      - name: Build, with the README's links made absolute for PyPI
+        run: |
+          # readme-renderer[md] is what makes twine check render Markdown at all
+          python -m pip install --quiet build twine "readme-renderer[md]"
+          python scripts/pypi_readme.py --in-place
+          python -m build
+          python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # what Trusted Publishing proves the upload with
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      # A version can be uploaded only once. Skipping one that is already there
+      # lets the dry run be started again without a new version number.
+      - name: Upload to TestPyPI
+        if: github.event_name == 'workflow_dispatch'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+      - name: Upload to PyPI
+        if: github.event_name == 'release'
+        uses: pypa/gh-action-pypi-publish@release/v1

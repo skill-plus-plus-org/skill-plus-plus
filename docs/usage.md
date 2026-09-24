@@ -27,8 +27,11 @@ worker after the session, not while you work.
 ## Installing
 
 ```bash
-pipx install git+https://github.com/himanshu096/skill-plus-plus
+pipx install skill-plus-plus
 ```
+
+The latest `main`, before it is released:
+`pipx install git+https://github.com/himanshu096/skill-plus-plus`.
 
 Then choose where the hooks go. Every form is a dry run that prints the exact
 change until you add `--apply`, and an existing settings file is backed up

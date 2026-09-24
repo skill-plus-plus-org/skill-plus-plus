@@ -124,7 +124,7 @@ You need macOS or Linux, Python 3.10+, [Claude Code](https://docs.anthropic.com/
 logged in, and [Ollama](https://ollama.com) running (`brew install ollama` on a Mac).
 
 ```bash
-pipx install git+https://github.com/himanshu096/skill-plus-plus
+pipx install skill-plus-plus
 skill-plus-plus install --project ~/code/my-repo --apply   # hooks, slash commands and the two local models
 skill-plus-plus doctor                                     # everything green?
 ```
@@ -144,6 +144,8 @@ new Code session in the desktop app) and work as usual.
   10 GB of free memory. `--no-models` leaves Ollama alone.
 - `skill-plus-plus install --project ~/code/my-repo --remove --apply` takes the hooks
   and slash commands out again.
+- The latest `main`, before it is released:
+  `pipx install git+https://github.com/himanshu096/skill-plus-plus`.
 - From a clone: `pip install -e .`, or run `python3 bin/skill-plus-plus` without
   installing anything.
 

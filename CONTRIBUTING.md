@@ -130,5 +130,33 @@ found in the draft. Compare against the previous run of the same four cases.
       measurement on recorded sessions
 - [ ] the README or `docs/` say what changed, if a user would notice
 
+## Releasing
+
+Releases go to PyPI from `.github/workflows/publish.yml`, with Trusted
+Publishing: GitHub vouches for the upload, so no token is stored anywhere.
+
+Once, for whoever owns the project on PyPI: on pypi.org and on test.pypi.org,
+under Account settings → Publishing, add a pending publisher with project
+`skill-plus-plus`, owner `himanshu096`, repository `skill-plus-plus`, workflow
+`publish.yml` and no environment.
+
+For each release:
+
+1. Set `__version__` in `skill_plus_plus/__init__.py`, date the version's
+   heading in `CHANGELOG.md`, and merge.
+2. Dry run: in the Actions tab, run **publish** by hand. It uploads to
+   TestPyPI. Then install from there and try it:
+   ```bash
+   pipx install --index-url https://test.pypi.org/simple/ skill-plus-plus
+   ```
+   A version can be uploaded only once; a dry run of changed code needs a new
+   one, such as `0.2.0.dev1`.
+3. Publish a GitHub release tagged `v` plus the version (`v0.1.0`). The
+   workflow checks that the tag matches, builds and uploads to PyPI.
+
+PyPI shows the README from the release build, where
+`scripts/pypi_readme.py` has made its links and images absolute; they load
+once the repo is public.
+
 Security problems: please report them privately; see [SECURITY.md](SECURITY.md).
 By taking part you agree to the [code of conduct](CODE_OF_CONDUCT.md).

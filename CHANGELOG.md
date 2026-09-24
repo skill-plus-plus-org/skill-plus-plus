@@ -33,7 +33,8 @@ The first public release.
 - A candidate at the recurrence threshold that nobody promotes expires like
   any other, `SKILL_PLUS_PLUS_TTL_DAYS` after it was last recognized.
 - Installable with `pipx`, with a `skill-plus-plus` console script; an installed copy
-  can draft.
+  can draft. Published to PyPI: `pipx install skill-plus-plus`, released
+  from a GitHub release with Trusted Publishing.
 - The review page refuses requests made by other pages in the same browser.
 - Describing every tool call with the local model is off by default; it cost
   2-11 seconds a call and nothing read it.
