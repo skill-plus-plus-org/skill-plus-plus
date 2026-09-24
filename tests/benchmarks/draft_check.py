@@ -124,13 +124,14 @@ def without_questions(text: str) -> str:
 
 
 def question_items(text: str) -> list[str]:
-    """Each item under `## Open questions`, its wrapped lines joined."""
+    """Each item under `## Open questions`, its wrapped lines joined. An item
+    indented under it is an answer the agent suggests, part of the question."""
     items: list[str] = []
     for title, body in sections(text):
         if title.lower() != "open questions":
             continue
         for line in body.splitlines():
-            if re.match(r"\s{0,3}(-|\*|\d+\.)\s", line):
+            if re.match(r"\s?(-|\*|\d+\.)\s", line):
                 items.append(line.strip())
             elif line.strip() and items and not line.startswith(("#", "---", "_")):
                 items[-1] += " " + line.strip()

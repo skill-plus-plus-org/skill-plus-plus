@@ -4484,7 +4484,7 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         showed no answer fields and downloaded freely."""
         from skill_plus_plus.web import draft_zip, split_open_questions
         questions, rest = split_open_questions(self.GAPS)
-        self.assertEqual(questions, ["Is it always `x`?"])
+        self.assertEqual([q["question"] for q in questions], ["Is it always `x`?"])
         self.assertNotIn("Known gaps", rest)
         self._drafted("x", extra={"SKILL.md": self.GAPS})
         self.assertIsNone(draft_zip(self.config, "x"),
@@ -4493,12 +4493,28 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
     def test_open_questions_are_read_out_of_the_draft(self):
         from skill_plus_plus.web import split_open_questions
         questions, rest = split_open_questions(self.QUESTIONS)
-        self.assertEqual(questions, ["Is it always `x`, or can it also be `y`?",
-                                     "Which runner?"])
+        self.assertEqual([q["question"] for q in questions],
+                         ["Is it always `x`, or can it also be `y`?", "Which runner?"])
         self.assertNotIn("Open questions", rest)
         self.assertIn("# Body", rest)
         self.assertIn("_footer_", rest, "the section ends at the rule")
         self.assertEqual(split_open_questions("# Body\n"), ([], "# Body\n"))
+
+    OPTIONS = ("# Body\n\n## Open questions\n\n1. Reject or clamp invalid values?\n"
+               "   - Reject them with a clear error\n   - Clamp them to the nearest valid\n"
+               "     value\n   - Ask the user each time\n2. Which runner?\n")
+
+    def test_suggested_answers_are_read_under_their_question(self):
+        """Three answers to pick from, so answering takes a click; an item
+        indented under a question is one of its answers, not a question."""
+        from skill_plus_plus.web import split_open_questions
+        questions, rest = split_open_questions(self.OPTIONS)
+        self.assertEqual(questions, [
+            {"question": "Reject or clamp invalid values?",
+             "options": ["Reject them with a clear error", "Clamp them to the nearest valid value",
+                         "Ask the user each time"]},
+            {"question": "Which runner?", "options": []}])
+        self.assertNotIn("Clamp", rest)
 
     def test_a_draft_with_open_questions_shows_them_and_will_not_download(self):
         from skill_plus_plus.web import collect_state, draft_zip
@@ -5430,6 +5446,11 @@ Someone asks for slides drawn from a document they point at.
     def test_a_wrapped_question_with_its_mark_mid_item_passes(self):
         text = self.GOOD + ("\n## Open questions\n\n- Is six the default, or asked each time? The run\n"
                             "  used six without asking.\n")
+        self.assertNotIn("G10", self._failed(text))
+
+    def test_suggested_answers_under_a_question_are_not_questions(self):
+        text = self.GOOD + ("\n## Open questions\n\n1. Is six the default, or asked each time?\n"
+                            "   - Six, always\n   - Ask each time\n   - Six unless the user says otherwise\n")
         self.assertNotIn("G10", self._failed(text))
 
     def test_a_setting_asked_about_is_not_a_rule(self):

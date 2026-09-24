@@ -539,10 +539,12 @@ def _draft_files(config: Config, entry_id: str) -> list[Path]:
 # written before the rename.
 _QUESTIONS_HEADING = re.compile(r"^##\s+(?:Open questions|Known gaps)\s*$",
                                 re.IGNORECASE)
-_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*)$")
+# A question starts at the margin; an item indented under it is one of the
+# answers the agent suggests for it.
+_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$")
 
 
-def split_open_questions(text: str) -> tuple[list[str], str]:
+def split_open_questions(text: str) -> tuple[list[dict], str]:
     """The draft's `## Open questions` and the SKILL.md without that section.
 
     The drafting agent cannot ask, so it writes what it could not tell from the
@@ -550,6 +552,9 @@ def split_open_questions(text: str) -> tuple[list[str], str]:
     skill, not part of it: the page shows them as answer fields, hides the
     section from the rendered draft, and refuses the download while any remain.
     The section ends at the next heading or horizontal rule.
+
+    Each question is `{"question", "options"}`: the answers suggested under it,
+    empty for a draft written before the agent suggested any.
     """
     lines = text.split("\n")
     start = next((i for i, line in enumerate(lines) if _QUESTIONS_HEADING.match(line)), None)
@@ -560,15 +565,21 @@ def split_open_questions(text: str) -> tuple[list[str], str]:
         if re.match(r"^(#{1,6}\s|-{3,}\s*$|\*{3,}\s*$|_{3,}\s*$)", lines[i]):
             end = i
             break
-    questions: list[str] = []
+    questions: list[dict] = []
     for line in lines[start + 1:end]:
         item = _ITEM.match(line)
-        if item:
-            questions.append(item.group(1).strip())
+        if item and len(item.group(1)) < 2:
+            questions.append({"question": item.group(2).strip(), "options": []})
+        elif item and questions:
+            questions[-1]["options"].append(item.group(2).strip())
         elif line.strip() and questions:
-            questions[-1] += " " + line.strip()
+            last = questions[-1]
+            if last["options"]:
+                last["options"][-1] += " " + line.strip()
+            else:
+                last["question"] += " " + line.strip()
     remaining = "\n".join(lines[:start] + lines[end:])
-    return [q for q in questions if q], remaining
+    return [q for q in questions if q["question"]], remaining
 
 
 def _skill_digest(skill_md: Path) -> str:
@@ -958,7 +969,8 @@ def answer_questions(config: Config, entry_id: str, answers: list) -> dict:
     instruction = (
         "The developer answered open questions from the draft. For each answer, "
         "change the skill where it applies so it no longer needs the question, then "
-        "remove that question from the `## Open questions` section. Remove the "
+        "remove that question, with the answers suggested under it, from the "
+        "`## Open questions` section. Remove the "
         "section when it is empty. Leave unanswered questions as they are.\n\n" + text)
     return revise(config, entry_id, instruction, limit=MAX_ANSWERS + 1000)
 
@@ -1260,6 +1272,18 @@ PAGE = r"""<!doctype html>
  .questions h4{margin:0 0 4px;font:600 12px var(--mono);color:#fbbf24;text-transform:uppercase;
    letter-spacing:.04em}
  .questions .hint{margin:0 0 10px;font-size:12px;color:var(--dim)}
+ .questions .q{margin:14px 0 0}
+ .questions .qtext{display:block;margin:0 0 6px;font-size:13px;color:var(--fg)}
+ .questions .opt{display:flex;align-items:center;gap:10px;margin:5px 0;padding:7px 10px;
+   border:1px solid var(--line);border-radius:7px;background:var(--bg);font-size:13px;
+   color:var(--fg);cursor:pointer;transition:border-color .12s,background .12s}
+ .questions .opt:hover{border-color:rgba(251,191,36,.45)}
+ .questions .opt.on{border-color:#fbbf24;background:rgba(251,191,36,.10)}
+ .questions .opt input[type=radio]{accent-color:#fbbf24;margin:0;flex:none}
+ .questions .opt .other{color:var(--dim);white-space:nowrap}
+ .questions .opt input[type=text]{flex:1;min-width:0;font:13px var(--sans);color:var(--fg);
+   background:transparent;border:0;border-bottom:1px dashed var(--line);padding:2px 0;outline:none}
+ .questions .opt input[type=text]:focus{border-bottom-color:#fbbf24}
  .questions label{display:block;margin:10px 0 4px;font-size:13px;color:var(--fg)}
  .questions code{font:12px var(--mono);background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
  .questions textarea{width:100%;min-height:52px;resize:vertical;font:13px/1.5 var(--sans);
@@ -1502,11 +1526,22 @@ function md(src){
 function questionsBlock(d){
   if(!d.questions.length || d.revising) return "";
   const id = esc(d.id), given = answers[d.id] || {};
+  const one = (q, i) => {
+    const a = given[i] || {}, name = `q-${id}-${i}`;
+    if(!q.options.length)   // a draft written before the agent suggested answers
+      return `<div class="q"><label class="qtext" for="${name}">${i + 1}. ${mdInline(q.question)}</label>
+        <textarea id="${name}" data-answer="${id}" data-index="${i}" data-other>${esc(a.text || "")}</textarea></div>`;
+    const opt = (k, body) => `<label class="opt${a.choice === k ? " on" : ""}"><input type="radio" name="${name}"
+        data-answer="${id}" data-index="${i}" data-choice="${k}"${a.choice === k ? " checked" : ""}>${body}</label>`;
+    return `<div class="q"><p class="qtext">${i + 1}. ${mdInline(q.question)}</p>
+      ${q.options.map((o, k) => opt(String(k), `<span>${mdInline(o)}</span>`)).join("")}
+      ${opt("other", `<span class="other">Other:</span><input type="text" data-answer="${id}" data-index="${i}"
+        data-other placeholder="write your own answer" value="${esc(a.text || "")}">`)}</div>`;
+  };
   return `<div class="questions"><h4>Open questions</h4>
-    <p class="hint">The agent could not tell these from the recorded runs. Answer them to finish the skill; it downloads once none are left.</p>
-    ${d.questions.map((q, i) => `<label for="q-${id}-${i}">${i + 1}. ${mdInline(q)}</label>
-      <textarea id="q-${id}-${i}" data-answer="${id}" data-index="${i}">${esc(given[i] || "")}</textarea>`).join("")}
-    <div class="bar" style="margin-top:10px"><button class="create" data-answer-send="${id}">Send answers</button></div>
+    <p class="hint">The agent could not tell these from the recorded runs. Pick an answer or write your own; the skill downloads once none are left.</p>
+    ${d.questions.map(one).join("")}
+    <div class="bar" style="margin-top:12px"><button class="create" data-answer-send="${id}">Send answers</button></div>
   </div>`;
 }
 
@@ -1584,13 +1619,26 @@ function renderDrafts(list){
     writing.delete(b.dataset.reviseCancel); delete drafts[b.dataset.reviseCancel]; render();
   });
   list.querySelectorAll("[data-instruction]").forEach(t => t.oninput = () => { drafts[t.dataset.instruction] = t.value; });
-  list.querySelectorAll("[data-answer]").forEach(t => t.oninput = () => {
-    (answers[t.dataset.answer] ||= {})[t.dataset.index] = t.value;
+  // An answer is the suggestion picked, or the text written under "Other";
+  // typing there picks "Other".
+  const answerOf = el => ((answers[el.dataset.answer] ||= {})[el.dataset.index] ||= {});
+  list.querySelectorAll("input[type=radio][data-answer]").forEach(r => r.onchange = () => {
+    answerOf(r).choice = r.dataset.choice;
+    r.closest(".q").querySelectorAll(".opt").forEach(l => l.classList.toggle("on", l.contains(r)));
+    if(r.dataset.choice === "other") r.closest(".opt").querySelector("[data-other]").focus();
+  });
+  list.querySelectorAll("[data-other]").forEach(t => t.oninput = () => {
+    answerOf(t).text = t.value;
+    const radio = t.closest(".opt") && t.closest(".opt").querySelector("input[type=radio]");
+    if(radio && !radio.checked){ radio.checked = true; radio.onchange(); }
   });
   list.querySelectorAll("[data-answer-send]").forEach(b => b.onclick = async () => {
     const id = b.dataset.answerSend, d = S.drafts.find(x => x.id === id), given = answers[id] || {};
-    const payload = d.questions.map((question, i) => ({question, answer: (given[i] || "").trim()}))
-      .filter(a => a.answer);
+    const payload = d.questions.map((q, i) => {
+      const a = given[i] || {};
+      const answer = a.choice && a.choice !== "other" ? q.options[+a.choice] : a.text;
+      return {question: q.question, answer: (answer || "").trim()};
+    }).filter(a => a.answer);
     if(!payload.length){ alert("Answer at least one question."); return; }
     b.disabled = true;
     const r = await (await post("/api/answer", {id, answers: payload})).json();

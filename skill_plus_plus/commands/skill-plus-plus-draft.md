@@ -127,17 +127,29 @@ all. Edit it into something worth reading.
 
 ## 4. Ask through open questions
 
-Nobody can answer you during this run, so every question you would ask the
-developer becomes a line under:
+Nobody can answer you during this run, so what you would ask the developer
+becomes a question under `## Open questions`. Ask **at most three**: the ones
+whose answer changes the procedure most. Settle anything smaller yourself by
+writing the safer choice into the steps as a condition ("if the user asks for
+X, ...").
+
+Under each question, suggest three answers, indented, the likeliest first. Each
+one complete enough to fold into the skill as it stands. The developer answers
+on the review page with a click, or writes their own, and the answers are
+folded back into the draft:
 
 ```markdown
 ## Open questions
+
+1. Should invalid values be rejected or clamped?
+   - Reject them with a clear error message
+   - Clamp them to the nearest valid value
+   - Ask the user which one they want
 ```
 
-Write what you do not know, not a guess dressed as fact. A draft that admits two
-gaps is worth more than one that invents the answers, because the reader can see
-what to check. The developer answers them on the review page, and the answers
-are folded back into the draft.
+Write what you do not know, not a guess dressed as fact. A draft that admits
+two gaps is worth more than one that invents the answers, because the reader
+can see what to check.
 
 ## 5. Stop before installing
 
