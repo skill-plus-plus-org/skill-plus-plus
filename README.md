@@ -194,7 +194,7 @@ conversation go to it.
 Measured on 22 public recordings of code and knowledge work, with the defaults
 (`gemma4:e4b`, `nomic-embed-text`). The weak rows stay in the tables.
 
-**Where one task ends**: 19 of 22 sessions right; 6 of 9 task switches caught;
+**Where one task ends**: 22 of 22 sessions right; 9 of 9 task switches caught;
 **0 false cuts over 77 prompts**, reviews, corrections and side questions
 included.
 
@@ -203,9 +203,9 @@ included.
 | one task, several follow-ups | 6/6 | 6/6 |
 | reviews and corrections stay in the task | 1/1 | 6/6 |
 | a switch nobody announced | 1/1 | 1/1 |
-| an announced switch | **0/1** | 1/1 |
-| three tasks in one chat | **0/1** | 1/1 |
-| a second task of the same kind | **0/1** | – |
+| an announced switch | 1/1 | 1/1 |
+| three tasks in one chat | 1/1 | 1/1 |
+| a second task of the same kind | 1/1 | – |
 
 **Do repeats become one candidate**: 0 wrong merges.
 
@@ -213,11 +213,11 @@ included.
 |---|---|---|
 | the same prompts | 3/3 pairs | 3/3 pairs |
 | the same goal, driven differently | 3/3 | 3/3 |
-| the same procedure, another subject | **1/23** | 12/12 |
+| the same procedure, another subject | **4/53** | 12/12 |
 
-> The bold rows are real. Code switches are what the judge misses, and code on
-> a new subject is what matching keeps apart: it prefers a duplicate you can see
-> to a wrong merge that mixes two procedures into one skill.
+> The bold row is real. Code on a new subject is what matching keeps apart: it
+> prefers a duplicate you can see to a wrong merge that mixes two procedures into
+> one skill.
 
 **Drafts**: on four recorded sessions, every draft's method was right. A
 Claude judge checked each one, and every yes it gave quotes the line of the

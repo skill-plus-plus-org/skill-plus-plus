@@ -1495,6 +1495,123 @@ thinking off.** Nothing here changes a default: the
 production judge is still gemma3n with no reply shown, and gemma3n has not been
 measured with the reply tail.
 
+## The question restructured
+
+Measured 24 Sep 2026: `gemma4:e4b`, thinking off, `SKILL_PLUS_PLUS_MATCH=0`,
+every run valid (no gap unanswered). Three sets:
+
+| set | sessions | real boundaries | gaps that are not |
+|---|---|---|---|
+| public recordings | 22 | 9 | 77 |
+| private sessions | 21 | 2 | 43 |
+| holdout: the README-video demo recordings | 8 | 4 | 23 |
+
+The holdout's truth comes from the recording script, written before any of the
+variants below existed. It is kept outside the repo, with the private set,
+because it reads a private GitHub repo.
+
+### Why the prose question missed every code switch
+
+The three public misses were all code sessions: c-2said's announced switch to
+a Makefile, c-3's unannounced switch to a refactor, c-same's second feature of
+the same kind. At c-2said the question was *"Is that a new job, unrelated to
+the request above?"*, and the answer was "no". One change at a time, on all
+seven gaps of that session:
+
+| variant | the switch | the six follow-ups |
+|---|---|---|
+| as recorded | no | no |
+| "unrelated to" → "separate from" | **yes** | no |
+| the message without "look at how the tests are run" | no | – |
+| + the last 400 characters of the assistant's reply ("Committed `e37d5f3`…") | no | no |
+| an ending question: "Was the request above already finished before they said this?" | no | no |
+| ending and beginning together | no | no |
+
+With thinking on, the reasoning named the cause: *"The request immediately
+preceding the action was: 'I want a Makefile…' … The action taken is creating
+and using the Makefile … It is not an unrelated job."* The model read "the
+request above" as the **new** message, the one printed right above the
+question, and checked whether the steps after it fitted it. They always do.
+The ending question failed the same way: "was the request above finished"
+became "was the Makefile finished". Knowledge work passed only because a new
+task there is unrelated to both readings.
+
+### Sections instead of prose
+
+V1 kept every input and changed the form: named sections (the earlier task
+with the assistant's last actions, the new message, what the assistant did
+after it), one line per action, the message quoted, and a question that names
+both sides: *"Does the new message start a new task, separate from the earlier
+task?"* V2–V5 each changed one thing on V1: a shorter first sentence, a
+`# Your goal:` line, the developer's command descriptions, and the new message
+grouped with what followed it.
+
+| | public: caught / false cuts | private | holdout |
+|---|---|---|---|
+| V0, the prose question | 6/9 · 0/77 | 0/2 · 0/43 | 4/4 · 0/23 |
+| V1, sections | 9/9 · 0/77 | 2/2 · **10/43** | 4/4 · **2/23** |
+| V2–V5 | 9/9 · 0–1/77 | 2/2 · 8–10/43 | – |
+
+V1 fixed all three code sessions, and found `263d65ce` step 9, which thinking
+off had never found. It also cut at follow-ups: six false cuts appeared in every
+variant, four of them the same instruction in different sessions, to
+regenerate a generated file from the case just added. The prose question's
+zero false cuts had been a no-sayer's; it
+caught none of the private boundaries. Remove the confusion, and what shows is
+that the prompt never said how big a task is. V2–V5 moved single gaps at the
+model's edge and fixed none of the six.
+
+### What counts as a new task
+
+V6 added a definition before the question: a new task could be done even if
+the earlier task had never happened, in the same project and for the same kind
+of work; it is still the earlier task when the message continues, checks,
+corrects, redoes, finishes or builds on what that task produced.
+
+It removed all ten private false cuts and both on the holdout, but missed c-3
+and c-same again. Asked with thinking on at those two, V6 answered "yes" both
+times, by its own test: *"Could the developer ask to simplify `wordfreq.py`
+without ever having created or committed a Makefile? Yes."* The definition was
+right; the one-word answer could not run the counterfactual. V7 names the
+observable signal that reasoning turned on, and narrows "redoes", a suspect
+the probe did not confirm:
+
+> A new task has a goal of its own: it could be done even if the earlier task
+> had never happened. That holds in the same project, and for the same kind of
+> work on another file, feature or document.
+>
+> It is still the earlier task when the new message works on what the earlier
+> task produced: it continues, checks, corrects, finishes or builds on it, or
+> redoes it because the first attempt was not right.
+
+| | public | private | holdout | all |
+|---|---|---|---|---|
+| V0, the prose question | 6/9 · 0/77 | 0/2 · 0/43 | 4/4 · 0/23 | 10/15 · 0/143 |
+| V6 | 7/9 · 0/77 | 1/2 · 0/43 | 4/4 · 0/23 | 12/15 · 0/143 |
+| **V7** | **9/9 · 0/77** | **1/2 · 0/43** | **4/4 · 0/23** | **14/15 · 0/143** |
+
+V7 is the default. Sessions right: public 19 → 22 of 22, private 19 → 20 of 21,
+holdout 8 of 8 both. The median prompt grew from about 1,300 to 1,800
+characters and a gap from 1.15 s to 1.30 s at the median, at session end.
+
+The new cuts put five more episodes into the public ledger, so merging was
+measured again (`recurrence.py`, `nomic-embed-text`): still 0 wrong merges;
+6 of 7 repeated procedures in one candidate (5 of 6 before), the two Makefile
+runs and the three refactors among them; code on another subject 4/53 (1/23
+before, on fewer pairs), with add-feature-with-tests across 7 entries.
+
+What this does not show:
+
+- **The code switches were recovered on the sessions the wording was tuned
+  against.** The holdout has no code session with more than one task; what it
+  shows is the other direction, no new false cut at unseen follow-ups ("Fix
+  those…", "Approved. Build it…"), where V1 cut twice. New code recordings with
+  several tasks are the test this still needs.
+- **Which of V7's two changes recovered c-3 and c-same** was not separated.
+- **`263d65ce` step 9 is still missed.** With thinking on, V6 called it a
+  continuation: the new message asks for an article that includes what the
+  task before it was about. A borderline case, and the only miss left.
+
 ## Same procedure, decided by embedding
 
 Whether a saved episode is a repeat of an existing candidate used to be decided
