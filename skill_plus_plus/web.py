@@ -1321,8 +1321,7 @@ PAGE = r"""<!doctype html>
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
 </style></head><body>
 <header><span style="display:flex;align-items:center;gap:18px"><b>Skill++</b>
-<select id="project" aria-label="Project" hidden></select>
-<nav id="nav"></nav></span><span id="where"></span></header>
+<nav id="nav"></nav></span><select id="project" aria-label="Project" hidden></select></header>
 <main id="list"></main>
 <script>
 let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
@@ -1410,7 +1409,7 @@ function renderProjects(){
   // than offered as "All projects", which would show the same.
   sel.hidden = !list.length;
   sel.innerHTML = (list.length > 1 ? `<option value="*">All projects</option>` : "") + list.map(p =>
-    `<option value="${esc(p.key)}" title="${esc(p.path || "sessions recorded without a folder")}">${esc(p.name)} (${p.candidates})</option>`).join("");
+    `<option value="${esc(p.key)}" title="${esc(p.path || "sessions recorded without a folder")}">${esc(p.name)}</option>`).join("");
   sel.value = project !== null ? project : list.length === 1 ? list[0].key : "*";
   sel.onchange = () => {
     project = sel.value === "*" ? null : sel.value;
@@ -1818,7 +1817,6 @@ function render(){
 }
 
 function paint(){
-  document.getElementById("where").textContent = `ready at ${S.threshold}×`;
   renderNav();
   const list = document.getElementById("list");
   if(view === "drafts") return renderDrafts(list);
