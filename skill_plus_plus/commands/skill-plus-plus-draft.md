@@ -2,7 +2,7 @@
 description: Draft a SKILL.md for one captured candidate; questions go into the draft
 ---
 
-# Skill Plus Plus — draft
+# Skill++ — draft
 
 Turn one captured candidate into a **draft** `SKILL.md`. Nobody is watching this
 run, which changes two things: your questions go into the draft instead of the
@@ -27,7 +27,7 @@ the draft, you still write only to that directory, and you still never install.
 ## 1. Load it
 
 ```bash
-python3 bin/skillpp show <id> --json --draft
+python3 bin/skill-plus-plus show <id> --json --draft
 ```
 
 If it has `turns`, that is the run as it happened: each thing the person asked,
@@ -42,7 +42,7 @@ dependencies and the questions the engine generated.
 ## 2. Name it, before deciding anything else
 
 ```bash
-python3 bin/skillpp name <id> --title "<what the task is>" \
+python3 bin/skill-plus-plus name <id> --title "<what the task is>" \
   --description "<one line: when does this apply?>"
 ```
 
@@ -67,7 +67,7 @@ hard limit.
 ## 3. Write the body
 
 ```bash
-python3 bin/skillpp scaffold <id> --name <skill-name> \
+python3 bin/skill-plus-plus scaffold <id> --name <skill-name> \
   --description "<one line>" --out <draft-dir>/SKILL.md    # the literal path from the arguments
 ```
 
@@ -88,7 +88,7 @@ preview images before rendering new ones, leave it out: a warning that fires on
 everything is a warning nobody reads. Never paste the command or its paths.
 
 Where the candidate has `turns`, that is all the scaffold writes: it leaves a
-`<!-- skillpp:write-the-procedure -->` marker where the procedure belongs.
+`<!-- skill-plus-plus:write-the-procedure -->` marker where the procedure belongs.
 Replace the marker. Write, in your own words:
 
 - `## When to use` — the trigger, not a summary.
@@ -118,7 +118,7 @@ default?", not by quoting where it went.
 
 Do not paste the shell back in. If the conversation is too thin to write a
 procedure from — the replies are short and the work happened entirely in tool
-calls — the steps are still there: `python3 bin/skillpp show <id> --json`
+calls — the steps are still there: `python3 bin/skill-plus-plus show <id> --json`
 (without `--draft`) lists them, and you can write the procedure from those
 instead. Say in your reply that you did.
 
@@ -127,21 +127,33 @@ all. Edit it into something worth reading.
 
 ## 4. Ask through open questions
 
-Nobody can answer you during this run, so every question you would ask the
-developer becomes a line under:
+Nobody can answer you during this run, so what you would ask the developer
+becomes a question under `## Open questions`. Ask **at most three**: the ones
+whose answer changes the procedure most. Settle anything smaller yourself by
+writing the safer choice into the steps as a condition ("if the user asks for
+X, ...").
+
+Under each question, suggest three answers, indented, the likeliest first. Each
+one complete enough to fold into the skill as it stands. The developer answers
+on the review page with a click, or writes their own, and the answers are
+folded back into the draft:
 
 ```markdown
 ## Open questions
+
+1. Should invalid values be rejected or clamped?
+   - Reject them with a clear error message
+   - Clamp them to the nearest valid value
+   - Ask the user which one they want
 ```
 
-Write what you do not know, not a guess dressed as fact. A draft that admits two
-gaps is worth more than one that invents the answers, because the reader can see
-what to check. The developer answers them on the review page, and the answers
-are folded back into the draft.
+Write what you do not know, not a guess dressed as fact. A draft that admits
+two gaps is worth more than one that invents the answers, because the reader
+can see what to check.
 
 ## 5. Stop before installing
 
-**Do not run `python3 bin/skillpp promote`. Do not write into the skills directory.** Leave
+**Do not run `python3 bin/skill-plus-plus promote`. Do not write into the skills directory.** Leave
 the draft where the scaffold put it and print the path.
 
 Installing is the developer's decision and this run does not have their
@@ -155,7 +167,7 @@ particular bug, a session of looking around, work that never finished — write
 nothing and print exactly this line, on its own:
 
 ```
-SKILLPP-DECLINE: <one short reason>
+SKILL-PLUS-PLUS-DECLINE: <one short reason>
 ```
 
 A wrong draft costs more than no draft.

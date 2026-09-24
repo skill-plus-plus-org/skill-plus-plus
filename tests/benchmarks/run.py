@@ -45,11 +45,11 @@ def load(repo: Path | None):
     """
     if repo is not None:
         sys.path.insert(0, str(Path(repo).resolve()))
-        for name in [m for m in sys.modules if m.startswith("skillpp")]:
+        for name in [m for m in sys.modules if m.startswith("skill-plus-plus")]:
             del sys.modules[name]
-    from skillpp.capture import handle_prompt, handle_session_end, handle_tool
-    from skillpp.config import Config
-    from skillpp.ledger import Ledger
+    from skill_plus_plus.capture import handle_prompt, handle_session_end, handle_tool
+    from skill_plus_plus.config import Config
+    from skill_plus_plus.ledger import Ledger
     return handle_prompt, handle_tool, handle_session_end, Config, Ledger
 
 _INPUT_KEY = {"Bash": "command", "Write": "file_path", "Edit": "file_path",
@@ -109,7 +109,7 @@ def score(cases, use_model: bool, repo=None) -> dict:
     rows = []
     for case in cases:
         with tempfile.TemporaryDirectory() as tmp:
-            banked = play(case, Path(tmp) / "skillpp", api, merge=use_model)
+            banked = play(case, Path(tmp) / "skill-plus-plus", api, merge=use_model)
             seg_ok = len(banked) == case.episodes
             top = max((e.occurrences for e in banked), default=0)
             row = {"name": case.name, "kind": case.kind, "tags": case.tags,
@@ -126,8 +126,8 @@ def score(cases, use_model: bool, repo=None) -> dict:
             # Ranking is only meaningful where segmentation produced the right
             # episodes; otherwise it is scoring the wrong objects.
             if use_model and seg_ok and banked:
-                from skillpp.episode import rank
-                config = Config(Path(tmp) / "skillpp")
+                from skill_plus_plus.episode import rank
+                config = Config(Path(tmp) / "skill-plus-plus")
                 hints = [rank(e, host=config.ollama_url,
                               model=config.local_model)[0] for e in banked]
                 got = sum(1 for h in hints if h == "method")

@@ -5,8 +5,8 @@ what was decided about them. Accept promotes, Decline dismisses, and an
 accepted candidate gets a Draft button that has the developer's agent
 write a draft. Everything else the ledger holds stays in the CLI.
 
-Every action runs an existing command — `skillpp promote`, `skillpp dismiss`,
-`skillpp draft --apply` — as a subprocess, so the page cannot drift from what
+Every action runs an existing command — `skill-plus-plus promote`, `skill-plus-plus dismiss`,
+`skill-plus-plus draft --apply` — as a subprocess, so the page cannot drift from what
 the commands do and there is no second copy of their rules to keep in step.
 
 Binds to 127.0.0.1 with no authentication; it must never be exposed.
@@ -40,12 +40,12 @@ from .sanitize import scrub
 from .segment import is_read_only
 from .signals import DESTRUCTIVE
 
-CLI = Path(__file__).resolve().parent.parent / "bin" / "skillpp"
+CLI = Path(__file__).resolve().parent.parent / "bin" / "skill-plus-plus"
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 # A session id reaches `_find_transcript` as a glob, so it is checked before it
 # gets there rather than trusted because the page sent it.
 _SAFE_SESSION = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
-# `skillpp draft` gives the agent 900 seconds by default. A job still marked
+# `skill-plus-plus draft` gives the agent 900 seconds by default. A job still marked
 # running well past that died with the server that started it.
 DRAFT_STALE_SECONDS = 1200
 
@@ -119,11 +119,11 @@ def row_state(config: Config, entry) -> dict:
                      if ".revisions" not in p.parts)
     if status.get("state") == "running":
         if fresh:
-            return {"state": "creating"}
+            return {"state": "creating", "since": status.get("started")}
         return {"state": "failed", "message": "the server restarted while the draft ran"
                 if orphaned else "the draft run did not finish"}
     if drafted and status.get("state") == "revising" and fresh:
-        return {"state": "revising", "path": str(drafted[0])}
+        return {"state": "revising", "path": str(drafted[0]), "since": status.get("started")}
     if drafted:
         stale = status.get("state") == "revising"
         message = ("the server restarted while the revision ran" if stale and orphaned else
@@ -137,14 +137,14 @@ def row_state(config: Config, entry) -> dict:
 
 
 def days_left(config: Config, entry, now=None) -> int | None:
-    """Days until `skillpp expire` would delete this candidate, or None if it
-    never would. Mirrors `Ledger.expire`: only a candidate still collecting
-    expires, `candidate_ttl_days` after it was last recognized — so every new
-    recognition resets the clock, and one that reaches the threshold keeps."""
+    """Days until `skill-plus-plus expire` would delete this candidate, or None if it
+    never would. Mirrors `Ledger.expire`: a candidate, pending or still
+    collecting, expires `candidate_ttl_days` after it was last recognized, so
+    every new recognition resets the clock."""
     from datetime import datetime, timedelta, timezone
     from .ledger import _parse_ts
 
-    if entry.status != STATUS_CANDIDATE or entry.ready(config.recurrence_threshold):
+    if entry.status != STATUS_CANDIDATE:
         return None
     now = now or datetime.now(timezone.utc)
     seconds = (_parse_ts(entry.last_seen) + timedelta(days=config.candidate_ttl_days)
@@ -219,6 +219,11 @@ def _placement(entry) -> list[int] | None:
     agent's words: what it said while serving a request is part of that
     request's reply. Every anchor must agree, or nothing is placed: steps
     shifted under the wrong requests would read worse than the flat list.
+
+    The lead-ins, said before a call, decide when there are any. A closing
+    note captured before `capture._narration` stopped at the first prompt can
+    carry the next request's reply when that request made no call of its own,
+    and a lead-in cannot be misfiled that way.
     """
     turns, steps = entry.turns or [], entry.steps or []
     if not turns or not steps:
@@ -233,16 +238,17 @@ def _placement(entry) -> list[int] | None:
         return None
     cwd = (entry.projects or [None])[0]
     replies = [_squash(turn.get("reply")) for turn in turns]
-    offsets = set()
+    offsets: dict[str, set[int]] = {"assistant_note": set(), "closing_note": set()}
     for step, number in zip(steps, serves):
-        for said in (step.get("assistant_note"), step.get("closing_note")):
+        for key, found in offsets.items():
             # Parameterised as the reply was, so a path in it still matches.
-            anchor = _squash(parameterize(str(said or ""), cwd))[:60]
+            anchor = _squash(parameterize(str(step.get(key) or ""), cwd))[:60]
             if len(anchor) < 12:
                 continue
             hits = [i for i, reply in enumerate(replies) if anchor in reply]
             if len(hits) == 1:
-                offsets.add(hits[0] - number)
+                found.add(hits[0] - number)
+    offsets = offsets["assistant_note"] or offsets["closing_note"]
     if len(offsets) != 1:
         return None
     offset = offsets.pop()
@@ -359,7 +365,7 @@ def step_groups(entry) -> list[dict] | None:
     return groups
 
 
-# The cache and the model call live in `skillpp.summary`, because capture asks
+# The cache and the model call live in `skill_plus_plus.summary`, because capture asks
 # the same question when it banks a candidate (`capture._name_from_model`) and
 # stores the sentence there, so an opened row usually needs no model at all.
 _summaries_path = summaries_path
@@ -477,7 +483,7 @@ def _by_prefix(session_id: str) -> str | None:
     """A transcript whose name *starts* with this id, when exactly one does.
 
     Entries banked from the live-session fixtures carry the short tag the
-    fixture is filed under (`f32d548f`) rather than the full uuid, and the
+    fixture is filed under (`0dfd6eb1` for `0dfd6eb1-p-v1.json`) rather than the full uuid, and the
     fixtures are real sessions whose transcripts are still on disk. Accepted
     only when the prefix picks out a single file: a match that is ambiguous is
     not provenance.
@@ -533,17 +539,22 @@ def _draft_files(config: Config, entry_id: str) -> list[Path]:
 # written before the rename.
 _QUESTIONS_HEADING = re.compile(r"^##\s+(?:Open questions|Known gaps)\s*$",
                                 re.IGNORECASE)
-_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*)$")
+# A question starts at the margin; an item indented under it is one of the
+# answers the agent suggests for it.
+_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$")
 
 
-def split_open_questions(text: str) -> tuple[list[str], str]:
+def split_open_questions(text: str) -> tuple[list[dict], str]:
     """The draft's `## Open questions` and the SKILL.md without that section.
 
     The drafting agent cannot ask, so it writes what it could not tell from the
-    runs there (`skillpp/commands/skillpp-draft.md`, *Ask through open questions*). Those are gaps in the
+    runs there (`skill_plus_plus/commands/skill-plus-plus-draft.md`, *Ask through open questions*). Those are gaps in the
     skill, not part of it: the page shows them as answer fields, hides the
     section from the rendered draft, and refuses the download while any remain.
     The section ends at the next heading or horizontal rule.
+
+    Each question is `{"question", "options"}`: the answers suggested under it,
+    empty for a draft written before the agent suggested any.
     """
     lines = text.split("\n")
     start = next((i for i, line in enumerate(lines) if _QUESTIONS_HEADING.match(line)), None)
@@ -554,15 +565,21 @@ def split_open_questions(text: str) -> tuple[list[str], str]:
         if re.match(r"^(#{1,6}\s|-{3,}\s*$|\*{3,}\s*$|_{3,}\s*$)", lines[i]):
             end = i
             break
-    questions: list[str] = []
+    questions: list[dict] = []
     for line in lines[start + 1:end]:
         item = _ITEM.match(line)
-        if item:
-            questions.append(item.group(1).strip())
+        if item and len(item.group(1)) < 2:
+            questions.append({"question": item.group(2).strip(), "options": []})
+        elif item and questions:
+            questions[-1]["options"].append(item.group(2).strip())
         elif line.strip() and questions:
-            questions[-1] += " " + line.strip()
+            last = questions[-1]
+            if last["options"]:
+                last["options"][-1] += " " + line.strip()
+            else:
+                last["question"] += " " + line.strip()
     remaining = "\n".join(lines[:start] + lines[end:])
-    return [q for q in questions if q], remaining
+    return [q for q in questions if q["question"]], remaining
 
 
 def _skill_digest(skill_md: Path) -> str:
@@ -633,6 +650,7 @@ def list_drafts(config: Config) -> list[dict]:
             "files": [str(p.relative_to(_draft_dir(config, entry.id)))
                       for p in _draft_files(config, entry.id)],
             "revising": state["state"] == "revising",
+            "since": state.get("since"),
             "message": state.get("message", ""),
             "downloaded_at": _downloaded_at(config, entry.id, skill_md),
             # When SKILL.md was last written, by the draft or a revision. Drafts
@@ -706,7 +724,7 @@ def install_skill(config: Config, entry_id: str, target: str,
 
     `project` is `<repo>/.claude/skills/<name>/`, the repo the candidate belongs
     to: committed there, it reaches everyone who works in the repo. `personal`
-    is `~/.claude/skills/` (or the folder `skillpp web --skills-dir` names).
+    is `~/.claude/skills/` (or the folder `skill-plus-plus web --skills-dir` names).
     The folder is built from the ledger only, never from the request. A folder
     of the same name that this draft did not install is left alone; our own is
     replaced, which is how a revision reaches an installed skill.
@@ -815,17 +833,17 @@ def _decide(config: Config, entry_id: str, command: str) -> dict:
 
 
 def accept(config: Config, entry_id: str) -> dict:
-    """Promote: `skillpp promote <id>`, with no skill file yet."""
+    """Promote: `skill-plus-plus promote <id>`, with no skill file yet."""
     return _decide(config, entry_id, "promote")
 
 
 def decline(config: Config, entry_id: str) -> dict:
-    """Dismiss: `skillpp dismiss <id>`."""
+    """Dismiss: `skill-plus-plus dismiss <id>`."""
     return _decide(config, entry_id, "dismiss")
 
 
 def reinstate(config: Config, entry_id: str) -> dict:
-    """Reinstate a declined candidate: `skillpp reopen <id>`."""
+    """Reinstate a declined candidate: `skill-plus-plus reopen <id>`."""
     entry = Ledger(config).get(entry_id)
     if not entry:
         return {"ok": False, "error": "no such entry"}
@@ -847,7 +865,7 @@ def _draft_job(config: Config, entry_id: str, note: str = "") -> None:
         if proc.returncode != 0:
             _write_status(config, entry_id, state="failed", message=_tail(said))
         elif not sorted(_draft_dir(config, entry_id).rglob("SKILL.md")):
-            # `skillpp draft` exits 0 without a file only for a stated decline.
+            # `skill-plus-plus draft` exits 0 without a file only for a stated decline.
             _write_status(config, entry_id, state="declined", message=_tail(said, 1))
         else:
             _write_status(config, entry_id, state="ready")
@@ -863,7 +881,7 @@ MAX_NOTE = 2000
 
 
 def create_skill(config: Config, entry_id: str, note: str = "") -> dict:
-    """Draft: `skillpp draft <id> --apply`, in the background.
+    """Draft: `skill-plus-plus draft <id> --apply`, in the background.
 
     Only for an accepted candidate, and one run at a time per candidate. The
     draft lands in `<root>/drafts/<id>/` and is never installed from here. A
@@ -912,7 +930,7 @@ def _revise_job(config: Config, entry_id: str, instruction: str) -> None:
 
 def revise(config: Config, entry_id: str, instruction: str,
            limit: int = MAX_INSTRUCTION) -> dict:
-    """Revise: `skillpp revise <id> --instruction … --apply`, in the background."""
+    """Revise: `skill-plus-plus revise <id> --instruction … --apply`, in the background."""
     instruction = (instruction or "").strip()
     if not instruction:
         return {"ok": False, "error": "say what to change"}
@@ -939,7 +957,7 @@ MAX_ANSWERS = 6000
 
 
 def answer_questions(config: Config, entry_id: str, answers: list) -> dict:
-    """Send answers to a draft's open questions: one `skillpp revise` run that
+    """Send answers to a draft's open questions: one `skill-plus-plus revise` run that
     folds each answer into the skill and removes the questions it answers."""
     pairs = [(str(a.get("question", "")).strip(), str(a.get("answer", "")).strip())
              for a in answers if isinstance(a, dict)]
@@ -952,7 +970,8 @@ def answer_questions(config: Config, entry_id: str, answers: list) -> dict:
     instruction = (
         "The developer answered open questions from the draft. For each answer, "
         "change the skill where it applies so it no longer needs the question, then "
-        "remove that question from the `## Open questions` section. Remove the "
+        "remove that question, with the answers suggested under it, from the "
+        "`## Open questions` section. Remove the "
         "section when it is empty. Leave unanswered questions as they are.\n\n" + text)
     return revise(config, entry_id, instruction, limit=MAX_ANSWERS + 1000)
 
@@ -1083,7 +1102,7 @@ def serve(config: Config, skills_dir: Path | None = None, port: int = 8765,
 PAGE = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>skillpp</title>
+<title>Skill++</title>
 <style>
  :root{--bg:#0c0d10;--panel:#12141a;--surface:#171922;--line:#262935;
    --fg:#eceef2;--dim:#9da3b4;--muted:#63697a;
@@ -1124,6 +1143,24 @@ PAGE = r"""<!doctype html>
    border:2px solid var(--line);border-top-color:var(--go);animation:s 1s linear infinite;
    vertical-align:-1px}
  @keyframes s{to{transform:rotate(360deg)}}
+ /* An agent at work on this card: the notice stays in view, the draft it is
+    replacing is blurred, and a bar sweeps along the card's top edge. */
+ .busy{position:relative;overflow:hidden}
+ .busy::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;z-index:6;
+   background:linear-gradient(90deg,transparent,var(--go),transparent);background-size:50% 100%;
+   background-repeat:no-repeat;animation:sweep 1.3s ease-in-out infinite}
+ @keyframes sweep{from{background-position:-50% 0}to{background-position:150% 0}}
+ .busy .body > :not(.working){filter:blur(3px);opacity:.35;pointer-events:none;user-select:none;
+   transition:filter .3s,opacity .3s}
+ .working{position:sticky;top:12px;z-index:5;display:flex;align-items:center;gap:14px;margin:0 0 14px;
+   padding:14px 16px;border:1px solid color-mix(in srgb,var(--go) 45%,transparent);border-radius:10px;
+   background:color-mix(in srgb,var(--panel) 92%,transparent);backdrop-filter:blur(4px)}
+ .working .ring{flex:none;width:22px;height:22px;border-radius:50%;
+   border:2.5px solid color-mix(in srgb,var(--go) 25%,transparent);border-top-color:var(--go);
+   animation:s .8s linear infinite}
+ .working b{display:block;font-size:14px;color:var(--fg);margin-bottom:2px}
+ .working .working-note{display:block;font-size:12px;color:var(--dim)}
+ .working .elapsed{margin-left:auto;font:12px var(--mono);color:var(--dim)}
  .empty{color:var(--muted);padding:32px 0;text-align:center}
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
  .cand.ready{border-left:3px solid #fbbf24;background:linear-gradient(90deg,rgba(251,191,36,.07),var(--panel) 40%)}
@@ -1254,6 +1291,18 @@ PAGE = r"""<!doctype html>
  .questions h4{margin:0 0 4px;font:600 12px var(--mono);color:#fbbf24;text-transform:uppercase;
    letter-spacing:.04em}
  .questions .hint{margin:0 0 10px;font-size:12px;color:var(--dim)}
+ .questions .q{margin:14px 0 0}
+ .questions .qtext{display:block;margin:0 0 6px;font-size:13px;color:var(--fg)}
+ .questions .opt{display:flex;align-items:center;gap:10px;margin:5px 0;padding:7px 10px;
+   border:1px solid var(--line);border-radius:7px;background:var(--bg);font-size:13px;
+   color:var(--fg);cursor:pointer;transition:border-color .12s,background .12s}
+ .questions .opt:hover{border-color:rgba(251,191,36,.45)}
+ .questions .opt.on{border-color:#fbbf24;background:rgba(251,191,36,.10)}
+ .questions .opt input[type=radio]{accent-color:#fbbf24;margin:0;flex:none}
+ .questions .opt .other{color:var(--dim);white-space:nowrap}
+ .questions .opt input[type=text]{flex:1;min-width:0;font:13px var(--sans);color:var(--fg);
+   background:transparent;border:0;border-bottom:1px dashed var(--line);padding:2px 0;outline:none}
+ .questions .opt input[type=text]:focus{border-bottom-color:#fbbf24}
  .questions label{display:block;margin:10px 0 4px;font-size:13px;color:var(--fg)}
  .questions code{font:12px var(--mono);background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
  .questions textarea{width:100%;min-height:52px;resize:vertical;font:13px/1.5 var(--sans);
@@ -1271,9 +1320,8 @@ PAGE = r"""<!doctype html>
    color:var(--dim);border:1px solid var(--line);white-space:nowrap}
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
 </style></head><body>
-<header><span style="display:flex;align-items:center;gap:18px"><b>skillpp</b>
-<select id="project" aria-label="Project" hidden></select>
-<nav id="nav"></nav></span><span id="where"></span></header>
+<header><span style="display:flex;align-items:center;gap:18px"><b>Skill++</b>
+<nav id="nav"></nav></span><select id="project" aria-label="Project" hidden></select></header>
 <main id="list"></main>
 <script>
 let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
@@ -1345,7 +1393,7 @@ async function startDraft(id){
 // Which project the page shows, remembered in this browser: `null` is every
 // project, "" the entries that have none. A candidate belongs to one project
 // (`capture.project_of`); older ones may list several and show under each.
-const PROJECT_KEY = "skillpp.project";
+const PROJECT_KEY = "skill_plus_plus.project";
 let ALL = null, project = null;
 try { const v = localStorage.getItem(PROJECT_KEY); if (v !== null) project = JSON.parse(v); } catch (e) {}
 const inProject = x => project === null || (x.projects || [""]).includes(project);
@@ -1356,10 +1404,13 @@ function renderProjects(){
   const sel = document.getElementById("project");
   const list = ALL.projects || [];
   if (project !== null && !list.some(p => p.key === project)) project = null;   // gone since
-  sel.hidden = list.length < 2;          // one project: nothing to choose
-  sel.innerHTML = `<option value="*">All projects</option>` + list.map(p =>
-    `<option value="${esc(p.key)}" title="${esc(p.path || "sessions recorded without a folder")}">${esc(p.name)} (${p.candidates})</option>`).join("");
-  sel.value = project === null ? "*" : project;
+  // Shown whenever there is a project: candidates and skills each belong to
+  // one, and this is where the page says which. With one, it is named rather
+  // than offered as "All projects", which would show the same.
+  sel.hidden = !list.length;
+  sel.innerHTML = (list.length > 1 ? `<option value="*">All projects</option>` : "") + list.map(p =>
+    `<option value="${esc(p.key)}" title="${esc(p.path || "sessions recorded without a folder")}">${esc(p.name)}</option>`).join("");
+  sel.value = project !== null ? project : list.length === 1 ? list[0].key : "*";
   sel.onchange = () => {
     project = sel.value === "*" ? null : sel.value;
     try { localStorage.setItem(PROJECT_KEY, JSON.stringify(project)); } catch (e) {}
@@ -1370,7 +1421,7 @@ function renderProjects(){
 // Which drafts this viewer has looked at, per version: a finished revision is
 // news again. Kept in the browser, because it is one viewer's attention and
 // nothing the ledger needs. On a first visit what already exists is not news.
-const SEEN_KEY = "skillpp.seen-drafts";
+const SEEN_KEY = "skill_plus_plus.seen-drafts";
 let seen = null;
 const stamp = iso => Date.parse(iso) || 0;
 function saveSeen(){ try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch(e){} }
@@ -1493,24 +1544,47 @@ function md(src){
   return head + out.join("\n");
 }
 
+const elapsed = since => {
+  const t = Math.max(0, Date.now() / 1000 - Number(since));
+  return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+};
+function working(title, note, since){
+  return `<div class="working"><span class="ring"></span><div><b>${title}</b><span class="working-note">${note}</span></div>
+    ${since ? `<span class="elapsed" data-since="${since}">${elapsed(since)}</span>` : ""}</div>`;
+}
+// Every running notice counts up on its own; the page polls the server only every few seconds.
+if (typeof document !== "undefined") setInterval(() => document.querySelectorAll("[data-since]")
+  .forEach(el => { el.textContent = elapsed(el.dataset.since); }), 1000);
+
 function questionsBlock(d){
   if(!d.questions.length || d.revising) return "";
   const id = esc(d.id), given = answers[d.id] || {};
+  const one = (q, i) => {
+    const a = given[i] || {}, name = `q-${id}-${i}`;
+    if(!q.options.length)   // a draft written before the agent suggested answers
+      return `<div class="q"><label class="qtext" for="${name}">${i + 1}. ${mdInline(q.question)}</label>
+        <textarea id="${name}" data-answer="${id}" data-index="${i}" data-other>${esc(a.text || "")}</textarea></div>`;
+    const opt = (k, body) => `<label class="opt${a.choice === k ? " on" : ""}"><input type="radio" name="${name}"
+        data-answer="${id}" data-index="${i}" data-choice="${k}"${a.choice === k ? " checked" : ""}>${body}</label>`;
+    return `<div class="q"><p class="qtext">${i + 1}. ${mdInline(q.question)}</p>
+      ${q.options.map((o, k) => opt(String(k), `<span>${mdInline(o)}</span>`)).join("")}
+      ${opt("other", `<span class="other">Other:</span><input type="text" data-answer="${id}" data-index="${i}"
+        data-other placeholder="write your own answer" value="${esc(a.text || "")}">`)}</div>`;
+  };
   return `<div class="questions"><h4>Open questions</h4>
-    <p class="hint">The agent could not tell these from the recorded runs. Answer them to finish the skill; it downloads once none are left.</p>
-    ${d.questions.map((q, i) => `<label for="q-${id}-${i}">${i + 1}. ${mdInline(q)}</label>
-      <textarea id="q-${id}-${i}" data-answer="${id}" data-index="${i}">${esc(given[i] || "")}</textarea>`).join("")}
-    <div class="bar" style="margin-top:10px"><button class="create" data-answer-send="${id}">Send answers</button></div>
+    <p class="hint">The agent could not tell these from the recorded runs. Pick an answer or write your own; the skill downloads once none are left.</p>
+    ${d.questions.map(one).join("")}
+    <div class="bar" style="margin-top:12px"><button class="create" data-answer-send="${id}">Send answers</button></div>
   </div>`;
 }
 
 function reviseBlock(d){
   const id = esc(d.id);
   const err = d.message ? `<p class="err">Last revision: ${esc(d.message)}</p>` : "";
-  if(d.revising) return `<div class="revise"><span class="state"><span class="spin"></span>Revising… the draft below updates when the agent is done</span></div>`;
+  if(d.revising) return "";   // the notice at the top of the card says it
   if(!writing.has(d.id)) return `<div class="revise">${err}<button class="create" data-revise-open="${id}">Revise</button></div>`;
   return `<div class="revise">${err}
-    <textarea data-instruction="${id}" placeholder="What should change? e.g. also cover handbook fact cases, not only walkthrough cards">${esc(drafts[d.id] || "")}</textarea>
+    <textarea data-instruction="${id}" placeholder="What should change? e.g. cover the case where the file does not exist yet">${esc(drafts[d.id] || "")}</textarea>
     <div class="bar"><button class="create" data-revise-send="${id}">Send to agent</button>
     <button data-revise-cancel="${id}">Cancel</button></div></div>`;
 }
@@ -1527,12 +1601,12 @@ function renderDrafts(list){
       + `<button data-install="${esc(d.id)}" data-target="personal" title="Into ~/.claude/skills/, only for you">${d.project_name ? "Just for me" : "Install for me"}</button>`
       + `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">Download</a>`;
   const kind = d => d.installed ? "installed" : d.downloaded_at ? "downloaded" : "review";
-  const card = d => `<div class="draft ${kind(d)} ${open.has(d.id)?"open":""} ${isNew(d)?"fresh":""}">
+  const card = d => `<div class="draft ${kind(d)} ${open.has(d.id) || d.revising ? "open" : ""} ${d.revising ? "busy" : ""} ${isNew(d)?"fresh":""}">
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
         ${isNew(d) ? `<span class="new" title="Written since you last opened it">New</span>` : ""}
-        <span class="ago" title="${esc(when(d.drafted_at))}">${d.revising ? "revising" : "drafted " + ago(d.drafted_at)}</span>
+        <span class="ago" title="${esc(when(d.drafted_at))}">${d.revising ? `<span class="spin"></span>Revising…` : "drafted " + ago(d.drafted_at)}</span>
         <span class="badge ${kind(d)}">${{installed: "Installed", downloaded: "Downloaded", review: "To review"}[kind(d)]}</span>
         <span class="acts">${d.questions.length
           ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
@@ -1540,6 +1614,7 @@ function renderDrafts(list){
       </div>
       <p class="desc">${esc(d.description)}</p>
       <div class="body">
+        ${d.revising ? working("Revising the skill", "The agent is working your answers into the draft. It updates here when it is done.", d.since) : ""}
         <p class="files">${d.files.map(esc).join(" · ")}</p>
         ${questionsBlock(d)}
         <div class="md">${md(d.body)}</div>
@@ -1578,13 +1653,26 @@ function renderDrafts(list){
     writing.delete(b.dataset.reviseCancel); delete drafts[b.dataset.reviseCancel]; render();
   });
   list.querySelectorAll("[data-instruction]").forEach(t => t.oninput = () => { drafts[t.dataset.instruction] = t.value; });
-  list.querySelectorAll("[data-answer]").forEach(t => t.oninput = () => {
-    (answers[t.dataset.answer] ||= {})[t.dataset.index] = t.value;
+  // An answer is the suggestion picked, or the text written under "Other";
+  // typing there picks "Other".
+  const answerOf = el => ((answers[el.dataset.answer] ||= {})[el.dataset.index] ||= {});
+  list.querySelectorAll("input[type=radio][data-answer]").forEach(r => r.onchange = () => {
+    answerOf(r).choice = r.dataset.choice;
+    r.closest(".q").querySelectorAll(".opt").forEach(l => l.classList.toggle("on", l.contains(r)));
+    if(r.dataset.choice === "other") r.closest(".opt").querySelector("[data-other]").focus();
+  });
+  list.querySelectorAll("[data-other]").forEach(t => t.oninput = () => {
+    answerOf(t).text = t.value;
+    const radio = t.closest(".opt") && t.closest(".opt").querySelector("input[type=radio]");
+    if(radio && !radio.checked){ radio.checked = true; radio.onchange(); }
   });
   list.querySelectorAll("[data-answer-send]").forEach(b => b.onclick = async () => {
     const id = b.dataset.answerSend, d = S.drafts.find(x => x.id === id), given = answers[id] || {};
-    const payload = d.questions.map((question, i) => ({question, answer: (given[i] || "").trim()}))
-      .filter(a => a.answer);
+    const payload = d.questions.map((q, i) => {
+      const a = given[i] || {};
+      const answer = a.choice && a.choice !== "other" ? q.options[+a.choice] : a.text;
+      return {question: q.question, answer: (answer || "").trim()};
+    }).filter(a => a.answer);
     if(!payload.length){ alert("Answer at least one question."); return; }
     b.disabled = true;
     const r = await (await post("/api/answer", {id, answers: payload})).json();
@@ -1729,7 +1817,6 @@ function render(){
 }
 
 function paint(){
-  document.getElementById("where").textContent = `ready at ${S.threshold}×`;
   renderNav();
   const list = document.getElementById("list");
   if(view === "drafts") return renderDrafts(list);
@@ -1737,7 +1824,7 @@ function paint(){
     : ["drafted", "revising", "installed"].includes(r.state) ? "drafted"
     : ["undecided", "collecting"].includes(r.state) ? (r.ready ? "ready" : "")
     : "accepted";
-  const card = r => `<div class="cand ${highlight(r)} ${openRows.has(r.id)?"open":""}" title="${
+  const card = r => `<div class="cand ${highlight(r)} ${openRows.has(r.id) || r.state === "creating" ? "open" : ""} ${r.state === "creating" ? "busy" : ""}" title="${
     {ready: `${S.threshold}× reached: ready to decide`, accepted: "promoted", drafted: "drafted", declined: "dismissed"}[highlight(r)] || ""}">
       <div class="row" data-row="${esc(r.id)}">
       <span class="chev">›</span>
@@ -1745,10 +1832,10 @@ function paint(){
       ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Promoted", drafted: "Drafted", declined: "Dismissed"}[highlight(r)]}</span>` : ""}
       <span class="acts">${actions(r)}</span>
       ${r.days_left === null ? `<span class="clock"></span>` : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
-        title="Deleted by skillpp expire ${S.ttl} days after it was last recognized, unless it reaches ${S.threshold}× first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
+        title="Deleted by skill-plus-plus expire ${S.ttl} days after it was last recognized, unless you promote it first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
       <span class="seen count ${r.occurrences >= S.threshold ? "reached" : ""}" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
       ${noteBlock(r)}
-      <div class="body">${candidateBody(r)}</div></div>`;
+      <div class="body">${r.state === "creating" ? working("Writing the skill", "The agent reads the first run and drafts the skill. It appears under Drafts when it is done.", r.since) : ""}${candidateBody(r)}</div></div>`;
   const declined = S.rows.filter(r => r.state === "dismissed");
   const promoted = S.rows.filter(r => !["undecided", "collecting", "dismissed"].includes(r.state) && !inDrafts(r));
   const open_ = S.rows.filter(r => ["undecided", "collecting"].includes(r.state));
@@ -1756,7 +1843,7 @@ function paint(){
   list.innerHTML = `
     ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>Candidates you promoted. Draft a skill from them; the draft appears in the Drafts tab.</span></div>
     ${promoted.map(card).join("")}` : ""}
-    <div class="section"><h2>Still collecting</h2><span>Work skillpp saw you repeat. Once something is seen ${S.threshold}×, you can promote or dismiss it.</span></div>
+    <div class="section"><h2>Still collecting</h2><span>Work Skill++ saw you repeat. Once something is seen ${S.threshold}×, you can promote or dismiss it.</span></div>
     ${ready.length + collecting.length ? `<div class="collecting">
       <div class="thead"><span class="chev"></span><span class="title">Title</span>
         <span class="acts"></span><span class="clock">Time to expire</span><span class="count">Count</span></div>

@@ -23,6 +23,7 @@ import os
 import re
 import socket
 import time
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,24 +34,22 @@ from .normalize import parameterize
 from .sanitize import scrub, scrub_obj
 from .segment import (PROMPT_TOOL, feeds_a_write, is_prompt, segment,
                       was_judged)
+from .summary import clip_title
 
 # Tool inputs worth keeping. Anything else is recorded by name only.
 #
 # `Read`'s path is kept because `_substantive` below needs it: read-then-edit is
 # how a procedure names the file it operates on, and the rule that keeps those
 # reads compares the read's `file_path` against the write's. Without the field
-# that comparison is against `None`, so the rule could never fire — measured on
-# a real session, four `Read` steps captured and none kept, while the same
-# session replayed from its transcript kept three.
+# that comparison is against `None`, and the rule never fires.
 #
-# It was left out deliberately once, on the grounds that a `Read` is exploration
-# and exploration should not reach a signature. That holds for a read that leads
-# nowhere, and `_substantive` already drops those. It does not hold for the read
-# that fed the edit.
+# Keeping the path does not let exploration into a signature: a read that leads
+# nowhere is still dropped by `_substantive`. Only the read that fed an edit
+# stays, and it needs the path to be recognised.
 #
 # A step that keeps only a path cannot be described. Asked what the `Write` that
-# produced COVERAGE.md did, a model shown `{"file_path": ".../COVERAGE.md"}`
-# answered "Analyze the existing coverage report" — it wrote one. Every field
+# produced a report did, a model shown `{"file_path": ".../REPORT.md"}` answered
+# "Analyze the existing report" — the step wrote it. Every field
 # here is bounded by `max_field_chars`, so widening it costs length, not shape.
 _KEEP_INPUT = {
     "Bash": ("command", "description"),
@@ -72,24 +71,27 @@ _KEEP_INPUT = {
 # downstream. Short on purpose: the head of a reply says what happened, and the
 # tail is usually payload.
 _RESPONSE_CHARS = 400
-# Pure exploration: recorded, but never the reason a workflow is proposed.
-# UserPrompt is the segmentation sentinel written by handle_prompt — a task
-# boundary, never a step of the workflow itself.
+# Steps that are never the reason a workflow is proposed: looking around, the
+# agent's own bookkeeping (`TodoWrite`, `Task`), and `PROMPT_TOOL`, the
+# sentinel `handle_prompt` writes at a task boundary. `_substantive` keeps a
+# `Read` from this set when it feeds a write.
+#
+# Deliberately not `segment.is_read_only`, which also counts read-only shell
+# commands: those are often the check a procedure exists to perform. On the
+# recorded P-F sessions, writing a post to a word limit, it would drop every
+# `wc -w`; on C-F1, the `git diff` before the commit.
 _NOISE_TOOLS = {"Read", "Glob", "Grep", "TodoWrite", "Task", "WebFetch", "WebSearch",
                 PROMPT_TOOL}
 
 
 def _substantive(steps: list[dict]) -> list[dict]:
-    """The steps that are the work, keeping a `Read` that fed a write.
+    """The steps that are the work: everything outside `_NOISE_TOOLS`, plus a
+    `Read` that feeds a write (`segment.feeds_a_write`).
 
-    `_NOISE_TOOLS` drops every `Read` as pure exploration. Measured over 621
-    real `Read` calls, that is backwards: 38.5% are immediately followed by a
-    write to the *same file* and only 18.2% sit inside a run of reads. So the
-    rule discards twice as many procedure inputs as exploration — and the step
-    it discards is the one that says which file the procedure operates on.
-
-    Read-then-edit stays. A read that leads nowhere still goes, which is the
-    case the original rule was written for.
+    That read names the file the procedure operates on. On the recorded
+    sessions it is about twice as common as a read inside a run of reads, so
+    dropping it would discard more of the procedure than of the exploration. A
+    read that leads nowhere still goes.
     """
     keep: list[dict] = []
     for index, step in enumerate(steps):
@@ -97,8 +99,8 @@ def _substantive(steps: list[dict]) -> list[dict]:
         if tool not in _NOISE_TOOLS:
             keep.append(step)
             continue
-        # One predicate, shared with `trim_leading_exploration`, which used to
-        # cut these again whenever one opened an episode.
+        # The same predicate `trim_leading_exploration` asks, so a read kept
+        # here is not cut again for opening an episode.
         if feeds_a_write(steps, index):
             keep.append(step)
     return keep
@@ -160,7 +162,7 @@ def _save_session(config: Config, session: dict) -> None:
 
 
 def _reply_text(response, limit: int | None = _RESPONSE_CHARS) -> str:
-    """What the tool said back, flattened and bounded.
+    """What the tool said back, flattened, scrubbed and bounded.
 
     Whatever shape the harness uses — a string, a dict of fields, a list of
     content blocks — reduce it to the leading text. `_failed` already inspects
@@ -187,8 +189,34 @@ def _reply_text(response, limit: int | None = _RESPONSE_CHARS) -> str:
                         for b in response)
     else:
         text = str(response or "")
-    flat = " ".join(text.split())
+    # Scrubbed before the cut, for the reason `_clip` gives.
+    flat = scrub(" ".join(text.split()))
     return flat if limit is None else flat[:limit]
+
+
+# A hook fires just after the call it reports, so the last rows of the
+# transcript hold everything it looks for. Reading the whole file on every
+# tool call would cost more the longer the session runs.
+_TRANSCRIPT_TAIL = 40
+
+
+def _transcript_rows(path: str | None, tail: int | None = None) -> Iterator[dict]:
+    """The transcript's rows, parsed; with *tail*, only the last that many.
+
+    Best effort: no path or an unreadable file is no rows, and a line that is
+    not JSON is skipped.
+    """
+    if not path:
+        return
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as fh:
+            for line in (fh.readlines()[-tail:] if tail else fh):
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return
 
 
 def _narration(payload: dict) -> tuple[str, str]:
@@ -203,49 +231,36 @@ def _narration(payload: dict) -> tuple[str, str]:
     before the prompt reports the work that just finished, and what came after
     introduces the work about to start.
 
-    Merging them put every completion report on the wrong task. Measured on
-    `241955c7`, three times in one 24-step session — "Scan done. All 4
-    walkthrough-variant TOPICS...", "Added `atlas_card_staged`...",
-    "Regenerated. 40 cases (was 39)..." — each filed on the first step *after*
-    the next prompt, describing work that had not happened when it was written.
-    The first of those is an investigation's entire deliverable, stored inside
-    the next task.
+    Merged, a report of finished work lands on the first step of the next
+    task, describing work that has not happened yet — an investigation's whole
+    deliverable can end up stored inside the task after it.
 
     The hook payload carries `transcript_path`. Everything here is best effort:
     a missing or unreadable transcript costs the narration and nothing else.
     """
-    path = payload.get("transcript_path")
-    if not path:
-        return "", ""
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as fh:
-            rows = fh.readlines()[-40:]
-    except OSError:
-        return "", ""
     # The text *preceding* the most recent tool call, which is this one — the
     # hook fires after the call, so the transcript already holds it. Taking the
     # text that follows instead returns nothing live, and on a finished
-    # transcript returns that session's closing words for every step: three
-    # consecutive steps were once given the same sentence, describing a file
-    # written long after the first of them ran.
+    # transcript gives every step the session's closing words.
     pending: list[str] = []
     before_last_call: list[str] = []
     # Text that was already closed off by a prompt before this call ran. Held
     # separately so it can be attributed backwards rather than to this step.
+    # Only the first prompt after a call closes its report: a request answered
+    # in words alone, with no call of its own, is that request's reply.
     closing: list[str] = []
     closes_previous: list[str] = []
-    for line in rows:
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    reported = False
+    for row in _transcript_rows(payload.get("transcript_path"), _TRANSCRIPT_TAIL):
         message = row.get("message") or {}
         # A real prompt, not an envelope the harness injected. Everything said
         # before it belongs to the step that preceded it.
         if row.get("type") == "user" and isinstance(message.get("content"), str):
             text = message["content"].strip()
             if text and not text.startswith(_ENVELOPE_PREFIXES):
-                closing, pending = pending, []
+                if not reported:
+                    closing, reported = pending, True
+                pending = []
             continue
         if row.get("type") != "assistant" or not isinstance(
                 message.get("content"), list):
@@ -266,7 +281,7 @@ def _narration(payload: dict) -> tuple[str, str]:
                 # text back; by the second, the hook for the first has already
                 # attributed it. Captured before clearing, because this call may
                 # be the last one in the window and is the one being reported.
-                closes_previous, closing = closing, []
+                closes_previous, closing, reported = closing, [], False
     return _clip(before_last_call), _clip(closes_previous)
 
 
@@ -282,20 +297,8 @@ def _trailing_narration(payload: dict) -> str:
     `transcript_path` at all, in which case this costs the note and nothing
     else.
     """
-    path = payload.get("transcript_path")
-    if not path:
-        return ""
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as fh:
-            rows = fh.readlines()[-40:]
-    except OSError:
-        return ""
     pending: list[str] = []
-    for line in rows:
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for row in _transcript_rows(payload.get("transcript_path"), _TRANSCRIPT_TAIL):
         message = row.get("message") or {}
         if row.get("type") != "assistant" or not isinstance(
                 message.get("content"), list):
@@ -312,7 +315,10 @@ def _trailing_narration(payload: dict) -> str:
 
 
 def _clip(parts: list[str]) -> str:
-    text = " ".join(" ".join(parts).split())
+    # Scrubbed before the cut: a cut can leave a secret shorter than the
+    # patterns that recognise it, and backing off to the last space does not
+    # help when there is none before the cut, in a path or a line of JSON.
+    text = scrub(" ".join(" ".join(parts).split()))
     if len(text) > _RESPONSE_CHARS:
         text = text[:_RESPONSE_CHARS].rsplit(" ", 1)[0] + " …"
     return text
@@ -351,10 +357,8 @@ _ENVELOPE_PREFIXES = ("<task-notification", "<system-reminder",
 
 # How much of the agent's reply to one prompt a candidate keeps. The reply is
 # where a conversation-driven procedure lives — the proposal, the fact-check,
-# the question before building — and measured on three real runs the longest
-# was 7.6k characters. Replies to consecutive prompts with no tool call between
-# them used to overwrite each other in `_narration`, so run 1 of a real session
-# kept none of 4,900 characters.
+# the question before building. The longest reply in the recorded runs was
+# about 7.6k characters.
 _REPLY_CHARS = 8000
 # A `user` row with string content that is not something the person typed: a
 # tool's image result is recorded this way.
@@ -367,28 +371,18 @@ def _transcript_turns(path: str | None) -> list[tuple[str, list[str]]]:
     `text` blocks only, never `thinking`: the reply is what the person read.
     Best effort — no path or an unreadable file is no turns.
     """
-    if not path:
-        return []
     turns: list[tuple[str, list[str]]] = []
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as fh:
-            for line in fh:
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                content = (row.get("message") or {}).get("content")
-                if row.get("type") == "user" and isinstance(content, str):
-                    text = content.strip()
-                    if text and not text.startswith(_ENVELOPE_PREFIXES + _NOT_A_PROMPT):
-                        turns.append((text, []))
-                elif row.get("type") == "assistant" and turns and isinstance(content, list):
-                    turns[-1][1].extend(
-                        block["text"] for block in content
-                        if isinstance(block, dict) and block.get("type") == "text"
-                        and (block.get("text") or "").strip())
-    except OSError:
-        return []
+    for row in _transcript_rows(path):
+        content = (row.get("message") or {}).get("content")
+        if row.get("type") == "user" and isinstance(content, str):
+            text = content.strip()
+            if text and not text.startswith(_ENVELOPE_PREFIXES + _NOT_A_PROMPT):
+                turns.append((text, []))
+        elif row.get("type") == "assistant" and turns and isinstance(content, list):
+            turns[-1][1].extend(
+                block["text"] for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+                and (block.get("text") or "").strip())
     return turns
 
 
@@ -492,18 +486,16 @@ def handle_tool(config: Config, payload: dict) -> None:
     # has. `serves` is the hierarchy: which of the developer's requests this
     # step is working on, so a flat list can still be read as nested work.
     step["serves"] = sum(1 for s in session["steps"] if is_prompt(s)) or 1
-    returned = scrub(_reply_text(payload.get("tool_response")))
+    returned = _reply_text(payload.get("tool_response"))
     if returned:
         step["tool_returned"] = returned
     note, closes_previous = _narration(payload)
-    note = scrub(note)
     if note:
         step["assistant_note"] = note
     # What was said after the previous step and before the prompt that follows
     # it — that step's own completion report, not this one's lead-in. Written
     # backwards onto the step it describes. `setdefault`, because the hook may
     # fire again for the same gap and the first attribution is the right one.
-    closes_previous = scrub(closes_previous)
     if closes_previous:
         earlier = [s for s in session["steps"] if not is_prompt(s)]
         if earlier:
@@ -565,35 +557,31 @@ def handle_session_end(config: Config, payload: dict) -> dict:
 
     # The last task's own completion report, said after its final tool call.
     # Attached before folding so the episode carries it.
-    trailing = scrub(_trailing_narration(payload))
+    trailing = _trailing_narration(payload)
     if trailing:
         work = [s for s in session.get("steps", []) if not is_prompt(s)]
         if work:
             work[-1].setdefault("closing_note", trailing)
             _save_session(config, session)
-    try:
-        result = fold_session(config, session, persist=True)
-    except Exception:
-        raise
+    result = fold_session(config, session, persist=True)
+    # Offline: the session was never folded, so this file is the only copy of
+    # the work. Losing the step is the one thing capture exists to prevent —
+    # being offline costs the candidate, never the record.
+    #
+    # Stamped rather than merely left behind: a live session has a file too, and
+    # counting those as held would report work lost from a session still being
+    # written. `skill-plus-plus stats` reads this key, not the glob.
+    if result.get("status") == "offline":
+        session["held"] = {
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "reason": result.get("reason", ""),
+        }
+        _save_session(config, session)
     else:
-        # Offline: the session was never folded, so this file is the only copy
-        # of the work. Losing the step is the one thing capture exists to
-        # prevent — being offline costs the candidate, never the record.
-        #
-        # Stamped rather than merely left behind: a live session has a file too,
-        # and counting those as held would report work lost from a session still
-        # being written. `skillpp stats` reads this key, not the glob.
-        if result.get("status") == "offline":
-            session["held"] = {
-                "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "reason": result.get("reason", ""),
-            }
-            _save_session(config, session)
-        else:
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        try:
+            path.unlink()
+        except OSError:
+            pass
     return result
 
 
@@ -601,11 +589,10 @@ def handle_session_end(config: Config, payload: dict) -> dict:
 def mark_ending(config: Config, session_id: str, transcript: str | None = None) -> dict:
     """Record that a session ended. The fold itself happens elsewhere.
 
-    All `SessionEnd` does now. The judge and the embeddings used to run inside
-    the hook, which is how nine desktop sessions ended up held: one cold model
-    call can reach `boundary.DEFAULT_TIMEOUT`, Claude Code's hook budget is
-    around a minute, and quitting the app gives less — so the hook was killed
-    and the work waited twelve hours for `fold_pending`'s idle rule.
+    Nothing slow runs in the hook. One cold model call can reach
+    `boundary.DEFAULT_TIMEOUT`, Claude Code gives a hook about a minute and
+    less when the app quits, and a killed hook leaves the work waiting for
+    `fold_pending`'s idle rule.
 
     The stamp is written here, by the hook, and not by the worker: a worker that
     never starts must still leave a trace, and that trace is what lets
@@ -628,9 +615,8 @@ def fold_session_now(config: Config, session_id: str, *,
     """Fold one ended session, alone. The only way into `handle_session_end`.
 
     Both the detached worker and the pending sweep come through here, which is
-    what stops the two of them banking the same session twice — measured once
-    already, when a live `SessionEnd` fold and a manual one ran together and an
-    entry's `occurrences` went to 2.
+    what stops the two of them banking the same session twice and counting
+    every episode in it twice.
     """
     path = _session_file(config, session_id)
     if not path.exists():
@@ -768,15 +754,10 @@ def fold_pending(config: Config, *, exclude: str | None = None,
                  idle_hours: float = PENDING_IDLE_HOURS) -> list[dict]:
     """Bank the sessions that ended without being banked.
 
-    Measured on the real ledger: of ten unbanked sessions, nine were desktop
-    sessions where `SessionEnd` *did* fire — at quitting the app — and the
-    boundary judge got no answer from the local model in time, so each was held.
-    Nothing ever read `held` again. The tenth was a CLI session that never ended.
-
-    The fold no longer runs inside that hook — `SessionEnd` stamps `ending` and
-    spawns a worker — so this sweep is the safety net rather than the cure: it
-    catches a worker that was launched and died with the app, a session held
-    because no model answered, and one where `SessionEnd` never fired at all.
+    `SessionEnd` stamps `ending` and spawns a worker, so this sweep is the
+    safety net rather than the normal path. It catches a worker that was
+    launched and died with the app, a session held because no model answered,
+    and one where `SessionEnd` never fired at all.
     Everything goes through `fold_session_now`, so the judge, the fold, the
     per-session lock and the held stamp are the ones a normal end uses, and
     `folded` keeps a partial retry from counting an episode twice. *exclude* is
@@ -816,9 +797,9 @@ def _is_pending(session: dict, idle: float, idle_hours: float) -> bool:
     Three rules, covering three different failures, none of them redundant:
 
     * ``held`` — a fold that ran and could not reach a model.
-    * ``ending`` past the grace — a fold that was launched and died with it,
-      which before the stamp existed was indistinguishable from a live session
-      and so waited out the idle rule.
+    * ``ending`` past the grace — a fold that was launched and died with it.
+      Without the stamp it would look like a live session and wait out the idle
+      rule.
     * idle — the only rule that catches a session where `SessionEnd` never
       fired at all: a window closed, a laptop shut down.
     """
@@ -862,23 +843,21 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
                  source: str = "capture", persist: bool = False) -> dict:
     """Turn a finished session into ledger entries — one per task.
 
-    A session holding several unrelated tasks used to become a single entry
-    whose signature described none of them, which is why a workflow performed
-    three times never reached the recurrence threshold. It is now cut into
-    episodes first (see ``skillpp.segment``) and each is folded separately.
+    The session is cut into episodes first (see ``skill_plus_plus.segment``) and each
+    is folded separately: as one entry, a session holding several unrelated
+    tasks gets a signature that describes none of them, and never recurs.
 
-    The return value keeps the shape callers already expect — the last folded
-    episode's result — with an added ``episodes`` key listing every outcome. A
-    session that segments into one episode returns exactly what it always did.
+    Returns the last folded episode's result, with ``episodes`` listing every
+    outcome; a session that is one episode returns just that episode's result.
     """
-    # No verdicts means no local model answered, which means skillpp is offline
+    # No verdicts means no local model answered, which means skill-plus-plus is offline
     # for this session. Banking anyway would mean guessing the boundaries from
     # git verbs — measured worse than making no cuts at all, and worse again
     # than the judge. Reported rather than returned empty, because a silent
     # nothing is indistinguishable from a session that held no work.
     # No tool call at all is a conversation, not an unjudged session: there is
-    # no step a verdict could sit on. Reading it as offline held nine real chat
-    # sessions forever under "<model> did not answer" while the model was up.
+    # no step a verdict could sit on. Read as offline, every chat-only session
+    # would be held forever under "<model> did not answer" with the model up.
     if not [s for s in session.get("steps", []) if not is_prompt(s)]:
         return {"status": "too-thin", "steps": 0, "episodes": [], "flagged": 0}
     if not was_judged(session.get("steps", [])) and not force:
@@ -888,7 +867,7 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
                 # should not be told the model is down.
                 "reason": (f"no verdicts: {config.local_model} did not answer"
                            if config.judge_boundaries else
-                           "no verdicts: judging is off (SKILLPP_JUDGE=0); "
+                           "no verdicts: judging is off (SKILL_PLUS_PLUS_JUDGE=0); "
                            "sessions wait until it is back on")}
 
     episodes = segment(session.get("steps", []), config.min_episode_steps)
@@ -937,7 +916,7 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
                                    f"{len(foldable)} episodes: {exc}")}
             # An explicit keep never loses work. The rest is banked unmatched,
             # as it is when the model is down before a keep starts, and
-            # `skillpp merge` compares those first.
+            # `skill-plus-plus merge` compares those first.
             can_match = False
             result = _fold_steps(config, session, episode.steps,
                                  source=source, match=False)
@@ -967,11 +946,10 @@ def fold_session(config: Config, session: dict, *, force: bool = False,
 def _turns(steps: list[dict], cwd: str = "") -> list[dict]:
     """The run as a conversation: each prompt, the agent's reply, what it used.
 
-    This is what a draft is written from. Measured by drafting one real run
-    four ways, the raw tool steps buried the procedure under another skill's
-    internals and session paths, while the prompts and replies carried it —
+    This is what a draft is written from. Raw tool steps bury the procedure
+    under tool internals and session paths; the prompts and replies carry it —
     the review checkpoints and how each check was done. The one fact only a
-    tool call held was *which skill* built the result, hence `used`.
+    tool call holds is *which skill* built the result, hence `used`.
     """
     turns: list[dict] = []
     for step in steps:
@@ -1045,11 +1023,8 @@ def _fold_steps(config: Config, session: dict, steps: list[dict],
             existing.sessions.append(sid)
         # Every recognition counts, repeats inside one session included — the
         # count is how often the procedure was recognized, and `sessions` keeps
-        # where. This was once the size of the session union instead: measured
-        # on 76 real sessions, counting sightings let 25 of 467 entries claim
-        # more occurrences than sessions (worst x154 against 17), so one long
-        # sitting can reach the recurrence threshold on its own. Chosen anyway,
-        # on 2026-09-17: a procedure repeated within a session is a repeat.
+        # where. So one long sitting can reach the recurrence threshold on its
+        # own. Deliberate: a procedure repeated within a session is a repeat.
         existing.occurrences += 1
         # Every recognition, not every distinct session: the count above works
         # the same way, and two sightings inside one session are two lines.
@@ -1241,11 +1216,9 @@ def _intents_for(session: dict, steps: list[dict]) -> list[str]:
     return _within_budget(list(session.get("prompts", [])))
 
 
-# A count is the wrong bound. Five prompts is below what an ordinary directed
-# task takes: the session this was measured on ran seven turns, and the one the
-# cap dropped was "check the docstring — confirm TOPICS is still the single
-# source of truth", which is the verification step the procedure exists to
-# perform. Budget by characters instead, so a task keeps its shape while a
+# A count is the wrong bound: an ordinary directed task can run past five
+# prompts, and a count drops the last ones, which is where the closing check
+# lives. Budget by characters instead, so a task keeps its shape while a
 # runaway session still cannot bloat an entry.
 _INTENT_BUDGET_CHARS = 2000
 
@@ -1412,8 +1385,7 @@ def _cli_dependencies(steps: list[dict]) -> set[str]:
 # prompt rather than being guessed at.
 # `git -C <path> commit` and `git -c user.email=… commit` are commits: the
 # subject must be found past git's global options, not only immediately after
-# `git`. A real session committed this way and the entry was titled from a
-# prompt instead.
+# `git`.
 #
 # Only the first line of the message is taken, and deliberately without
 # matching the heredoc's closing delimiter: `max_field_chars` truncates a long
@@ -1431,10 +1403,9 @@ def _subject_of(steps: list[dict]) -> str:
     """The last commit's subject line, if a commit is what ended this episode.
 
     A commit message is written after the work and says what it accomplished;
-    the opening prompt is written before and says what was wrong. On the
-    session this was measured against, the prompt gave the entry the title
-    "Looks good — commit" while the commit said "add walkthrough-card case for
-    Desk Booking". The second is the name of a procedure; the first is not.
+    the opening prompt is written before and says what was wrong, or just
+    "Looks good — commit". A commit subject is the name of a procedure; a
+    prompt like that is not.
     """
     for step in reversed(steps):
         if step.get("tool") != "Bash" or step.get("failed"):
@@ -1457,27 +1428,24 @@ def _subject_of(steps: list[dict]) -> str:
     return ""
 
 
-def _clip_title(text: str) -> str:
-    return (text[:70] + "…") if len(text) > 70 else text
-
-
 def _title_for(intents: list[str], steps: list[dict]) -> tuple[str, str]:
     """A title and where it came from, without asking a model.
 
     Only the commit subject is a name of the work; the rest are strings capture
     observed and has to reuse, which is what `_name_from_model` replaces when a
-    local model answers.
+    local model answers. Cut the way a model's name is (`summary.clip_title`),
+    so every title on the review page ends at a word.
     """
     subject = _subject_of(steps)
     if subject:
-        return _clip_title(subject), "commit"
+        return clip_title(subject), "commit"
     if intents:
-        return _clip_title(intents[0].strip().splitlines()[0]), "prompt"
+        return clip_title(intents[0].strip().splitlines()[0]), "prompt"
     for step in steps:
         if step.get("tool") == "Bash":
             cmd = str((step.get("input") or {}).get("command", "")).strip()
             if cmd:
-                return _clip_title(cmd), "command"
+                return clip_title(cmd), "command"
     return "captured workflow", "command"
 
 
@@ -1490,7 +1458,7 @@ def _name_from_model(config: Config, entry: Entry) -> None:
     person doing it, and measured better than anything derived from a prompt.
 
     Never fatal. A fold that cannot reach the model keeps the title it derived
-    and stays `prompt`/`command`, which is what `skillpp retitle` looks for.
+    and stays `prompt`/`command`, which is what `skill-plus-plus retitle` looks for.
     """
     from .summary import name_and_sentence, store_summary
     try:

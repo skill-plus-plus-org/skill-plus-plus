@@ -33,11 +33,11 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tests" / "fixtures" / "sessions"))
 
 import score as live_score                                    # noqa: E402
-import skillpp.boundary as boundary                           # noqa: E402
-from skillpp.boundary import describe, gaps, said_text        # noqa: E402
-from skillpp.config import Config                             # noqa: E402
-from skillpp.local import LocalModelUnavailable, ask          # noqa: E402
-from skillpp.segment import is_prompt                         # noqa: E402
+import skill_plus_plus.boundary as boundary                           # noqa: E402
+from skill_plus_plus.boundary import describe, gaps, said_text        # noqa: E402
+from skill_plus_plus.config import Config                             # noqa: E402
+from skill_plus_plus.local import LocalModelUnavailable, ask          # noqa: E402
+from skill_plus_plus.segment import is_prompt                         # noqa: E402
 
 
 def require_model(config: Config) -> None:
@@ -204,7 +204,7 @@ def _git() -> str:
     try:
         sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"],
                              capture_output=True, text=True).stdout.strip()
-        dirty = subprocess.run(["git", "-C", str(REPO), "status", "--porcelain", "skillpp"],
+        dirty = subprocess.run(["git", "-C", str(REPO), "status", "--porcelain", "skill-plus-plus"],
                                capture_output=True, text=True).stdout.strip()
         return sha + ("+dirty" if dirty else "")
     except OSError:

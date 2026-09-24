@@ -1,45 +1,22 @@
 """Is this episode the same procedure as an existing candidate? Asked of an embedding.
 
-This replaces a lexical signature — the steps reduced to `read | edit:.json |
-bash:python3 | bash:git add` and compared with `SequenceMatcher`. Measured on the
-real ledger it could not see a procedure through its incidental steps: six
-entries a person tagged good, all "add an eval case, regenerate, commit", scored
-0.12-0.66 against each other because one run also ran `ls`, another `source` and
-`cd`. It was also asymmetric: the two "cover course reimbursement fact" entries,
-0.98 alike to an embedding, scored 0.365 one way and 0.410 the other against a
-0.40 floor, and the embedding never saw them.
-
-The reason given for lexical matching was that it ran inside a hook, where no
-model could be waited on. That stopped being true when `SessionEnd` began waiting
-on the local model for the boundary judge; a session with no model is already
-held offline rather than guessed at.
-
-What is embedded is the run's conversation when it has one — each prompt and the
-agent's reply, `User: …` / `Agent: …` — and otherwise its steps, one numbered
-line each: `3. Bash git status --short`.
-
-Measured on the fourteen live sessions banked as 18 separate episodes, the real
-fold order replayed for each input ("danger" is the highest score between two
-*different* procedures):
-
-| embedded | danger | no wrong merge at | correct merges of 32 |
-|---|---|---|---|
-| steps (commands) | 0.921 | 0.93 | 4 |
-| step descriptions | 0.846 | 0.85 | 7 |
-| prompts only | 0.864 | 0.88 | 3 |
-| **prompts and replies** | **0.854** | **0.88** | **6** |
-
-Commands carry what a run happened to type — scratchpad paths, `sed` against
-`Read`, whether it also fixed the docs — so three runs of one presentation
-procedure scored 0.66-0.83 on them. Prompts alone had pulled matching toward
-wording once: card-case sessions opening with the same doc-lookup sentence held
-together at 0.97. The replies are what the run produced, and with them 0.88
-clears the danger line by 0.026, against 0.009 for commands at 0.93.
+What is embedded is the run's conversation when it has one: each prompt and the
+opening of the agent's reply, file names masked, then the skills it used and the
+kinds of file it produced (`conversation_text`). A run without replies is
+embedded as its steps, one numbered line each: `3. Bash git status --short`.
 
 Only like is compared with like. A run with a conversation is compared with
-entries that have one, at `match_floor_turns`; a run without replies (older
-captures, dictation) with entries that have none, on steps at `match_floor`.
-A conversation's score and a command list's score are not on the same scale.
+entries that have one, at `match_floor_turns`; a run without, with entries that
+have none, at `match_floor`. The two texts do not score on the same scale.
+
+Both floors sit where wrong merges stop, not where merges are most numerous: a
+wrong merge silently mixes two procedures into one skill, a missed one leaves a
+duplicate a person can still fold. The measurements, and the lexical signature
+this replaced, are in docs/research/benchmarks.md, "Same procedure, decided by
+embedding".
+
+Matching needs the local model; `capture` holds a session it cannot match
+rather than guess.
 
 Vectors are cached per entry in `<root>/embeddings.json`, keyed on the model and
 a hash of the embedded text, so an entry is embedded once and again only when
@@ -56,13 +33,10 @@ from pathlib import Path
 from .ledger import Entry
 from .local import cosine, embed
 
-# Each step's command or path is cut here, and the whole text at TEXT_CHARS on a
-# step boundary. This bounds what is embedded; it does not keep the text inside
-# the model's context. It used to be meant to — nomic-embed-text reads 2,048
-# tokens — but real runs cost 2.11 to 2.4 characters a token, so 5,000
-# characters can be 2,370 tokens, and two ledger entries at that length made
-# every fold after them fail. `local.embed` now truncates at the model's own
-# limit and `_log_truncation` says when it did.
+# Each step's command or path is cut at STEP_CHARS, and the whole text at
+# TEXT_CHARS on a step boundary. This bounds what is embedded, not what the model
+# reads: TEXT_CHARS can exceed the model's token limit, so `local.embed` cuts at
+# that limit and `_log_truncation` records it.
 STEP_CHARS = 120
 TEXT_CHARS = 5000
 
@@ -87,39 +61,25 @@ def steps_text(steps: list[dict]) -> str:
     return "\n".join(lines)
 
 
-# What a run is *about* rather than what was *done* in it: the file names it
-# names, and the body of what the agent produced. Both were measured to pull
-# matching toward the material — `tests/benchmarks/merge_ladder.py` scores one
-# such change at a time over every live session.
+# File names say what a run was about, not what it did, so `turns_text` masks
+# them: two runs of one procedure over different files must still match.
 _FILE = re.compile(r"\b[\w./-]+\.(md|py|json|pptx|ts|tsx|js|yaml|yml|txt|pdf|docx|xlsx)\b")
-# How much of each reply is read. The opening is the agent saying what it is
-# doing — "Read article first. Here proposed deck, 10 slides…", "Claim audit —
-# draft vs <file>:" — and the rest is the deliverable.
+# How much of each reply is read. The opening says what the agent is doing; the
+# rest is the deliverable, which carries the subject.
 REPLY_HEAD = 300
 
 
 def turns_text(turns: list[dict]) -> str:
     """The run as it was said: `User: <prompt>` and `Agent: <reply>` per turn.
 
-    File names are masked and each reply is cut to its opening, because two
-    procedures run over one document scored *higher* against each other (0.852,
-    a talk deck and a LinkedIn post from the same article) than two runs of one
-    procedure over different documents (0.831). Measured over 19 live sessions,
-    23 episodes, one change at a time:
+    File names are masked and each reply is cut to its opening, because whole
+    replies follow the material: two procedures over one document scored higher
+    against each other than one procedure over two documents.
 
-    | rendering | danger | safe floor | merged | 2-procedures-2-files gap |
-    |---|---|---|---|---|
-    | prompts and whole replies | 0.854 | 0.86 | 10/46 | -0.021 |
-    | + file names masked | 0.848 | 0.85 | 12/46 | +0.022 |
-    | **+ replies cut to 300** | 0.849 | **0.85** | **12/46** | **+0.057** |
-    | prompts only | 0.837 | 0.84 | 19/46 | +0.161 |
-
-    Prompts alone score best and are not used: every merge they added was a
-    presentation pair whose prompts were scripted and pasted word for word,
-    while the unscripted coding sessions gained nothing. Removing the
-    deliverable by its markdown shape was also measured and dropped — coding
-    replies carry their topic in plain sentences, so the danger line moved onto
-    a coding pair instead.
+    Also measured and rejected: prompts alone, whose extra merges all came from
+    prompts pasted word for word, and removing the deliverable by its markdown
+    shape, which misses a topic stated in plain sentences
+    (docs/research/benchmarks.md, "One change at a time").
     """
     lines = []
     for turn in turns:
@@ -132,8 +92,8 @@ def turns_text(turns: list[dict]) -> str:
     return _FILE.sub("<file>", "\n\n".join(lines))
 
 
-# File kinds, for the line below. A name says what a run was about; a kind says
-# what came out of it.
+# The document kinds a command can produce. Only documents: a command also names
+# the scripts it runs (`python3 build.py`), which it did not produce.
 _DOC_EXT = re.compile(r"\.(pptx|pdf|docx|xlsx|html|md|csv)\b")
 
 
@@ -153,17 +113,17 @@ def deliverable_text(steps: list[dict]) -> str:
 def conversation_text(turns: list[dict], steps: list[dict]) -> str:
     """What a run with a conversation embeds: its turns, then what it produced.
 
-    The two added lines were measured one at a time (`merge_ladder`): the skills
-    a turn used took merges from 12 to 13 of 61, naming the produced file kinds
-    to 14, both with the danger line unmoved. Tool sequences, the agent's step
-    descriptions and model-written summaries were each measured after them and
-    each cost more than they gave.
+    Beside the words it carries how the run worked, not its subject: the skills
+    each turn used (`turns_text`) and the kinds of file produced. Tool
+    sequences, the agent's step descriptions and model-written summaries were
+    measured too and left out (docs/research/benchmarks.md, "One change at a
+    time").
     """
     return turns_text(turns) + "\n\n" + deliverable_text(steps)
 
 
 def has_conversation(turns: list[dict] | None) -> bool:
-    """Does the run carry a reply? Prompts alone were measured worse than steps."""
+    """Does the run carry a reply? Without one it is matched on its steps."""
     return any(t.get("reply") for t in (turns or []))
 
 
@@ -202,15 +162,6 @@ def save_cache(config, cache: dict) -> None:
 
 def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-
-
-def cached_vector(entry: Entry, config, cache: dict) -> list[float] | None:
-    """The entry's vector if the cache still has a current one; never embeds."""
-    hit = cache.get(entry.id)
-    if (hit and hit.get("model") == config.embed_model
-            and hit.get("hash") == _digest(entry_text(entry))):
-        return hit["vector"]
-    return None
 
 
 def _log_truncation(config, what: str):

@@ -202,7 +202,7 @@ puts it on the path to a threshold at all.
 
 **It is a tie-breaker, not a replacement.** Only pairs already in the near-miss
 band (0.70–0.85) cost a call, so almost every comparison stays free. And it runs
-from `skillpp merge`, not from a hook: matching happens during `SessionEnd`, and
+from `skill-plus-plus merge`, not from a hook: matching happens during `SessionEnd`, and
 a hook that waits on a model adds that wait to every session.
 
 Folding is not symmetrical — the second entry's evidence moves into the first
@@ -279,10 +279,10 @@ the less-tuned one, and it is where the tie is.
 
 The one difference measured as *not* a tuning gap: this branch titled a candidate
 with whatever the developer typed, because capture can only reuse a string it
-observed. `skillpp draft` now names it, since a frontier reader is already in the
+observed. `skill-plus-plus draft` now names it, since a frontier reader is already in the
 loop there and naming is the half code cannot do.
 
-`skillpp name <id> --title … --description …` writes both back to the ledger, and
+`skill-plus-plus name <id> --title … --description …` writes both back to the ledger, and
 the draft prompt does it **before** deciding whether to draft at all — a name is
 worth having even on a candidate the agent then declines. The description is
 capped at 200 characters, the skill frontmatter limit, because one that will not
@@ -313,16 +313,16 @@ and that one.
 
 | Defect | Cause |
 | --- | --- |
-| Agent allowed nothing | prompt said `skillpp show`, tool scope permitted `python3 bin/skillpp` |
+| Agent allowed nothing | prompt said `skill-plus-plus show`, tool scope permitted `python3 bin/skill-plus-plus` |
 | A blocked agent read as a decline | inferred "nothing here" from an absent file |
-| Candidate not found | `--root` never reached the agent's own `skillpp` calls |
+| Candidate not found | `--root` never reached the agent's own `skill-plus-plus` calls |
 | Draft written to the wrong place | prompt said `<draft-dir>` and nothing substituted it |
-| Draft could not be written at all | `$SKILLPP_DRAFT_DIR` in a sandboxed Bash call is rejected as "Contains expansion" |
+| Draft could not be written at all | `$SKILL_PLUS_PLUS_DRAFT_DIR` in a sandboxed Bash call is rejected as "Contains expansion" |
 
 The last is the one worth generalising: **an environment variable is fine for a
 Python process to read and unusable inside a sandboxed shell command**, because
 an allowed-tools pattern cannot be checked against text that is not yet known.
-`SKILLPP_ROOT` works for that reason and the draft directory does not — it is
+`SKILL_PLUS_PLUS_ROOT` works for that reason and the draft directory does not — it is
 passed as a literal argument in the prompt instead.
 
 Two safeguards earned their place along the way. The decline sentinel meant a
@@ -441,7 +441,7 @@ The last row is the whole difficulty. A segmenter needs both halves.
 
 ### Splitting works, and the restraint matters more than the action
 
-`skillpp split`, reached from the draft prompt, closes case C. Three live runs:
+`skill-plus-plus split`, reached from the draft prompt, closes case C. Three live runs:
 
 | Input | Should split | Did |
 | --- | --- | --- |
@@ -496,7 +496,7 @@ is what makes it a measurement rather than history:
 | `reopen` | a model parked something they wanted back | a false drop, caught in the act |
 | `sift --park` | the model's own act | **never truth** — that would be grading its own homework |
 
-`skillpp accuracy` reports the tally and lists the disagreements. On a seeded
+`skill-plus-plus accuracy` reports the tally and lists the disagreements. On a seeded
 run it correctly surfaced the one that matters:
 
     agreed 2/3 (67%)
@@ -592,7 +592,7 @@ person types and then waits on: a wide band makes a live run long to read.
 The check therefore moved somewhere nothing is waiting on it. `SessionEnd`
 records which entry it touched and decides nothing. `SessionStart` spawns a
 detached process that runs the same `near_misses`/`same_procedure` comparison at
-a floor of **0.40** and writes a report. `skillpp near-misses` reads it.
+a floor of **0.40** and writes a report. `skill-plus-plus near-misses` reads it.
 Folding still needs `--apply`.
 
 `merge` keeps its own 0.70 default, unchanged. Two knobs rather than one
@@ -664,9 +664,9 @@ The pass now folds inline, and `decisions.jsonl` records each one with the
 dropped entry's id and title — the only place that identity survives once its
 file is gone. Deliberately *not* one of `decisions._TRUTH`'s labels: that dict
 scores a ranker's hint against a person's verdict, and a fold is neither.
-Verified — `skillpp accuracy` reports nothing after an auto-fold.
+Verified — `skill-plus-plus accuracy` reports nothing after an auto-fold.
 
-The report file and `skillpp near-misses` are deleted rather than repurposed.
+The report file and `skill-plus-plus near-misses` are deleted rather than repurposed.
 The report had exactly one reader, the command deciding whether to apply it;
 with nothing left to decide there is nothing left to read, and
 `decisions.jsonl` is a better record anyway — every pass, not just the last,
@@ -699,7 +699,7 @@ those findings carried over.
 The proposal, at the time: replace `is_marker`'s vocabulary of git verbs with a
 local model asked, on every tool call, whether the task ended there. `6ca48a5` above
 recorded the first attempt and did not wire it in. This is the second, wired in
-behind `SKILLPP_JUDGE` and measured properly.
+behind `SKILL_PLUS_PLUS_JUDGE` and measured properly.
 
 **Read this before proposing a tenth.** Every row is a real run against
 `tests/fixtures/sessions/`, which is the only yardstick here — the synthetic
@@ -751,7 +751,7 @@ command and after it; byte-identical results, so not a phrasing effect. The
 extra detail itself pushes the model toward "delivered".
 
 **Generated summaries as the judge's context** — 1 fixed / 6 broken, and every
-session gained episodes: desk-booking 1→4, failed-retry 1→4, long-session 1→8,
+session gained episodes: expense-report 1→4, failed-retry 1→4, long-session 1→8,
 with three losing `must_contain` steps as content scattered across fragments.
 The cause is in the summaries: each ends by tying the step to the request —
 "fulfilling the developer's request", "informing the developer's next task" —
@@ -770,7 +770,7 @@ is the only one. It cost six correct sessions to buy.
 
 ### Where it stands
 
-Wired in, default on, `SKILLPP_JUDGE=0` to disable. `render_step` deliberately
+Wired in, default on, `SKILL_PLUS_PLUS_JUDGE=0` to disable. `render_step` deliberately
 does **not** use `step["summary"]`; see the comment there. The describer stays —
 it produces a better record, verified separately — it simply does not feed this
 prompt.
@@ -864,7 +864,7 @@ at `_VALUE_CHARS=80`, ten sessions, `263d65ce` skipped:
 
 | session | work steps | rule ON | rule OFF |
 | --- | --- | --- | --- |
-| `1c3c9422` desk-booking | 54 | **BROKE** 0/1 | ok 1/1 |
+| `1c3c9422` expense-report | 54 | **BROKE** 0/1 | ok 1/1 |
 | `2095a8af` timesheet | 50 | **BROKE** 0/1 | ok 1/1 |
 | `a8b61dae` failed-commit-then-retry | 28 | **BROKE** 0/1 | ok 1/1 |
 | `5c7b0f81` coverage-writeup-run2 | | FIXED | FIXED |
@@ -902,7 +902,7 @@ below.
 ### Reading is not evidence that nothing happened
 
 `95b6bde7` is a real session: pull the ADK reference docs through MCP, compare
-them against `cases.json` and `generate_evalset.py`, report. It banked **one
+them against `cases.json` and `generate_fixtures.py`, report. It banked **one
 candidate — the right count — containing none of the retrieval the procedure
 exists for.** The count being right is what hid it; only `must_contain` could
 see it.
@@ -963,7 +963,7 @@ unreachable.
 
 ### The vocabulary stops being a segmenter
 
-`skillpp` segmented two different ways depending on whether a local model
+`skill-plus-plus` segmented two different ways depending on whether a local model
 answered. With verdicts, the judge decided. Without them a **parallel** system
 took over: cut at every new prompt following two substantive steps, and at every
 git completion verb.
@@ -971,7 +971,7 @@ git completion verb.
 That parallel system produced the cuts three separate passes existed to undo —
 `_absorb_before_commit`, `_absorb_read_only_preamble`, and
 `trim_leading_exploration`'s MCP exemption — each added after a real session lost
-work to a boundary nobody wanted. **Now, when nothing judged the steps, skillpp
+work to a boundary nobody wanted. **Now, when nothing judged the steps, Skill++
 is offline: it does not segment and does not bank.**
 
 **Measured across the eleven live sessions:**
@@ -998,7 +998,7 @@ production would never produce.
 What closed:
 
 - `5c7b0f81` and `fb505861` — the same procedure recorded twice. The prompt rule
-  cut at *"Write that list to COVERAGE.md"*, severing the deliverable from the
+  cut at *"Write that list to REPORT.md"*, severing the deliverable from the
   investigation that produced it. Two symptoms from one cut, decided only by how
   many steps followed the prompt: one banked a single episode missing the file,
   the other banked two and `must_contain` read the larger one.
@@ -1028,7 +1028,7 @@ whether a commit happened, and a verdict is the better answer to that question.
   `_absorb_before_commit` re-merges the marker cuts anyway.
 - With no model, a session banks nothing. The session file is kept and stamped
   `held` instead of deleted, so being offline costs the candidate and never the
-  record, and `skillpp stats` reports what is waiting. Ollama was down twice
+  record, and `skill-plus-plus stats` reports what is waiting. Ollama was down twice
   during the day this landed, so the path is not hypothetical.
 - The marker vocabulary survives as a **test double**, standing in for a
   reachable model across the suite. That is where a hardcoded heuristic belongs.
@@ -1090,30 +1090,30 @@ request was finished. It was replaced — see *The question moved* below. Kept
 because everything here was measured and none of it should be retried.
 
 The last remaining gap at the time. Two unrelated jobs in one sitting — investigate why some
-walkthrough cards render blank (read-only, nothing written), then separately add
-the missing `atlas` eval case and commit. Truth is 2 episodes; the pipeline
+tutorial cards render blank (read-only, nothing written), then separately add
+the missing `chart` eval case and commit. Truth is 2 episodes; the pipeline
 banks 1, because the judge marks no ending anywhere.
 
 Every step was replayed through `gemma3n:e4b` at `_VALUE_CHARS=80`,
 `CONTEXT_STEPS=20`. **0 endings in 24 steps**, including step 24, which is
-`git add …cases.json …evalset.json && git commit -m "$(cat <<'EOF'`.
+`git add …cases.json …fixtures.json && git commit -m "$(cat <<'EOF'`.
 
 The boundary the judge has to find is after step 6, the last step of task one.
 
 ### The prompt at the boundary, and what is fixed versus inserted
 
-`skillpp/prompts/task_end.md` — since deleted, replaced by `new_job.md` — was 16
+`skill_plus_plus/prompts/task_end.md` — since deleted, replaced by `new_job.md` — was 16
 lines with three slots. Lines 1, 5, the words "Just now, they", and 10-16 were
 constant on all 357 judgements ever made.
 `{GOAL}` is every prompt in the span, `{PRIOR}` the last 20 steps rendered by
 `render_step`, `{STEP}` the step being judged.
 
 ```
-- TOPICS in book.py can stage walkthrough cards whose body has no matching key
-  in toolWalkthroughs.ts … Work out which ones, and tell me before changing
+- TITLES in page.py can stage tutorial cards whose body has no matching key
+  in toolTutorials.ts … Work out which ones, and tell me before changing
   anything.                                    <- inserted: forbids an artifact
 
-Just now, they read the file `… book.py`       <- inserted
+Just now, they read the file `… page.py`       <- inserted
 
 A task ends when everything the developer asked for has been produced — a change
 that outlasts the session.                     <- fixed: requires an artifact
@@ -1140,8 +1140,8 @@ Four definitions, tested on the steps that discriminate — 6 must be an ending,
 The reason no wording can work is visible in the rendered steps:
 
 ```
-step 3: read the file `…/backend/acme_agent/book.py`
-step 6: read the file `…/backend/acme_agent/book.py`
+step 3: read the file `…/backend/acme_agent/page.py`
+step 6: read the file `…/backend/acme_agent/page.py`
 ```
 
 Byte-identical. Step 3 is mid-investigation, step 6 finishes it. The only
@@ -1195,8 +1195,8 @@ Two of the three endings it has ever marked across the whole corpus are the same
 command shape as the one it refuses here:
 
 ```
-a7be1ef5  end=True    git add …cases.json …evalset.json && git commit -m "$(cat <<'EOF'
-241955c7  end=False   git add …cases.json …evalset.json && git commit -m "$(cat <<'EOF'
+a7be1ef5  end=True    git add …cases.json …fixtures.json && git commit -m "$(cat <<'EOF'
+241955c7  end=False   git add …cases.json …fixtures.json && git commit -m "$(cat <<'EOF'
 ```
 
 Trimming `241955c7`'s goal to just "Commit both changes together." still gives
@@ -1233,7 +1233,7 @@ asking, when the next prompt arrives, whether it starts a new task — needs
 information that does not exist yet at step 6.
 
 **A first, untuned prompt-pair form scored 5/11**, over-firing on continuations:
-it cut `fb505861` at "Write that list to COVERAGE.md" and shattered `263d65ce`
+it cut `fb505861` at "Write that list to REPORT.md" and shattered `263d65ce`
 into nine. That was the starting point, not the answer.
 
 **Whether an ending must be closable only by the judge** never had to be
@@ -1280,7 +1280,7 @@ Ablated across all eleven sessions:
 
 The signal is a conjunction. The instruction says what the developer *intends*;
 the following steps say what actually *happened*. Without the instruction,
-`241955c7` cuts at "Regenerate the evalset" as well as at "Separate job:" — it
+`241955c7` cuts at "Regenerate the fixtures" as well as at the announced switch — it
 cannot tell which gap matters. Without the steps, it fires in 25 of 33 gaps.
 
 An empty `{PRIOR}` must render `(nothing yet)` rather than a blank block: on
@@ -1308,9 +1308,9 @@ counting pre-fold episodes, the harness printing `ok` with Ollama down, and a
 in the corpus holding two, and it was the only gap that failed:
 
 ```
-1. "did you call MCP for this?"
-2. "Use the adk-docs MCP tool to look up how ADK eval cases and evalsets are
-    structured — don't answer from memory, actually fetch the docs first."
+1. a question about how the agent had gone about it
+2. the opening request, restated: look the format up in the docs rather than
+   answer from memory
 ```
 
 Only the first reached the model, which read it as a new job. Measured on that
@@ -1326,7 +1326,7 @@ it those two prompts look like a topic change rather than one correction.
 One call per prompt instead of one per tool call, and **off the hot path**: the
 judge runs at `SessionEnd`, because the question needs the steps that came after
 a gap. That removes a synchronous ~1.5s model call from every tool call a
-developer makes. `skillpp keep` folds mid-session, so it judges the buffer first,
+developer makes. `skill-plus-plus keep` folds mid-session, so it judges the buffer first,
 and banks the work as one task if no model answered — an explicit save is a
 person saying "save this", not a detector guessing.
 
@@ -1334,10 +1334,35 @@ Given up: **a boundary with no prompt in the gap** — a task ending where the
 developer says nothing. No live session shows that shape, and the per-step judge
 could see it in principle, so this is a trade rather than a free win.
 
+### Framings rejected, and what a call costs
+
+Moved here from `skill_plus_plus/boundary.py`, so that it is not tried again. On a
+13-case probe of the gap question:
+
+- the step alone, with no goal and no span: 4/13, and every correct answer was a
+  "no" — it answered "no" to everything, as the first attempt at this did;
+- the same plus the goal and the steps behind it: also 4/13, same shape. The
+  context alone changes nothing;
+- adding what an *ending is*: 11/13. This is the whole difference;
+- adding a deterministic prior ("that step only looked things up") for the model
+  to confirm or override: 10/13, and it broke a case that had been passing. Not
+  kept.
+
+Latency, measured warm on `gemma3n:e4b`, the default until 2026-09:
+
+- the one-word answer instruction took a call from 4.42 s to 0.49 s, because
+  generation length dominates, not prompt processing; ~0.73 s per call with the
+  full context prompt;
+- `think=False` changed nothing on that model, which cannot think: 1.10 s
+  against 1.09 s over three runs each. An earlier 11.5 s was the model loading,
+  and `think=True` returns HTTP 400. On a model that can think, the same
+  one-word question took 113.8 s against 0.5 s (`qwen3.5:9b`, `local.ask`),
+  which is why the judge keeps thinking off on `gemma4:e4b`.
+
 ## gemma4:e4b as the judge: more to read, one input at a time
 
 Measured 21 Sep 2026 on the 21 live sessions, `tests/benchmarks/judge_replay.py`
-with `SKILLPP_MATCH=0` so a cut episode is never merged back before it is
+with `SKILL_PLUS_PLUS_MATCH=0` so a cut episode is never merged back before it is
 counted, one model resident, every run valid (45/45 gaps answered).
 
 **Read the gaps, not the sessions.** Only 2 of the 45 gaps are real boundaries
@@ -1401,7 +1426,7 @@ changes for the .md files") kept at "no". On the whole corpus it is not:
 | `698c7529` step 4, "Two things. Check every command…" | ✗ | yes | yes | — |
 | `698c7529` step 5, "Looks good. What's next? go" | ✗ | yes | yes | — |
 | `2095a8af` step 35, "Before you commit — check the docstring" | ✗ | yes | yes | — |
-| `95b6bde7` step 1, "No Confluence then — use the adk-docs MCP…" | ✗ | — | yes | — |
+| `95b6bde7` step 1, a prompt redirecting the lookup to a docs tool | ✗ | — | yes | — |
 | sessions | | 19/21 | 19/21 | **20/21** |
 
 With thinking on, the same three false cuts appear whether the tail is shown or
@@ -1491,7 +1516,7 @@ The reason given for lexical matching — no model inside a hook — stopped hol
 when `SessionEnd` began waiting on the boundary judge.
 
 **Now:** each episode is embedded once at fold time and compared by cosine with a
-cached vector for every entry of any status; at or above `SKILLPP_MATCH_FLOOR` it
+cached vector for every entry of any status; at or above `SKILL_PLUS_PLUS_MATCH_FLOOR` it
 joins that entry. Ids are random. The background pass is gone.
 
 ### The yardstick
@@ -1502,14 +1527,14 @@ against a hand-written family label:
 
 | family | runs |
 | --- | --- |
-| add-eval-case | 7 — the three walkthrough-card sessions, `a8b61dae`, `241955c7` task 2, and the two handbook fact sessions `d5fd2e59`, `a7be1ef5` |
+| add-eval-case | 7 — the three tutorial-card sessions, `a8b61dae`, `241955c7` task 2, and the two glossary fact sessions `d5fd2e59`, `a7be1ef5` |
 | coverage-writeup | 2 |
 
 Card and fact cases were two families for a while. Compared step by step
-(`d5fd2e59` against `241955c7`'s atlas case) they are the same work — read
+(`d5fd2e59` against `241955c7`'s chart case) they are the same work — read
 `cases.json`, edit it, check the JSON, regenerate, commit — and the steps that
 differ do the same job with other commands (`ls` and `head` against `find` and
-`grep`, both locating `generate_evalset.py`). What tells them apart is only in
+`grep`, both locating `generate_fixtures.py`). What tells them apart is only in
 the prompt and in the JSON written, and two fact runs were too few to hold a
 family only the prompt could separate.
 
@@ -1522,8 +1547,8 @@ family's size, so the eval-case family was most of every number.
 
 The first shipped text was `as_text`: the first prompt, then each step's command.
 The prompt was the problem. `_intents_for` puts first the last prompt before any
-work, which in three card-case sessions was the same scripted sentence, "Use the
-adk-docs MCP tool to look up how ADK eval cases…". That sentence held those three
+work, which in three card-case sessions was the same scripted sentence, an
+instruction to look the format up with a docs tool. That sentence held those three
 together at 0.97 and pulled `95b6bde7` — a docs comparison that edits nothing,
 opening with the same lookup — to 0.914, six thousandths under the floor.
 
@@ -1605,8 +1630,8 @@ the coverage write-ups in one entry for the first time, an eval-case entry at 3.
 
 ### One change at a time: what the conversation text keeps
 
-Five more live runs (two talk decks, three LinkedIn posts, over ARTICLE.md,
-HANDOFF.md and LEARNINGS.md) made the failure measurable: **two procedures over
+Five more live runs (two talk decks, three LinkedIn posts, over three of the
+project's documents) made the failure measurable: **two procedures over
 one document scored higher against each other (0.852) than two runs of one
 procedure over different documents (0.831).** The text was following the
 material.

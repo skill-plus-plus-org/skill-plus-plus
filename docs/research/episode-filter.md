@@ -10,7 +10,7 @@ lands in some episode, so the material is unchanged. Measured elsewhere at 0%
 reduction on real sessions. Meanwhile the premise of the whole tool is that most
 sessions contain nothing worth keeping.
 
-So something has to be able to say no. That is `skillpp sift`.
+So something has to be able to say no. That is `skill-plus-plus sift`.
 
 ## The question it asks
 
@@ -46,7 +46,7 @@ An episode wrongly kept costs one line in a review list. An episode wrongly
 dropped is never seen again. *No opinion* is reported separately and never folded
 into "method" — a dead daemon must not read as "none of this is a procedure".
 
-Nothing is deleted. `one-off` is a status, `skillpp reopen <id>` reverses it, and
+Nothing is deleted. `one-off` is a status, `skill-plus-plus reopen <id>` reverses it, and
 `ready()` already gates on status so a parked entry leaves the review queue
 without any further wiring.
 
@@ -234,17 +234,17 @@ So the pipeline is four stages, and only the last one costs anything:
 | **discard the one-off ones** | local model, `sift` | free |
 | **write the body** | the developer's own agent, `draft` | one call |
 
-### `skillpp draft <id>`
+### `skill-plus-plus draft <id>`
 
 Invokes whatever agent the developer already uses, via a **command template**
 rather than an API call:
 
-    SKILLPP_AGENT="claude -p {PROMPT} --no-session-persistence ..."
+    SKILL_PLUS_PLUS_AGENT="claude -p {PROMPT} --no-session-persistence ..."
 
 That is deliberate. No API key is held, no vendor is baked in, and the agent is
 already authenticated as the developer — a Cursor user's model writes it in
 Cursor. `{PROMPT}` is the only substitution, and the prompt itself is a markdown
-file (`commands/skillpp-draft.md`), not code.
+file (`commands/skill-plus-plus-draft.md`), not code.
 
 ### It drafts; it never installs
 
@@ -284,9 +284,9 @@ daily use — only a version-pinned binary inside the application bundle. So the
 dry run prints whether the agent resolves before you spend anything, rather than
 failing halfway through.
 
-**The tool pattern is relative.** `Bash(python3 bin/skillpp *)` only matches if
+**The tool pattern is relative.** `Bash(python3 bin/skill-plus-plus *)` only matches if
 the agent runs from the package root, so `draft` sets that cwd itself. An
-earlier version allowed `Bash(skillpp *)` — a binary that does not exist — and
+earlier version allowed `Bash(skill-plus-plus *)` — a binary that does not exist — and
 would have allowed the agent nothing at all. `shlex` had also split that
 pattern in two at the space inside the parentheses. Both are pinned by tests.
 
@@ -502,7 +502,7 @@ the expensive direction, and rephrasing did not help — it was confidently wron
 not uncertain, so the fail-safe never fired.
 
 So `sift` no longer decides. It **ranks**: writes a `hint` of `method`,
-`one-off` or empty onto each candidate, and `skillpp review` lists repeatable
+`one-off` or empty onto each candidate, and `skill-plus-plus review` lists repeatable
 first and doubtful last. Nothing leaves the queue. `--park` still exists, is
 opt-in, and prints what it costs.
 
@@ -559,9 +559,9 @@ within an hour of the branch going live.
 
 ### Automation observed itself
 
-`skillpp draft` spawns an agent session. That session has hooks too, so its own
+`skill-plus-plus draft` spawns an agent session. That session has hooks too, so its own
 poking around was captured and banked — two candidates titled
-`/skillpp-draft 8a494bc02d67`, holding the draft agent's `find`, `ls` and
+`/skill-plus-plus-draft 8a494bc02d67`, holding the draft agent's `find`, `ls` and
 `echo ok`. **Using the tool manufactured work for the tool.**
 
 `feat/pattern-detection` hit the same thing at a scale that makes the point
@@ -570,7 +570,7 @@ itself. Its cure was pruning entries whose transcript no longer exists, which
 suits a transcript-based design and does nothing for a buffer-based one — a
 nested session here writes a real buffer and folds it like any other.
 
-The cure here is a marker: `draft` sets `SKILLPP_INTERNAL=1` on the agent it
+The cure here is a marker: `draft` sets `SKILL_PLUS_PLUS_INTERNAL=1` on the agent it
 spawns, and the hook returns before doing anything when it sees it. Set by the
 process doing the spawning, so nothing has to recognise itself.
 

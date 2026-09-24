@@ -1,14 +1,14 @@
-# Skill Plus Plus — the design
+# Skill++ — the design
 
 > This is the design document the project started from. Parts of it describe
 > plans that were changed or never built, and some numbers are from before
-> later measurements. For how skillpp works today, read the
+> later measurements. For how Skill++ works today, read the
 > [README](../README.md), [usage.md](usage.md) and
 > [architecture.md](architecture.md); the measurements are in
 > [research/](research/). Code comments cite its sections as
 > `docs/design.md §N`.
 
-**Skill Plus Plus** is a background-observing knowledge engine for developers and technical teams. It watches how work actually gets done, keeps a searchable **ledger** of candidate workflows, and — only on explicit human approval — promotes them into modular, enterprise-ready `SKILL.md` files.
+**Skill++** is a background-observing knowledge engine for developers and technical teams. It watches how work actually gets done, keeps a searchable **ledger** of candidate workflows, and — only on explicit human approval — promotes them into modular, enterprise-ready `SKILL.md` files.
 
 Capture is passive. Promotion is always deliberate.
 
@@ -107,7 +107,7 @@ A boundary that would leave an episode of fewer than two substantive steps is ig
 Raw traces are **never persisted**. At capture time each observation is compressed into a compact markdown ledger entry and scrubbed in the same pass:
 
 * **Compression** keeps the ledger the same order of magnitude as the skill library itself, rather than the tens of megabytes raw MCP payloads and file diffs would consume.
-* **Sanitization happens once, on write.** An AST/regex scan strips API keys, tokens, credentials, internal URLs, and customer PII before anything touches disk — so the ledger is never a liability sitting in a buffer waiting to be cleaned later.
+* **Sanitization happens once, on write.** A regex scan strips API keys, tokens, credentials, internal URLs and email addresses before anything touches disk — so the ledger is never a liability sitting in a buffer waiting to be cleaned later.
 * **Searchability comes for free**, because entries are already text.
 
 ### Step 4 — Candidate Surfacing (two entry points)
@@ -136,14 +136,14 @@ Nothing is written to the skill library without passing this gate.
 Only after approval is a `SKILL.md` generated.
 
 * **Parameterization:** Local paths (`/Users/dev/project/...`) and environment-specific values become template variables (`${PROJECT_PATH}`).
-* **Deduplication:** Each saved episode's steps, one numbered line each, are embedded and compared with every existing entry; a match at or above `SKILLPP_MATCH_FLOOR` (0.93) joins that entry rather than spawning a near-duplicate. The floor is set where wrong merges stop, not where merges are most numerous.
+* **Deduplication:** Each saved episode is embedded and compared with every existing entry of the same kind: a run with a conversation by its prompts and the openings of the replies, at `SKILL_PLUS_PLUS_MATCH_FLOOR_TURNS` (0.85); a run without one by its steps, one numbered line each, at `SKILL_PLUS_PLUS_MATCH_FLOOR` (0.93). A match at or above the floor joins that entry rather than spawning a near-duplicate. Each floor is set where wrong merges stop, not where merges are most numerous.
 * **Hierarchical composition:** Atomic sub-routines (e.g. `git-commit`) are extracted once and invoked as sub-skills by higher-level orchestrators, forming a DAG rather than a flat pile of prompts.
 
 ---
 
 ## 4. Clarification at Approval
 
-A trace records what happened, not why. The missing half — the diagnosis behind a retry, the rule behind a parameter, the check that happened in a browser — lives only in the developer's head, and approval is the one moment they are already looking at the workflow. Skill Plus Plus uses that moment to close the gap.
+A trace records what happened, not why. The missing half — the diagnosis behind a retry, the rule behind a parameter, the check that happened in a browser — lives only in the developer's head, and approval is the one moment they are already looking at the workflow. Skill++ uses that moment to close the gap.
 
 It is not a questionnaire. A fixed set of questions gets skipped by the third proposal. Instead **the ambiguity in the trace generates the question**, which means a clean candidate asks nothing and a messy one asks precisely about the part that is messy.
 
@@ -200,7 +200,7 @@ On a clean candidate that is often zero questions. When it is three, all three a
 
 ## 5. Output Formats
 
-A `SKILL.md` is an instruction file, not a tool definition. It cannot declare a tool or provision an MCP server. Skill Plus Plus therefore emits along three tracks:
+A `SKILL.md` is an instruction file, not a tool definition. It cannot declare a tool or provision an MCP server. Skill++ therefore emits along three tracks:
 
 | Captured pattern | Emitted as | Why |
 | --- | --- | --- |
@@ -208,7 +208,7 @@ A `SKILL.md` is an instruction file, not a tool definition. It cannot declare a 
 | Judgment-shaped procedure | Instruction-only `SKILL.md` | Decision points, conventions, and escalation paths belong in prose. |
 | MCP-dependent workflow | `SKILL.md` referencing tools by name + declared deps | Skills reference the host's existing tools; they never install them. |
 
-**MCP handling.** Skill Plus Plus references only MCP servers already connected in the session, and never attempts to bundle or provision one. Three rules keep that safe once a skill travels to a teammate:
+**MCP handling.** Skill++ references only MCP servers already connected in the session, and never attempts to bundle or provision one. Three rules keep that safe once a skill travels to a teammate:
 
 * **Prefer the portable path.** Where the ledger shows the same outcome is reachable through a CLI (`gh` instead of a GitHub MCP, `psql` instead of a Postgres MCP), the shell form is generated — it runs anywhere. MCP references are reserved for capabilities with no CLI equivalent.
 * **Declare dependencies** — required servers and CLIs — in the `metadata` frontmatter key, which is already supported in the wild and requires no spec extension.
@@ -276,14 +276,14 @@ It earns its keep twice over, because a prompt is also a **task boundary**. Prom
 
 ### Surface mapping
 
-| Skill Plus Plus concept | Claude Code primitive |
+| Skill++ concept | Claude Code primitive |
 | --- | --- |
 | Trace capture | `PostToolUse` / `PreToolUse` hooks |
 | Intent capture | `UserPromptSubmit` hook |
 | Task boundaries | `UserPromptSubmit` — recorded in the step stream, so a prompt's position marks where one task ends and the next begins |
-| Segmentation + ledger write + review nudge | `SessionEnd` hook — stamps the session and spawns `skillpp fold-session`, which does the work detached |
-| Banking what an earlier session left behind | `SessionStart` hook → `skillpp fold-pending` |
-| Pull-based review UI | `.claude/commands/skillpp-review.md` → `/skillpp-review` |
+| Segmentation + ledger write + review nudge | `SessionEnd` hook — stamps the session and spawns `skill-plus-plus fold-session`, which does the work detached |
+| Banking what an earlier session left behind | `SessionStart` hook → `skill-plus-plus fold-pending` |
+| Pull-based review UI | `.claude/commands/skill-plus-plus-review.md` → `/skill-plus-plus-review` |
 | Skill output | `.claude/skills/<name>/SKILL.md` + `scripts/` |
 | Dependency check at pull | Diff declared deps against `.mcp.json` and connected `mcp__<server>__<tool>` names |
 | Progressive disclosure | Native — `name` + `description` indexed, body loaded on demand |
@@ -297,7 +297,7 @@ boundary (see usage.md, What is captured), not a configuration matter. Measured
 directly: a chat session produced no buffer, no error, and no log entry — the
 hook was never invoked at all.
 
-**There is no built-in cold tier.** Claude Code indexes everything under the skills directory, so the hot/cold/archived model in §6 is implemented by physically moving files to a sibling directory (`.claude/skillpp/cold/`) with a retrieval skill that searches it. Demotion is a file move, not a flag.
+**There is no built-in cold tier.** Claude Code indexes everything under the skills directory, so the hot/cold/archived model in §6 is implemented by physically moving files to a sibling directory (`.claude/skill-plus-plus/cold/`) with a retrieval skill that searches it. Demotion is a file move, not a flag.
 
 ### Packaging & Distribution
 
@@ -305,8 +305,8 @@ Two formats, two use cases:
 
 | Format | Use | How |
 | --- | --- | --- |
-| **Upload ZIP** | Claude Desktop | `skillpp bundle --format upload`, then Customize → Skills |
-| **Plugin** | Claude Code terminal, team (Phase 2) | `skillpp bundle --format plugin` |
+| **Upload ZIP** | Claude Desktop | `skill-plus-plus bundle --format upload`, then Customize → Skills |
+| **Plugin** | Claude Code terminal, team (Phase 2) | `skill-plus-plus bundle --format plugin` |
 
 A plugin bundles hooks, the review command, and retrieval skill. It's also the
 upgrade path for MCP-dependent skills (§5) — plugins can declare `mcpServers`,
@@ -318,7 +318,7 @@ whereas a bare `SKILL.md` cannot.
 
 ## 9. Key Differentiators
 
-| Metric | Dust.tt | Superpowers | IDE-native memory (Cursor, Copilot, Claude Code) | **Skill Plus Plus** |
+| Metric | Dust.tt | Superpowers | IDE-native memory (Cursor, Copilot, Claude Code) | **Skill++** |
 | --- | --- | --- | --- | --- |
 | **Primary focus** | Team knowledge RAG | Engineering process rules (TDD, planning) | Per-developer context recall | **Operational workflow capture** |
 | **Creation effort** | High (manual prompting) | Manual (maintainer-authored) | Low, but per-session and personal | **Passive capture, deliberate promotion** |
@@ -328,7 +328,7 @@ whereas a bare `SKILL.md` cannot.
 | **Skill structure** | Flat assistant prompts | Flat prompt files | Flat memory entries | **Sub-skill composition (DAG)** |
 | **Team distribution** | Native | Manual repo sync | Weak / personal by design | **One-click PR + dep check at pull** |
 
-The competitive pressure worth taking seriously is the fourth column: memory and rule-generation features bundled free with the IDE. Skill Plus Plus differentiates on the two things those do not do — a searchable ledger of past work, and team-grade distribution with dependency and lifecycle management.
+The competitive pressure worth taking seriously is the fourth column: memory and rule-generation features bundled free with the IDE. Skill++ differentiates on the two things those do not do — a searchable ledger of past work, and team-grade distribution with dependency and lifecycle management.
 
 ---
 
@@ -357,7 +357,7 @@ Python 3.9+, standard library only — no dependencies, because a hook that has
 to import a third-party package is a hook that breaks somebody's session.
 
 ```
-skillpp/
+skill_plus_plus/
   config.py      paths and thresholds, all env-overridable
   sanitize.py    secret/PII scrubbing, applied on write
   segment.py     cuts a session into task episodes
@@ -371,17 +371,17 @@ skillpp/
   lifecycle.py   hot/cold/archived tiering, staleness, usage tracking
   install.py     settings.json wiring (dry run by default)
   cli.py         command dispatch
-commands/skillpp-review.md   /skillpp-review — review captured candidates
-commands/skillpp-new.md      /skillpp-new    — build a skill from a description
+commands/skill-plus-plus-review.md   /skill-plus-plus-review — review captured candidates
+commands/skill-plus-plus-new.md      /skill-plus-plus-new    — build a skill from a description
 examples/demo.sh             end-to-end walkthrough on a scratch ledger
 tests/fixtures/messy_session.py  demo.sh's sessions, polluted with unrelated work
-tests/test_skillpp.py        88 tests
+tests/test_skill_plus_plus.py        88 tests
 ```
 
 ### Division of labour
 
 The CLI does everything deterministic: capture, scrub, deduplicate, detect
-gaps, summarise effects, manage tiers. The `/skillpp-review` command drives an
+gaps, summarise effects, manage tiers. The `/skill-plus-plus-review` command drives an
 agent through everything that needs judgement — resolving what the repository
 can answer, asking the developer at most three questions, and writing prose
 worth reading. Neither half is useful alone.
@@ -390,33 +390,33 @@ worth reading. Neither half is useful alone.
 
 | Command | Purpose |
 | --- | --- |
-| `skillpp install --user\|--project [DIR]` | Wire the hooks, for every project or just this one. Dry run without `--apply`; `--remove` takes them back out |
-| `skillpp doctor` | Whether the hooks are wired, the models answer, and anything is waiting to be banked |
-| `skillpp hook --event <E>` | Hook entry point; reads JSON on stdin, always exits 0 |
-| `skillpp fold-session <id>` | Bank one ended session; what the `SessionEnd` hook spawns |
-| `skillpp dictate --text "…"` | Create a candidate from a description instead of a trace |
-| `skillpp review [--all]` | Candidates at or above the recurrence threshold |
-| `skillpp sift [--apply]` | Ask a local model which candidates are methods rather than one-off jobs; parks the rest. Dry run without `--apply`. See [docs/research/episode-filter.md](research/episode-filter.md) |
-| `skillpp reopen <id>` | Undo a sift verdict |
-| `skillpp merge [--apply]` | Merge candidates that are the same procedure worded differently, by embedding. Dry run without `--apply` |
-| `skillpp split <id> --at N` | Split a candidate holding two procedures; the original is kept, not deleted |
-| `skillpp name <id> --title … --description …` | Give a candidate a task-shaped name; written by the agent during `draft` |
-| `skillpp accuracy` | How often the ranker agreed with your own promote/dismiss decisions |
-| `skillpp keep` | Save the work so far as a candidate, without ending the session |
-| `skillpp reconcile` | Report promoted skills whose file is gone; reports only, never decides |
-| `skillpp ignored [--threshold N]` | List parked candidates and how often that work happened anyway |
-| `skillpp web [--port N] [--no-browser]` | Promote or dismiss candidates recognized ≥ 3 times (dismissed ones can be reinstated), then Draft (runs `skillpp draft --apply`, with an optional note on what to look out for) for a promoted one; review finished drafts, revise them through your agent, and download each as a skill folder zip; loopback only, no auth |
-| `skillpp draft <id> [--note "…"] [--apply]` | Have your own agent write a draft `SKILL.md`; never installs it. `--note` tells it what to look out for. Dry run without `--apply` |
-| `skillpp revise <id> --instruction "…" [--apply]` | Have your own agent change a draft `SKILL.md` as instructed, in place; the previous version is kept in `.revisions/`. Dry run without `--apply` |
-| `skillpp show <id>` | Effect summary, evidence, open questions |
-| `skillpp search <words>` | Search the ledger of your own past work |
-| `skillpp scaffold <id> --name <n>` | Generate a starting `SKILL.md` |
-| `skillpp promote <id> --skill-path <p>` | Mark a candidate promoted |
-| `skillpp dismiss <id>` / `expire` | Dismiss one / delete unapproved past TTL |
-| `skillpp lifecycle` / `tier <name> <tier>` | Inventory and demotion |
-| `skillpp check --name <n>` | Dependency check at pull time (exit 2 if missing) |
-| `skillpp bundle --out <dir> [--format upload\|plugin]` | Package skills: `upload` = one zip per skill for Customize → Skills; `plugin` = `.claude-plugin/` + `skills/` |
-| `skillpp install [--apply]` | Wire Claude Code hooks; dry run without `--apply` |
+| `skill-plus-plus install --user\|--project [DIR]` | Wire the hooks, for every project or just this one. Dry run without `--apply`; `--remove` takes them back out |
+| `skill-plus-plus doctor` | Whether the hooks are wired, the models answer, and anything is waiting to be banked |
+| `skill-plus-plus hook --event <E>` | Hook entry point; reads JSON on stdin, always exits 0 |
+| `skill-plus-plus fold-session <id>` | Bank one ended session; what the `SessionEnd` hook spawns |
+| `skill-plus-plus dictate --text "…"` | Create a candidate from a description instead of a trace |
+| `skill-plus-plus review [--all]` | Candidates at or above the recurrence threshold |
+| `skill-plus-plus sift [--apply]` | Ask a local model which candidates are methods rather than one-off jobs; parks the rest. Dry run without `--apply`. See [docs/research/episode-filter.md](research/episode-filter.md) |
+| `skill-plus-plus reopen <id>` | Undo a sift verdict |
+| `skill-plus-plus merge [--apply]` | Merge candidates that are the same procedure worded differently, by embedding. Dry run without `--apply` |
+| `skill-plus-plus split <id> --at N` | Split a candidate holding two procedures; the original is kept, not deleted |
+| `skill-plus-plus name <id> --title … --description …` | Give a candidate a task-shaped name; written by the agent during `draft` |
+| `skill-plus-plus accuracy` | How often the ranker agreed with your own promote/dismiss decisions |
+| `skill-plus-plus keep` | Save the work so far as a candidate, without ending the session |
+| `skill-plus-plus reconcile` | Report promoted skills whose file is gone; reports only, never decides |
+| `skill-plus-plus ignored [--threshold N]` | List parked candidates and how often that work happened anyway |
+| `skill-plus-plus web [--port N] [--no-browser]` | Promote or dismiss candidates recognized ≥ 3 times (dismissed ones can be reinstated), then Draft (runs `skill-plus-plus draft --apply`, with an optional note on what to look out for) for a promoted one; review finished drafts, revise them through your agent, and download each as a skill folder zip; loopback only, no auth |
+| `skill-plus-plus draft <id> [--note "…"] [--apply]` | Have your own agent write a draft `SKILL.md`; never installs it. `--note` tells it what to look out for. Dry run without `--apply` |
+| `skill-plus-plus revise <id> --instruction "…" [--apply]` | Have your own agent change a draft `SKILL.md` as instructed, in place; the previous version is kept in `.revisions/`. Dry run without `--apply` |
+| `skill-plus-plus show <id>` | Effect summary, evidence, open questions |
+| `skill-plus-plus search <words>` | Search the ledger of your own past work |
+| `skill-plus-plus scaffold <id> --name <n>` | Generate a starting `SKILL.md` |
+| `skill-plus-plus promote <id> --skill-path <p>` | Mark a candidate promoted |
+| `skill-plus-plus dismiss <id>` / `expire` | Dismiss one / delete unapproved past TTL |
+| `skill-plus-plus lifecycle` / `tier <name> <tier>` | Inventory and demotion |
+| `skill-plus-plus check --name <n>` | Dependency check at pull time (exit 2 if missing) |
+| `skill-plus-plus bundle --out <dir> [--format upload\|plugin]` | Package skills: `upload` = one zip per skill for Customize → Skills; `plugin` = `.claude-plugin/` + `skills/` |
+| `skill-plus-plus install [--apply]` | Wire Claude Code hooks; dry run without `--apply` |
 
 ### Built
 
@@ -445,14 +445,14 @@ so the regression is a live test rather than a git archaeology exercise.
 Deliberately deferred — see §13 for phasing.
 
 * **Team PR sync.** Phase 2. Only the receiving half exists today: declared
-  dependencies and `skillpp check`.
+  dependencies and `skill-plus-plus check`.
 * **Script extraction.** The slash command tells the agent to lift
   deterministic pipelines into `scripts/run.sh`; the CLI does not do it
   automatically.
 * **Automatic provisional→trusted promotion.** The tier is recorded and
   readable; usage counts are tracked; nothing promotes on them yet.
-* **Voice input.** Dictation is text-only — `skillpp dictate` and
-  `/skillpp-new`. Speech-to-text is somebody else's job; the parser does not
+* **Voice input.** Dictation is text-only — `skill-plus-plus dictate` and
+  `/skill-plus-plus-new`. Speech-to-text is somebody else's job; the parser does not
   care how the words arrive.
 * **The OS-level shell daemon.** Capture is Claude Code hooks only, which is
   the sequencing argued for in §11.
@@ -499,7 +499,7 @@ never leaves the laptop.
 ### Phase 2 — team distribution
 
 The receiving half already exists: skills declare their dependencies and
-`skillpp check` verifies them at pull time. What Phase 2 adds is the sending
+`skill-plus-plus check` verifies them at pull time. What Phase 2 adds is the sending
 half — exporting an approved skill as a pull request against a shared library,
 with the lifecycle and dedup machinery extended across a team rather than a
 directory.

@@ -81,7 +81,7 @@ def parse_frontmatter(text: str) -> dict:
 
     Scalars, inline JSON-ish lists, and one level of nesting under ``metadata``.
     Deliberately not a general YAML parser — this only has to read what
-    :func:`skillpp.summary.scaffold_skill` writes, plus hand-authored skills
+    :func:`skill_plus_plus.summary.scaffold_skill` writes, plus hand-authored skills
     that stick to the common shape.
     """
     match = _FRONTMATTER_RE.match(text)

@@ -1,10 +1,10 @@
 ---
 name: Idea
-about: Something skillpp should do
+about: Something Skill++ should do
 labels: idea
 ---
 
-**What you are trying to do**, and where skillpp gets in the way today.
+**What you are trying to do**, and where Skill++ gets in the way today.
 
 **What would help**
 

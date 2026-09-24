@@ -2,7 +2,7 @@
 description: (Work in progress) Turn a described workflow into a skill, after asking what the description leaves out
 ---
 
-# Skill Plus Plus — new skill from a description
+# Skill++ — new skill from a description
 
 The developer wants a skill for something they are telling you about rather
 than something you watched them do. Everything after the command name is the
@@ -11,7 +11,7 @@ description.
 ## 1. Register it
 
 ```bash
-skillpp dictate --text "<their description verbatim>" --json
+skill-plus-plus dictate --text "<their description verbatim>" --json
 ```
 
 This parses the description into ordered steps and runs a completeness check,
@@ -58,7 +58,7 @@ later without re-reading, so a wrong assumption here is expensive and silent.
 ## 5. Write it
 
 ```bash
-skillpp scaffold <id> --name <skill-name> --description "<one line>" \
+skill-plus-plus scaffold <id> --name <skill-name> --description "<one line>" \
   --answers '{"when_to_use": "...", "output_format": "...", "sources": "..."}' \
   --out .claude/skills/<skill-name>/SKILL.md
 ```
@@ -79,7 +79,7 @@ Then edit the scaffold into something worth reading:
 ## 6. Record and report
 
 ```bash
-skillpp promote <id> --skill-path .claude/skills/<skill-name>/SKILL.md
+skill-plus-plus promote <id> --skill-path .claude/skills/<skill-name>/SKILL.md
 ```
 
 Tell them the path, the tier (`provisional` — it earns `trusted` through use,

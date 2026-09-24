@@ -10,8 +10,8 @@ why it exists, and the comments cite the measurement behind each choice.
 Claude Code session
   │  UserPromptSubmit, PostToolUse           capture.handle_prompt / handle_tool
   ▼
-~/.claude/skillpp/sessions/<id>.json          scrubbed on write (sanitize.scrub)
-  │  SessionEnd: mark ended, start a detached `skillpp fold-session <id>`
+~/.claude/skill-plus-plus/sessions/<id>.json   scrubbed on write (sanitize.scrub)
+  │  SessionEnd: mark ended, start a detached `skill-plus-plus fold-session <id>`
   │  SessionStart: the same for sessions held or never ended (fold-pending)
   ▼
 fold_session_now                               capture, one lock per session
@@ -22,13 +22,13 @@ fold_session_now                               capture, one lock per session
   ├─ matching.find_same                        embed and compare with every entry
   └─ ledger                                    new candidate, or one more occurrence
   ▼
-skillpp web / review / show                    web.collect_state, summary
+skill-plus-plus web / review / show            web.collect_state, summary
   │  promote → Draft Skill
   ▼
-skillpp draft                                  cli.cmd_draft: your agent, in a temp home,
+skill-plus-plus draft                          cli.cmd_draft: your agent, in a temp home,
   │                                            reads `show --json --draft`, writes SKILL.md
   ▼
-~/.claude/skillpp/drafts/<id>/SKILL.md         open questions answered, revised, downloaded
+~/.claude/skill-plus-plus/drafts/<id>/SKILL.md open questions answered, revised, downloaded
 ```
 
 Nothing that calls a model runs inside a hook: the judge, the embeddings and
@@ -55,11 +55,11 @@ is **held**, not guessed at, and banked by the next `SessionStart`.
 | `normalize` | Parameterising paths and ids, and the shape of a step used for comparison. |
 | `sanitize` | Scrubbing secrets and addresses from every captured string. |
 | `decisions` | The append-only record of what you promoted and dismissed. |
-| `config` | Paths and every `SKILLPP_*` setting, with the reason for each default. |
+| `config` | Paths and every `SKILL_PLUS_PLUS_*` setting, with the reason for each default. |
 | `similar` | Pieces shared by the matching and merging code. |
 
-`skillpp/prompts/` holds what the local model is asked. `skillpp/commands/`
-holds the slash commands: `skillpp-draft.md` is handed to the drafting agent,
+`skill_plus_plus/prompts/` holds what the local model is asked. `skill_plus_plus/commands/`
+holds the slash commands: `skill-plus-plus-draft.md` is handed to the drafting agent,
 the other three are copied into your settings by `install`.
 
 ## Rules the code keeps
@@ -88,7 +88,7 @@ the code; reuse it rather than writing a second one.
 | What does the judge see at a gap? | `boundary.judge_gap` (live and in `judge_replay.py`) |
 | Which hooks are wired here? | `install.installed_events` |
 | What does a session bank? | `capture.fold_session`, which `score.py` calls rather than copying |
-| How are sessions loaded for scoring? | `tests/fixtures/sessions/score.load` (reads `SKILLPP_FIXTURES`) |
+| How are sessions loaded for scoring? | `tests/fixtures/sessions/score.load` (reads `SKILL_PLUS_PLUS_FIXTURES`) |
 
 ## Measuring a change
 

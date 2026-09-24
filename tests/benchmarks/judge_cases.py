@@ -28,7 +28,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(HERE))
 
-import skillpp.boundary as boundary                      # noqa: E402
+import skill_plus_plus.boundary as boundary                      # noqa: E402
 from cases import CASES                                  # noqa: E402
 from run import score                                    # noqa: E402
 

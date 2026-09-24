@@ -44,8 +44,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from skillpp.episode import render_step  # noqa: E402
-from skillpp.segment import PROMPT_TOOL, segment  # noqa: E402
+from skill_plus_plus.episode import render_step  # noqa: E402
+from skill_plus_plus.segment import PROMPT_TOOL, segment  # noqa: E402
 
 LABELS_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "boundaries"
 EPISODES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "episodes"
@@ -404,9 +404,9 @@ def load_batch(path: str) -> dict:
 
 
 def cmd_score(args: argparse.Namespace) -> int:
-    from skillpp.config import Config
-    from skillpp.episode import is_reusable
-    from skillpp.ledger import Entry
+    from skill_plus_plus.config import Config
+    from skill_plus_plus.episode import is_reusable
+    from skill_plus_plus.ledger import Entry
 
     data = load_batch(args.batch)
     config = Config(args.root)

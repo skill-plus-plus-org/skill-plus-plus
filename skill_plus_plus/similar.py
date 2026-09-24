@@ -1,7 +1,7 @@
 """Shared pieces for deciding and applying "same procedure".
 
-`fold_into` moves one entry's evidence into another (`skillpp merge`). What is
-embedded to decide a merge lives in `skillpp.matching`.
+`fold_into` moves one entry's evidence into another (`skill-plus-plus merge`). What is
+embedded to decide a merge lives in `skill_plus_plus.matching`.
 
 This module used to hold a background pass: signature similarity as a filter,
 then an embedding for the pairs that got through. The filter was lexical and
@@ -40,5 +40,5 @@ def fold_into(keep, drop) -> None:
 
 # Not one of `decisions._TRUTH`'s labels on purpose. That dict scores a ranker's
 # hint against what a person decided; a fold is neither the ranker's opinion nor
-# a person's, so counting it there would corrupt `skillpp accuracy`.
+# a person's, so counting it there would corrupt `skill-plus-plus accuracy`.
 AUTO_MERGED = "auto-merged"

@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "skillpp-web",
+      "name": "skill-plus-plus-web",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["bin/skillpp", "web", "--no-browser", "--port", "8765"],
+      "runtimeArgs": ["bin/skill-plus-plus", "web", "--no-browser", "--port", "8765"],
       "port": 8765
     }
   ]

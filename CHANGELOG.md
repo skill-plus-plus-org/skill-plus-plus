@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to skillpp. The format follows
+All notable changes to Skill++. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
@@ -23,7 +23,16 @@ The first public release.
 
 ### Changed before release
 
-- Installable with `pipx`, with a `skillpp` console script; an installed copy
+- Renamed from `skillpp` to `skill-plus-plus`: the command, the package
+  (`skill_plus_plus` in Python), the data folder `~/.claude/skill-plus-plus/`,
+  the slash commands and the `SKILL_PLUS_PLUS_*` settings. An existing
+  `~/.claude/skillpp/` moves to the new folder the first time it runs, and
+  `install` replaces hooks written under the old name. Settings still named
+  `SKILLPP_*` are no longer read. The product is called Skill++ in the docs and
+  on the review page; everything you type keeps `skill-plus-plus`.
+- A candidate at the recurrence threshold that nobody promotes expires like
+  any other, `SKILL_PLUS_PLUS_TTL_DAYS` after it was last recognized.
+- Installable with `pipx`, with a `skill-plus-plus` console script; an installed copy
   can draft.
 - The review page refuses requests made by other pages in the same browser.
 - Describing every tool call with the local model is off by default; it cost
@@ -31,7 +40,7 @@ The first public release.
 - `install` copies both slash commands a developer types, and `--remove` takes
   them out again.
 - `keep`, which saved a session's work so far as a candidate, is removed.
-  Describing a procedure (`/skillpp-new`) is the way to a skill without
+  Describing a procedure (`/skill-plus-plus-new`) is the way to a skill without
   repeating the work, and is work in progress.
 - `install` also downloads the two Ollama models when they are missing
   (`--no-models` to skip); without Ollama it says how to get it.

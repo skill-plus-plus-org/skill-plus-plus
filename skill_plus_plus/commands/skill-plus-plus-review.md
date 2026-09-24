@@ -14,16 +14,16 @@ review the highest-occurrence candidate.
 ## 1. Find the candidate
 
 ```bash
-skillpp review --json
+skill-plus-plus review --json
 ```
 
-If the developer gave a search phrase instead of an id, use `skillpp search <phrase>`.
+If the developer gave a search phrase instead of an id, use `skill-plus-plus search <phrase>`.
 If nothing is ready, say so plainly and stop — do not go looking for work to do.
 
 ## 2. Load it
 
 ```bash
-skillpp show <id> --json
+skill-plus-plus show <id> --json
 ```
 
 This returns the effect summary, the derived-from evidence, the declared
@@ -68,7 +68,7 @@ On approval, generate the scaffold and then edit it into something worth
 reading:
 
 ```bash
-skillpp scaffold <id> --name <skill-name> --description "<one line>" --out <path>/SKILL.md
+skill-plus-plus scaffold <id> --name <skill-name> --description "<one line>" --out <path>/SKILL.md
 ```
 
 Then improve it:
@@ -92,8 +92,8 @@ not through review.
 ## 7. Record it
 
 ```bash
-skillpp promote <id> --skill-path <path>/SKILL.md
-skillpp check --name <skill-name>
+skill-plus-plus promote <id> --skill-path <path>/SKILL.md
+skill-plus-plus check --name <skill-name>
 ```
 
 The dependency check confirms the skill can actually run here before anybody

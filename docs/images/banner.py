@@ -58,12 +58,12 @@ def build(theme: str) -> str:
     wx = sx + SKILL_W + 48                      # the wordmark
     out.append(f'<text x="{wx}" y="{mid + 14}" font-family="{FONT}" font-size="64" '
                f'font-weight="800" letter-spacing="-1.5">'
-               f'<tspan fill="{t["text"]}">skill</tspan><tspan fill="{t["accent"]}">pp</tspan></text>')
+               f'<tspan fill="{t["text"]}">Skill</tspan><tspan fill="{t["accent"]}">++</tspan></text>')
     out.append(f'<text x="{wx + 2}" y="{mid + 44}" font-family="{MONO}" font-size="14" '
                f'fill="{t["muted"]}">repeated work → reviewed skills</text>')
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
-            f'viewBox="0 0 {W} {H}" role="img" aria-label="skillpp: repeated work becomes a reviewed skill">'
-            f'<title>skillpp</title>' + "".join(out) + "</svg>\n")
+            f'viewBox="0 0 {W} {H}" role="img" aria-label="Skill++: repeated work becomes a reviewed skill">'
+            f'<title>Skill++</title>' + "".join(out) + "</svg>\n")
 
 
 here = Path(__file__).parent
