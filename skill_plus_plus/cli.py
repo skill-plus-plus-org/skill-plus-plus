@@ -1624,7 +1624,7 @@ def cmd_install(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="skill-plus-plus",
-        description="Skill Plus Plus — capture workflows passively, promote them deliberately.")
+        description="Skill++ — capture workflows passively, promote them deliberately.")
     parser.add_argument("--version", action="version", version=f"skill-plus-plus {__version__}")
     parser.add_argument("--root", help="ledger root (default ~/.claude/skill-plus-plus)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1831,7 +1831,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "upload: one <name>.zip per skill (Customize → Skills)")
     p.add_argument("--plugin-name", default="my-skills")
     p.add_argument("--plugin-version", default="1.0.0")
-    p.add_argument("--description", default="Skills captured with Skill Plus Plus.")
+    p.add_argument("--description", default="Skills captured with Skill++.")
     p.add_argument("--name-filter", nargs="*", help="only these skill names")
     p.add_argument("--skills-dir")
     p.add_argument("--include-cold", action="store_true")

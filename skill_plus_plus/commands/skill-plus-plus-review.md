@@ -2,7 +2,7 @@
 description: Review captured workflow candidates and promote the good ones into skills
 ---
 
-# Skill Plus Plus — review
+# Skill++ — review
 
 Walk the developer through reviewing captured workflow candidates. The CLI has
 already done the deterministic work: capture, scrubbing, deduplication, gap
