@@ -4213,6 +4213,28 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
                                         text=True, check=True).stdout)
         self.assertEqual(out, ["a,b,n,old", "a,old", "n", 0])
 
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_the_project_menu_shows_even_with_one_project(self):
+        """Candidates and skills belong to one project each, and the menu is
+        where the page says which. Hidden with a single project, the page gave
+        no sign that it was scoped at all."""
+        import json, subprocess
+        from skill_plus_plus.web import PAGE
+        script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
+        one = [{"key": "/r/decks", "name": "decks", "path": "/r/decks", "candidates": 2}]
+        two = one + [{"key": "/r/app", "name": "app", "path": "/r/app", "candidates": 1}]
+        program = script + f"""
+const sel = {{hidden: true, innerHTML: "", value: ""}};
+globalThis.document = {{getElementById: () => sel}};
+const menu = list => {{ ALL = {{rows: [], drafts: [], projects: list}}; project = null; renderProjects();
+  return [sel.hidden, (sel.innerHTML.match(/<option/g) || []).length, sel.value]; }};
+process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(two)}), menu([])]));"""
+        out = json.loads(subprocess.run(["node", "-e", program], capture_output=True,
+                                        text=True, check=True).stdout)
+        self.assertEqual(out[0], [False, 1, "/r/decks"], "one project: shown, by its name")
+        self.assertEqual(out[1], [False, 3, "*"], "several: all of them, and each")
+        self.assertTrue(out[2][0], "no project at all: nothing to show")
+
     def _in_repo(self, eid):
         """A finished draft whose candidate belongs to a scratch repo."""
         repo = self.root / "repo"

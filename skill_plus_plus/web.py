@@ -1405,10 +1405,13 @@ function renderProjects(){
   const sel = document.getElementById("project");
   const list = ALL.projects || [];
   if (project !== null && !list.some(p => p.key === project)) project = null;   // gone since
-  sel.hidden = list.length < 2;          // one project: nothing to choose
-  sel.innerHTML = `<option value="*">All projects</option>` + list.map(p =>
+  // Shown whenever there is a project: candidates and skills each belong to
+  // one, and this is where the page says which. With one, it is named rather
+  // than offered as "All projects", which would show the same.
+  sel.hidden = !list.length;
+  sel.innerHTML = (list.length > 1 ? `<option value="*">All projects</option>` : "") + list.map(p =>
     `<option value="${esc(p.key)}" title="${esc(p.path || "sessions recorded without a folder")}">${esc(p.name)} (${p.candidates})</option>`).join("");
-  sel.value = project === null ? "*" : project;
+  sel.value = project !== null ? project : list.length === 1 ? list[0].key : "*";
   sel.onchange = () => {
     project = sel.value === "*" ? null : sel.value;
     try { localStorage.setItem(PROJECT_KEY, JSON.stringify(project)); } catch (e) {}
