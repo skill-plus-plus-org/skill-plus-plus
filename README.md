@@ -255,6 +255,11 @@ with the commands below, with the defaults (`gemma4:e4b`, `nomic-embed-text`).
 Eight of them are the recordings of the video above, which were held out while
 the judge's question was tuned. The weak rows stay in the tables.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/numbers-dark.svg">
+  <img alt="30 of 30 sessions cut right, 13 of 13 task switches caught, 0 false cuts in 100 prompts, 0 wrong merges: the seven sprint reviews became one candidate" src="docs/images/numbers-light.svg">
+</picture>
+
 **Where one task ends**: 30 of 30 sessions right; 13 of 13 task switches
 caught; **0 false cuts over 100 prompts**, reviews, corrections and side
 questions included.
