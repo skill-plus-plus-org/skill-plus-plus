@@ -1,0 +1,251 @@
+{
+  "tag": "be3e90a1",
+  "name": "demo-sprint-c",
+  "session": "demo-sprint-c",
+  "kind": "procedure",
+  "surface": "cli",
+  "checks": [
+    "detect.one",
+    "detect.review",
+    "merge.varied"
+  ],
+  "captured": "2026-09-24",
+  "started": "2026-09-24T09:45:14.669Z",
+  "procedure": "sprint review deck from GitHub (MCP): outline, check against PRs/issues, fix, build on the template, check the slides",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "sprint-review-deck"
+    ],
+    "boundary_after": [],
+    "subjects": [
+      null
+    ],
+    "roles": [
+      "explore",
+      "review",
+      "correct",
+      "implement",
+      "verify"
+    ],
+    "level": "same-goal"
+  },
+  "why": "Recorded for the README video, from its script, fixed before recording: the sprint review is one task of five prompts (outline, check against the tickets, fix, build on the template, check the slides), and in the takes the action items and the LinkedIn post before it are a task each, starting at prompts 3 and 5. lucazagaia/skycast is a demo repo made for the recording; its milestones, issues and pull requests are invented, and notes/ holds copies of recording/meeting-1.md and recording/notes.md. Level same-goal: the runs were made to be alike. recurrence.py sets levels per session, so the takes' post and action items count as another subject against P-F and P-2said, which read the same notes.",
+  "history": "Recorded 2026-09-23 and 24 for the README video. Held out while the boundary question was restructured, and judged only after: every switch found, no false cut (docs/research/benchmarks.md, \"The question restructured\"). Published 2026-09-25.",
+  "shape": {
+    "steps": 13,
+    "prompts": 5,
+    "failed": 0
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Prepare the sprint review for last sprint from lucazagaia/skycast, using the GitHub MCP: what we merged and closed in its milestone. Start with an outline of at most 6 slides; don't build anything yet."
+      },
+      "failed": false,
+      "reply": "I'll look up milestones and their contents. Let me search issues with milestones to identify the last sprint.\n\nSprint 2 is the last completed sprint (closed 2026-09-24, due 2026-09-23, \"Offline use, settings and stability\"). It has 7 closed items total; I've got 4 PRs so far. Let me pull the 3 issues to round out the picture.\n\nSprint 2 is the last completed sprint — theme \"Offline use, settings and stability\", due 2026-09-23, closed 2026-09-24 with 7/7 items done. Here's a 6-slide outline:\n\n**1. Cover — Sprint 2 review · SkyCast**\nTheme \"Offline use, settings and stability\" · due 2026-09-23 · closed 2026-09-24 · 7/7 items done.\n\n**2. Sprint goal & scope**\nMake SkyCast usable without a live signal, give users control over units, and stop the crash when location services are off. Scope: 3 user-facing issues (#6, #8, #10) + 1 internal cleanup, delivered via 4 PRs.\n\n**3. Shipped — offline resilience**\n- #6 *Show the last forecast when offline* → PR #7 *Keep the last forecast on the device*\n- #8 *App crashes when location services are off* → PR #9 *Fall back to the last location…*\nTogether these turn a hard-fail state into a graceful, cached experience.\n\n**4. Shipped — user settings**\n- #10 *Let users choose Celsius or Fahrenheit* → PR #11 *Add a temperature unit setting*\nFixes the long-standing complaint that the app forced region-based units (originally raised as #3).\n\n**5. Under the hood**\n- PR #12 *Internal: bump test dependencies* — no user-visible change; unblocks Sprint 3 work.\n\n**6. Wrap-up & what's next**\nMetrics: 7/7 milestone items closed, all 4 PRs merged, delivered 1 day after target. Sprint 3 (\"widget, dark mode, date-line fix\", due 2026-10-07) is already underway — 4 items closed, 1 open.\n\nSay the word and I'll build the deck; happy to reshape the outline first (e.g., add a demo slide, split shipped items differently, or include contributor callouts)."
+    },
+    {
+      "tool": "ToolSearch",
+      "input": {},
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{'type': 'tool_reference', 'tool_name': 'mcp__github__list_issues'} {'type': 'tool_reference', 'tool_name': 'mcp__github__list_pull_requests'} {'type': 'tool_reference', 'tool_name': 'mcp__github__search_issues'} {'type': 'tool_reference', 'tool_name': 'mcp__github__search_pull_requests'}",
+      "end": false
+    },
+    {
+      "tool": "mcp__github__search_issues",
+      "input": {
+        "query": "repo:lucazagaia/skycast milestone sprint",
+        "owner": "lucazagaia",
+        "repo": "skycast",
+        "perPage": 50
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{\"incomplete_results\":false,\"items\":[],\"total_count\":0}",
+      "assistant_note": "I'll look up milestones and their contents. Let me search issues with milestones to identify the last sprint.",
+      "end": false
+    },
+    {
+      "tool": "mcp__github__search_pull_requests",
+      "input": {
+        "query": "repo:lucazagaia/skycast is:pr",
+        "owner": "lucazagaia",
+        "repo": "skycast",
+        "perPage": 50
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{\"incomplete_results\":false,\"items\":[{\"closed_at\":\"2026-09-24T08:48:48Z\",\"html_url\":\"https://github.com/lucazagaia/skycast/pull/19\",\"milestone\":{\"closed_issues\":7,\"created_at\":\"2026-09-24T08:46:34Z\",\"creator\":{\"avatar_url\":\"https://avatars.githubusercontent.com/u/192005487?v=4\",\"events_url\":\"https://api.github.com/users/lucazagaia/events{/privacy}\",\"followers_url\":\"https://api.github.com/users/luc",
+      "end": false
+    },
+    {
+      "tool": "mcp__github__list_issues",
+      "input": {
+        "owner": "lucazagaia",
+        "repo": "skycast",
+        "state": "CLOSED",
+        "perPage": 50
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{\"issues\":[{\"number\":17,\"state\":\"CLOSED\",\"title\":\"Dark mode\"},{\"number\":15,\"state\":\"CLOSED\",\"title\":\"Forecasts near the date line show the previous day\"},{\"number\":13,\"state\":\"CLOSED\",\"title\":\"Home-screen widget with today's high, low and chance of rain\"},{\"number\":10,\"state\":\"CLOSED\",\"title\":\"Let users choose Celsius or Fahrenheit\"},{\"number\":8,\"state\":\"CLOSED\",\"title\":\"App crashes when location ",
+      "assistant_note": "Sprint 2 is the last completed sprint (closed 2026-09-24, due 2026-09-23, \"Offline use, settings and stability\"). It has 7 closed items total; I've got 4 PRs so far. Let me pull the 3 issues to round out the picture.",
+      "closing_note": "Fixed outline — internal PR #12 dropped, so this collapses to 5 slides: **1. Cover — Sprint 2 review · SkyCast** Theme \"Offline use, settings and stability\" · due 2026-09-23 · closed 2026-09-24. **2. Sprint goal & scope** Make SkyCast usable without a live signal, give users control over units, and stop the crash when location services are off. Scope: 3 user-facing issues (#6, #8, #10), delivered …",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Check every bullet in the outline against the pull requests and issues and tell me which ones aren't backed by them."
+      },
+      "failed": false,
+      "reply": "Rechecked each bullet against the fetched data. Four bullets aren't backed:\n\n**Slide 4 — \"originally raised as #3\"**\nIssue #3 *\"Temperatures show in Fahrenheit outside the US\"* belongs to **Sprint 1** and was already addressed there by PR #4 *\"Pick the temperature unit from the region.\"* So framing #10/#11 as the fix for #3 is wrong — #10 is a follow-on feature, not the same complaint.\n\n**Slide 5 — \"unblocks Sprint 3 work\"**\nPure speculation. Nothing in PR #12's title or metadata (or any Sprint 3 item I fetched) says it was a prerequisite.\n\n**Slide 6 — \"Sprint 3 already underway — 4 items closed, 1 open\"**\nThe milestone counts say **7 closed, 1 open**, not 4/1. I based \"4\" on the four items that surfaced in my search results, but the milestone metadata is authoritative and I hadn't fetched the rest.\n\n**Slide 6 — \"all 4 PRs merged\"**\nI only queried `state=closed` / `closed_at`; I didn't pull the `merged`/`merged_at` fields. Closed ≠ merged on GitHub (a closed PR could have been rejected). Very likely all merged, but not verified.\n\nAlso worth flagging as **inferred but not directly verified** (not wrong, just not proven by what I fetched):\n- The PR→issue \"closes\" links on slide 3 (#7→#6, #9→#8) — I matched by title, didn't check the PR bodies for `Closes #N`.\n- Which specific issues sat on the Sprint 2 milestone — I never queried issue-level milestone; I inferred #6/#8/#10 because 3 issues + 4 PRs = the milestone's 7 closed items and the titles line up.\n- Slide 2's narrative framing of the sprint goal is my paraphrase, not a quoted goal.\n\nWant me to fix the four broken bullets and (optionally) run the extra queries to firm up the inferred ones before we build?"
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Fix those, and leave out internal changes."
+      },
+      "failed": false,
+      "reply": "Fixed outline — internal PR #12 dropped, so this collapses to 5 slides:\n\n**1. Cover — Sprint 2 review · SkyCast**\nTheme \"Offline use, settings and stability\" · due 2026-09-23 · closed 2026-09-24.\n\n**2. Sprint goal & scope**\nMake SkyCast usable without a live signal, give users control over units, and stop the crash when location services are off. Scope: 3 user-facing issues (#6, #8, #10), delivered via 3 PRs (#7, #9, #11).\n\n**3. Shipped — offline resilience**\n- #6 *Show the last forecast when offline* → PR #7 *Keep the last forecast on the device*\n- #8 *App crashes when location services are off* → PR #9 *Fall back to the last location…*\nTogether these turn a hard-fail state into a graceful, cached experience.\n\n**4. Shipped — user settings**\n- #10 *Let users choose Celsius or Fahrenheit* → PR #11 *Add a temperature unit setting*\nUsers can now override the region default.\n\n**5. Wrap-up & what's next**\nAll 3 user-facing items closed, delivered 1 day after the 2026-09-23 target. Sprint 3 (\"widget, dark mode, date-line fix\", due 2026-10-07) is underway — 7 items closed, 1 open.\n\nChanges vs. previous outline: dropped slide 5 (internal PR #12); removed the incorrect \"#3\" line on slide 4; corrected Sprint 3 counts to 7/1; replaced \"all 4 PRs merged\" with \"3 user-facing items closed\" (avoids the merged-vs-closed distinction I hadn't verified).\n\nStill inferred but not proven: the PR→issue \"closes\" links on slide 3 and which issues sat on the Sprint 2 milestone. Want me to verify those before building?"
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Approved. Build it on our company design template, brand/company-design-template.pptx, and name the file after the sprint."
+      },
+      "failed": false,
+      "reply": "There's a Sprint 1.pptx in the repo — I'll match that pattern. Let me inspect the template and the existing deck to understand how to build on the template.\n\nBuilding `Sprint 2.pptx` off the template using the same layout pattern Sprint 1 established.\n\nBuilt `Sprint 2.pptx` (5 slides) using the company template's `Title` and `Content` layouts, matching the pattern in `Sprint 1.pptx`. Contents mirror the approved outline: cover, sprint at a glance, offline resilience, user settings, what's next."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls -la ${DEMO}/company-decks/ && ls -la ${DEMO}/company-decks/brand/ 2>/dev/null",
+        "description": "List working directory and brand folder"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "total 56 drwxr-xr-x@ 6 ${USER} wheel 192 Sep 24 11:43 . drwxr-xr-x@ 14 ${USER} wheel 448 Sep 24 11:35 .. drwxr-xr-x@ 12 ${USER} wheel 384 Sep 24 11:26 .git -rw-r--r--@ 1 ${USER} wheel 76 Sep 24 11:26 README.md -rw-r--r--@ 1 ${USER} wheel 23201 Sep 24 11:43 Sprint 1.pptx drwxr-xr-x@ 3 ${USER} wheel 96 Sep 24 11:26 brand total 48 drwxr-xr-x@ 3 ${USER} wheel 96 Sep 24 11:26 . drwxr-xr-x@ 6 ${USER} wh",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "which python3 && python3 -c \"import pptx; print(pptx.__version__)\" 2>&1",
+        "description": "Check python-pptx availability"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "/opt/homebrew/bin/python3 1.0.2",
+      "assistant_note": "There's a Sprint 1.pptx in the repo — I'll match that pattern. Let me inspect the template and the existing deck to understand how to build on the template.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "unzip -l brand/company-design-template.pptx | head -50",
+        "description": "Inspect template structure"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "Archive: brand/company-design-template.pptx Length Date Time Name --------- ---------- ----- ---- 2610 09-24-2026 11:26 [Content_Types].xml 737 09-24-2026 11:26 _rels/.rels 731 09-24-2026 11:26 docProps/core.xml 1133 09-24-2026 11:26 docProps/app.xml 3347 09-24-2026 11:26 ppt/presentation.xml 1537 09-24-2026 11:26 ppt/_rels/presentation.xml.rels 649 09-24-2026 11:26 ppt/presProps.xml 898 09-24-202",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 << 'EOF'\nfrom pptx import Presentation\nfrom pptx.util import Emu\n\nfor path in [\"brand/company-design-template.pptx\", \"Sprint 1.pptx\"]:\n    print(f\"\\n=== {path} ===\")\n    prs = Presentation(path)\n    print(f\"Slide size: {prs.slide_width} x {prs.slide_height} ({Emu(prs.slide_width).inches}in x {Emu(prs.slide_height).inches}in)\")\n    print(f\"Layouts ({len(prs.slide_layouts)}):\")\n    for i, lay in enumerate(prs.slide_layouts):\n        print(f\"  [{i}] name={lay.name!r}\")\n        for ph in lay.placeholders:\n            print(f\"       ph idx={ph.placeholder_format.idx} type={ph.placeholder_format.type} name={ph.name!r}\")\n    print(f\"Slides ({len(prs.slides)}):\")\n    for i, s in enumerate(prs.slides):\n        print(f\"  slide {i+1}: layout={s.slide_layout.name!r}\")\n        for ph in s.placeholders:\n            txt = ph.text_frame.text if ph.has_text_frame else \"\"\n            print(f\"     ph idx={ph.placeholder_format.idx} name={ph.name!r} text={txt[:80]!r}\")\n        for sh in s.shapes:\n            if not sh.is_placeholder:\n                print(f\"     shape name={sh.name!r} type={sh.shape_type}\")\nEOF",
+        "description": "Inspect template and Sprint 1 deck"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "=== brand/company-design-template.pptx === Slide size: 12191695 x 6858000 (13.33299978127734in x 7.5in) Layouts (4): [0] name='Title' ph idx=0 type=CENTER_TITLE (3) name='Title 1' ph idx=1 type=SUBTITLE (4) name='Subtitle 2' ph idx=10 type=DATE (16) name='Date Placeholder 3' ph idx=11 type=FOOTER (15) name='Footer Placeholder 4' ph idx=12 type=SLIDE_NUMBER (13) name='Slide Number Placeholder 5' [1",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 << 'EOF'\nimport copy\nfrom pptx import Presentation\nfrom pptx.oxml.ns import qn\n\nTEMPLATE = \"brand/company-design-template.pptx\"\nOUT = \"Sprint 2.pptx\"\n\nprs = Presentation(TEMPLATE)\n\n# Strip the 4 example slides from the template\nsldIdLst = prs.slides._sldIdLst\nfor sldId in list(sldIdLst):\n    rId = sldId.get(qn(\"r:id\"))\n    prs.part.drop_rel(rId)\n    sldIdLst.remove(sldId)\n\nlayouts = {l.name: l for l in prs.slide_layouts}\n\ndef set_ph(slide, idx, lines):\n    ph = next(p for p in slide.placeholders if p.placeholder_format.idx == idx)\n    tf = ph.text_frame\n    tf.text = lines[0]\n    for line in lines[1:]:\n        p = tf.add_paragraph()\n        p.text = line\n    return ph\n\n# 1. Cover\ns = prs.slides.add_slide(layouts[\"Title\"])\nset_ph(s, 0, [\"Sprint 2 review\"])\nset_ph(s, 1, [\"Team Skycast · closed 2026-09-24\"])\n\n# 2. Sprint at a glance\ns = prs.slides.add_slide(layouts[\"Content\"])\nset_ph(s, 0, [\"Sprint at a glance\"])\nset_ph(s, 1, [\n    \"Theme: offline use, settings and stability\",\n    \"Milestone due 2026-09-23, closed 2026-09-24 (one day late)\",\n    \"Scope: 3 user-facing issues (#6, #8, #10)\",\n    \"Delivered via 3 pull requests (#7, #9, #11)\",\n])\n\n# 3. Shipped: offline resilience\ns = prs.slides.add_slide(layouts[\"Content\"])\nset_ph(s, 0, [\"Shipped: offline resilience\"])\nset_ph(s, 1, [\n    \"Issue #6 → PR #7: keep the last forecast on the device\",\n    \"Issue #8 → PR #9: fall back to the last location when location services are off\",\n    \"Result: a hard-fail state becomes a graceful, cached experience\",\n])\n\n# 4. Shipped: user settings\ns = prs.slides.add_slide(layouts[\"Content\"])\nset_ph(s, 0, [\"Shipped: user settings\"])\nset_ph(s, 1, [\n    \"Issue #10 → PR #11: add a temperature unit setting\",\n    \"Users can now override the region default (Celsius or Fahrenheit)\",\n])\n\n# 5. What's next — Sprint 3\ns = prs.slides.add_slide(layouts[\"Content\"])\nset_ph(s, 0, [\"What’s next — Sprint 3\"])\nset_ph(s, 1, [\n    \"Theme: the widget, dark mode and a date-line fix\",\n    \"Milestone due 20… [truncated 348 chars]",
+        "description": "Build Sprint 2 deck from template"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "Wrote Sprint 2.pptx slide 1: layout='Title' title='Sprint 2 review' slide 2: layout='Content' title='Sprint at a glance' slide 3: layout='Content' title='Shipped: offline resilience' slide 4: layout='Content' title='Shipped: user settings' slide 5: layout='Content' title='What’s next — Sprint 3'",
+      "assistant_note": "Building `Sprint 2.pptx` off the template using the same layout pattern Sprint 1 established.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls -la \"Sprint 2.pptx\"",
+        "description": "Verify output file"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "-rw-r--r--@ 1 ${USER} wheel 23216 Sep 24 11:48 Sprint 2.pptx",
+      "closing_note": "Built `Sprint 2.pptx` (5 slides) using the company template's `Title` and `Content` layouts, matching the pattern in `Sprint 1.pptx`. Contents mirror the approved outline: cover, sprint at a glance, offline resilience, user settings, what's next.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Open it and check the slides follow the outline, in order."
+      },
+      "failed": false,
+      "reply": "I'll render the slides to images and inspect them.\n\nRendered all 5 slides and checked against the approved outline. Order and content match, with two minor consolidations to flag:\n\n| # | Outline heading | Slide title | Match |\n|---|---|---|---|\n| 1 | Cover | Sprint 2 review | ✓ |\n| 2 | Sprint goal & scope | Sprint at a glance | ✓ (see note) |\n| 3 | Shipped — offline resilience | Shipped: offline resilience | ✓ |\n| 4 | Shipped — user settings | Shipped: user settings | ✓ |\n| 5 | Wrap-up & what's next | What's next — Sprint 3 | ✓ (see note) |\n\n**Content checks per slide:**\n- **Slide 1**: title + \"Team Skycast · closed 2026-09-24\". Theme and due-date moved to slide 2 (which is where the outline had scope anyway).\n- **Slide 2**: theme, due/closed with \"(one day late)\", scope issues #6/#8/#10, delivered via PRs #7/#9/#11. All outline facts present — but rendered as bullets, not the narrative \"Make SkyCast usable without a live signal…\" sentence from the outline.\n- **Slide 3**: #6→#7, #8→#9, and the \"hard-fail → graceful, cached experience\" line. Matches.\n- **Slide 4**: #10→#11 and the region-default override line. Matches.\n- **Slide 5**: Sprint 3 theme, due 2026-10-07, \"7 items closed, 1 open — already underway\". The Sprint 2 wrap-up numbers from the outline aren't restated here — they live on slide 2 (\"one day late\").\n\n**Deviations to be aware of:**\n1. Slide 2 is bullet-style instead of the outline's prose goal sentence.\n2. Slide 5 covers \"what's next\" only; the Sprint 2 wrap-up numbers are absorbed into slide 2 rather than repeated.\n\nBoth are reasonable consolidations and no facts are missing or wrong. Want me to add the prose goal sentence to slide 2, or split slide 5 into a wrap-up slide + Sprint 3 slide?"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "which soffice || ls /Applications/LibreOffice.app/Contents/MacOS/soffice 2>/dev/null || echo \"no libreoffice\"; which qlmanage",
+        "description": "Find a pptx renderer"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "/opt/homebrew/bin/soffice /usr/bin/qlmanage",
+      "assistant_note": "I'll render the slides to images and inspect them.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "mkdir -p /tmp/sprint2-render && soffice --headless --convert-to pdf --outdir /tmp/sprint2-render \"Sprint 2.pptx\" && ls /tmp/sprint2-render/",
+        "description": "Convert deck to PDF"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "convert ${DEMO}/company-decks/Sprint 2.pptx as a Impress document -> /private/tmp/sprint2-render/Sprint 2.pdf using filter : impress_pdf_Export Sprint 2.pdf",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "/tmp/sprint2-render/Sprint 2.pdf"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "PDF pages extracted: 5 page(s) from /tmp/sprint2-render/Sprint 2.pdf (96.4KB)",
+      "closing_note": "Rendered all 5 slides and checked against the approved outline. Order and content match, with two minor consolidations to flag: | # | Outline heading | Slide title | Match | |---|---|---|---| | 1 | Cover | Sprint 2 review | ✓ | | 2 | Sprint goal & scope | Sprint at a glance | ✓ (see note) | | 3 | Shipped — offline resilience | Shipped: offline resilience | ✓ | | 4 | Shipped — user settings | …",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "question": "6b453520d07d",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "prompt_chars": -1,
+    "reply_before": 0,
+    "send_description": false,
+    "endings": 0,
+    "answered": 2,
+    "replayed": "2026-09-24"
+  }
+}
