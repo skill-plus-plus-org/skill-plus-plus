@@ -7,6 +7,14 @@ the text in STAGES, then run this; keep what each box says true to the code.
 
 Every position is computed from the constants below, so boxes in a row share
 one width, rows share one height, and gaps are equal.
+
+The stage colours are the review page's own (`web.py`), each for what it means
+there: sky, its colour for acting, for what runs while you work; amber, its
+colour for a candidate, for the fold that makes them; emerald, its colour for an
+installed skill, for review and draft. The light theme takes the -600 shade of
+each, which holds up on white; the dark theme the page's own -400, its tints
+mixed over GitHub's dark background the way the page tints a card (12% fill,
+40% border). On those bright badges the number is dark, not white.
 """
 from html import escape
 from pathlib import Path
@@ -48,16 +56,18 @@ THEMES = {
     "light": {
         "text": "#0f172a", "muted": "#475569", "box": "#ffffff", "boxline": "#e2e8f0",
         "arrow": "#94a3b8", "chipbg": "#ffffff", "codebg": "#f1f5f9", "codetext": "#334155",
-        "capture": ("#eff6ff", "#bfdbfe", "#2563eb"),
-        "fold": ("#f5f3ff", "#ddd6fe", "#7c3aed"),
+        "badge": "#ffffff",
+        "capture": ("#f0f9ff", "#bae6fd", "#0284c7"),
+        "fold": ("#fffbeb", "#fde68a", "#d97706"),
         "review": ("#ecfdf5", "#a7f3d0", "#059669"),
     },
     "dark": {
         "text": "#e6edf3", "muted": "#9aa7b4", "box": "#0d1117", "boxline": "#30363d",
         "arrow": "#6e7681", "chipbg": "#0d1117", "codebg": "#161b22", "codetext": "#c9d1d9",
-        "capture": ("#0c1b33", "#1f3b6e", "#58a6ff"),
-        "fold": ("#1a1333", "#3d2a73", "#a78bfa"),
-        "review": ("#0b2419", "#1b5e40", "#3fb950"),
+        "badge": "#0d1117",
+        "capture": ("#122632", "#1e5671", "#38bdf8"),
+        "fold": ("#2a2619", "#6c571c", "#fbbf24"),
+        "review": ("#122827", "#1d5f4b", "#34d399"),
     },
 }
 
@@ -79,7 +89,7 @@ def build(theme: str) -> str:
         # header: number badge, title, subtitle, chip on the right
         cx, cy = PAD + CARD_PAD + 14, y + CARD_PAD + 14
         out.append(f'<circle cx="{cx}" cy="{cy}" r="14" fill="{accent}"/>')
-        out.append(text(cx, cy + 5, st["n"], 14, "#ffffff", 700, "middle"))
+        out.append(text(cx, cy + 5, st["n"], 14, t["badge"], 700, "middle"))
         # One text element, so the subtitle follows the title at the same gap
         # whatever the title's rendered width.
         out.append(f'<text x="{cx + 24}" y="{cy + 6}" font-family="{FONT}">'

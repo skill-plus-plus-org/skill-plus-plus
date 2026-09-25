@@ -2,8 +2,15 @@
 
     python3 docs/images/banner.py
 
-Three runs of the same work (the stage colours of how_it_works.py) fold into
-one SKILL.md, beside the wordmark. Positions come from the constants below.
+Three runs of the same work fold into one SKILL.md, beside the wordmark.
+Positions come from the constants below.
+
+The colours are the review page's own (`web.py`): the runs in its amber, the
+colour of a candidate still collecting, and the skill and the "++" in its
+emerald, the colour of an installed skill. The light theme takes the -600
+shade of each, which holds up on white; the dark theme the page's own -400,
+its tints mixed over GitHub's dark background the way the page tints a card
+(12% fill, 40% border).
 """
 from pathlib import Path
 
@@ -13,11 +20,11 @@ MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 
 THEMES = {
     "light": {"text": "#0f172a", "muted": "#475569", "card": "#ffffff", "line": "#e2e8f0",
-              "arrow": "#94a3b8", "runs": ("#2563eb", "#7c3aed", "#059669"),
-              "tints": ("#eff6ff", "#f5f3ff", "#ecfdf5"), "accent": "#059669"},
+              "arrow": "#94a3b8", "runs": ("#d97706",) * 3,
+              "tints": ("#fffbeb",) * 3, "accent": "#059669"},
     "dark": {"text": "#e6edf3", "muted": "#9aa7b4", "card": "#0d1117", "line": "#30363d",
-             "arrow": "#6e7681", "runs": ("#58a6ff", "#a78bfa", "#3fb950"),
-             "tints": ("#0c1b33", "#1a1333", "#0b2419"), "accent": "#3fb950"},
+             "arrow": "#6e7681", "runs": ("#fbbf24",) * 3,
+             "tints": ("#2a2619",) * 3, "accent": "#34d399"},
 }
 
 RUN_W, RUN_H = 92, 50          # one recorded run
