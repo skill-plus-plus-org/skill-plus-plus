@@ -1611,6 +1611,13 @@ one candidate: the takes' LinkedIn posts and action items read the same notes
 as the catalogue's, but inside a chat of three tasks, and most of them stayed
 apart. A duplicate, as the floors intend, rather than a wrong merge.
 
+The rows by how alike the runs are rest on one `truth.level` per session, and
+that counts some pairs in the wrong row: the takes' posts read the same notes
+as P-F1–3 yet count as another subject, and the P-V talk decks read three
+different documents yet count as the same goal. The README therefore reports
+what no label decides: runs and candidates per procedure, and the wrong merges,
+the number that matters most.
+
 What this does not show:
 
 - **The code switches were recovered on the sessions the wording was tuned

@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 
 🆓 **Runs on local models: no tokens, no API calls, no cost.** Your agent is called only when you ask it to write a skill.
 
-📏 **Tested on 30 public recordings anyone can replay: every change of task found, not one task split by mistake.** **[→ Under the hood](#-under-the-hood)**
+📏 **Tested on 30 public recordings anyone can replay: every change of task found, not one task split by mistake, not one run counted toward the wrong skill.** **[→ Under the hood](#-under-the-hood)**
 
 ⚡ **Three commands, no account.** **[→ Quick Start](#-quick-start)**
 
@@ -156,8 +156,9 @@ decide what it was. A task joins a candidate only at a cosine similarity of
 0.85 or more (0.93 when there is no conversation to compare): a duplicate you
 can see is cheap, and a wrong merge would mix two procedures into one skill.
 
-**0 wrong merges. The same prompts, and the same goal driven differently,
-merged 37 of 38 times.**
+**0 wrong merges**, the number that matters most here: a run counted toward the
+wrong candidate would make a skill of two procedures. **5 of the 8 repeated
+procedures became a single candidate**, the seven sprint reviews among them.
 
 ### 3. What goes into the skill?
 
@@ -267,16 +268,23 @@ questions included.
 | three tasks in one chat | 1/1 | 3/3 |
 | a second task of the same kind | 1/1 | – |
 
-**Do repeats become one candidate**: 0 wrong merges.
+**Do repeats become one candidate**: **0 wrong merges. This is the number that
+matters most.** A wrong merge counts a run toward the wrong candidate: it looks
+repeated before it is, and the skill drafted from it mixes two procedures. A
+missed merge only leaves a second candidate you can see and dismiss.
 
-| How alike the runs are | Code | Knowledge work |
+| Procedure in the recordings | Runs | Candidates |
 |---|---|---|
-| the same prompts | 3/3 pairs | 3/3 pairs |
-| the same goal, driven differently | 6/6 | 25/26 |
-| the same procedure, another subject | 4/61 | 16/26 |
+| sprint review deck from GitHub | 7 | 1 |
+| talk deck from docs | 4 | 1 |
+| release notes from a changelog | 3 | 1 |
+| refactor, tests kept green | 3 | 1 |
+| Makefile for a project | 2 | 1 |
+| LinkedIn post from notes | 6 | 2 |
+| action items from meeting notes | 5 | 2 |
+| a code feature with tests (seven different features) | 12 | 7 |
 
-> By design: code on a new subject stays a separate candidate. A duplicate you
-> can see is cheap; a wrong merge would mix two procedures into one skill.
+That is why Skill++ keeps a second candidate when in doubt.
 
 **Drafts**: on four recorded sessions, every draft's method was right, checked
 by a Claude judge that quotes the line of the draft behind every yes. All four
