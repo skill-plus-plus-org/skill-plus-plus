@@ -7,7 +7,7 @@
 
 # Spot the work you keep repeating. Turn it into skills.
 
-**Detection runs on your machine and costs nothing. Your agent writes a skill only when you ask.**
+**A local model cuts your Claude Code sessions into tasks and spots the procedures you repeat. On the third run, your own agent writes one down as a skill.**
 
 https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 
@@ -15,6 +15,8 @@ https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 <img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square" alt="Python 3.10+">
 <img src="https://img.shields.io/badge/detection-runs_locally-orange?style=flat-square" alt="Detection runs locally">
 <img src="https://img.shields.io/badge/for-Claude_Code-8A2BE2?style=flat-square" alt="For Claude Code">
+
+📏 **51 recorded sessions: 14 of 15 task switches found, 0 false cuts in 143 places.** **[→ Under the hood](#-under-the-hood)**
 
 ⚡ **Three commands, no API key, no account.** **[→ Quick Start](#-quick-start)**
 
@@ -24,7 +26,7 @@ https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 
 <div align="center">
 
-**[See it](#-see-it) · [Why](#-why-this-exists) · [How it works](#-how-it-works) · [Quick Start](#-quick-start) · [Your first skill](#-your-first-skill) · [The numbers](#-the-numbers) · [When to use](#-when-to-use--when-to-skip) · [Docs](docs/usage.md)**
+**[See it](#-see-it) · [Why](#-why-this-exists) · [How it works](#-how-it-works) · [Under the hood](#-under-the-hood) · [Quick Start](#-quick-start) · [Your first skill](#-your-first-skill) · [The numbers](#-the-numbers) · [When to use](#-when-to-use--when-to-skip) · [Docs](docs/usage.md)**
 
 </div>
 
@@ -32,48 +34,32 @@ https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 
 ## 👀 See it
 
+Every sprint, the same review deck: read what was merged and closed on GitHub,
+outline the slides, check every bullet against the tickets, build it on the
+company template. The third time, Skill++ has it ready.
+
 <table>
 <tr>
-<th width="45%">What you typed, in one of three sessions</th>
-<th width="55%">What your agent drafted from it</th>
+<td width="33%" valign="top"><a href="docs/images/session-cut.png"><img src="docs/images/session-cut.png" alt="The end of a session: three jobs in one chat, then Skill++ reports the session cut into 3 tasks, the sprint review seen 3 times and ready to review"></a></td>
+<td width="33%" valign="top"><a href="docs/images/review-candidate.png"><img src="docs/images/review-candidate.png" alt="The review page: the sprint review candidate at 3x, its five requests with the tools each used, and the three sessions it was seen in"></a></td>
+<td width="33%" valign="top"><a href="docs/images/skill-installed.png"><img src="docs/images/skill-installed.png" alt="The drafted SKILL.md, installed in the project: when to use it, the GitHub MCP tools it requires, and the procedure"></a></td>
 </tr>
 <tr>
-<td valign="top">
-
-1. *Look at textkit/wordfreq.py and suggest how to add a --min-length option that skips words shorter than N letters. Don't change anything yet.*
-2. *Go ahead and implement it.*
-3. *Add tests for --min-length and run all the tests.*
-4. *Commit it.*
-
-</td>
-<td valign="top">
-
-**adding-a-cli-flag-to-an-argparse-tool**<br>
-*Use when adding a new flag/option to an existing Python argparse-based CLI: plan the flag, thread it through the call chain, cover it with tests, then commit.*
-
-1. Plan before touching code
-2. Implement on approval
-3. Smoke test
-4. Add tests, then run the whole suite
-5. Commit only when asked
-6. Flag repo hygiene as a heads-up, not a silent fix
-
-</td>
+<td valign="top"><b>① You work as usual.</b><br><sub>Three jobs in one chat. When it ends, a local model cuts it into tasks and counts the sprint review a third time.</sub></td>
+<td valign="top"><b>② It shows you the repeat.</b><br><sub>The candidate at 3×: every request with the tools it used, and the three sessions it came from.</sub></td>
+<td valign="top"><b>③ Your agent writes the skill.</b><br><sub>Drafted from the first run, with the GitHub MCP tools it needs, installed in the project.</sub></td>
 </tr>
 </table>
 
-Four prompts about one option became a procedure for any option: the plan
-before the code, the approval, the full test run, the commit. That is the
-method you followed, written down once. The example is one of the public
-recordings in [tests/fixtures/sessions/](tests/fixtures/sessions/), and anyone
-can draft it again.
+This is the demo in the video above, on a demo repo. Click an image for the
+full size.
 
 ---
 
 ## 🌍 Why this exists
 
-Every team has procedures it runs again and again: shipping a small feature with
-its tests, turning a document into a talk, adding an eval case. An agent skill
+Every team has procedures it runs again and again: the sprint review deck,
+shipping a small feature with its tests, turning a document into a talk. An agent skill
 (`SKILL.md`) makes an agent follow such a procedure the same reliable way every
 time, but almost nobody writes them: by the time a procedure is worth a skill,
 you have done it three times and moved on.
@@ -118,6 +104,60 @@ everyone working in the repo has it.
 
 ---
 
+## 🧠 Under the hood
+
+Three problems stand between a chat log and a skill. Skill++ solves the first
+two on your machine, and every answer below is measured on recorded sessions:
+22 public recordings anyone can replay, 21 sessions of private work, and 8
+recordings held out while the method was tuned.
+
+### 1. Where does one task end?
+
+One chat is rarely one task. At every message you typed between two tool calls,
+Skill++ asks a local model (`gemma4:e4b`, through Ollama) one question: 158
+questions for 979 tool calls across the recordings. The question sets the
+earlier task and your new message side by side in named sections, says what
+counts as a new task, and asks for one word. It runs in the background after
+the session ends, in about a second and a half per message.
+
+**14 of 15 task switches found, 0 false cuts in 143 places** where a review, a
+correction or a follow-up must stay in its task.
+
+### 2. Is this the same procedure again?
+
+Each task is embedded (`nomic-embed-text`) as its conversation: your requests,
+the first 300 characters of each reply, the skills it used and the kinds of
+files it produced. File names are masked, so what a run was about does not
+decide what it was. A task joins a candidate only at a cosine similarity of
+0.85 or more (0.93 when there is no conversation to compare): a duplicate you
+can see is cheap, and a wrong merge would mix two procedures into one skill.
+
+**0 wrong merges. The same prompts, and the same goal driven differently,
+merged 12 of 12 times.**
+
+### 3. What goes into the skill?
+
+Your own agent (`claude -p` by default) drafts it from the candidate's first run
+and your note: the method, in its own words, not the subject of that run. What
+it cannot tell from the run becomes an open question, at most three, each with
+three suggested answers, and your answers are folded back in. The CLIs and MCP
+tools the run needed become the skill's requirements.
+
+**The method was right in all 4 drafts checked**, by a Claude judge that has to
+quote the line of the draft behind every yes.
+
+### And the parts you don't see
+
+- Keys, tokens, cookies, connection strings and email addresses are scrubbed
+  before anything is written.
+- A session the app was quit on is picked up the next time one starts.
+- The review page listens on `127.0.0.1` only and refuses requests from other
+  pages.
+- 530 tests run in about ten seconds, with no model. The
+  [research log](docs/research/) keeps every experiment, the failed ones too.
+
+---
+
 ## ⚡ Quick Start
 
 You need macOS or Linux, Python 3.10+, [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
@@ -159,19 +199,20 @@ new Code session in the desktop app) and work as usual.
    background.
 2. **Open the review page:** `skill-plus-plus web`. It is served on `127.0.0.1` and only
    this machine can reach it.
-3. **Pick the project** in the menu beside the tabs, if you have more than one.
-<!-- SCREENSHOT: docs/images/review-candidates.png, a candidate opened, its steps grouped under the requests they served -->
+3. **Pick the project** in the menu at the top right.
 4. **Candidates** lists what you repeated, most-seen first, each with a summary
-   and its steps grouped under the requests they served. At three runs, a
-   candidate can be promoted or dismissed.
+   and its steps grouped under the requests they served (② above). At three
+   runs, a candidate can be promoted or dismissed.
 5. **Promote** it, then press **Draft Skill**. The optional note tells the agent
    what the later runs taught you: it reads only the first.
-<!-- SCREENSHOT: docs/images/draft-questions.png, a draft with its open questions to answer -->
-6. **Answer its open questions** on the Drafts tab. Each answer is folded back
-   into the skill; **Revise** sends any other instruction.
-<!-- SCREENSHOT: docs/images/install.png, the Install in <project> / Just for me buttons -->
+6. **Answer its open questions** on the Drafts tab: pick a suggested answer or
+   write your own. Each answer is folded back into the skill; **Revise** sends
+   any other instruction.
+
+   <img src="docs/images/draft-questions.png" width="560" alt="A draft on the Drafts tab with three open questions, each with three suggested answers and a field for your own; the first answer is picked">
+
 7. **Install in your project** (commit `.claude/skills/` to share it), or **just
-   for you**. A later revision reaches it with **Update**.
+   for you** (③ above). A later revision reaches it with **Update**.
 
 **Faster than three repeats:** `SKILL_PLUS_PLUS_RECURRENCE=1` makes a candidate ready the
 first time it is seen. **Describing a procedure instead of doing it** (work in
@@ -206,6 +247,10 @@ included.
 | an announced switch | 1/1 | 1/1 |
 | three tasks in one chat | 1/1 | 1/1 |
 | a second task of the same kind | 1/1 | – |
+
+Beyond the public set, on 21 sessions of private work and 8 recordings held out
+while the question was tuned: 5 of 6 task switches found, 0 false cuts in 66
+places.
 
 **Do repeats become one candidate**: 0 wrong merges.
 
