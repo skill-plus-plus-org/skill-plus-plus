@@ -38,21 +38,24 @@ Every sprint, the same review deck: read what was merged and closed on GitHub,
 outline the slides, check every bullet against the tickets, build it on the
 company template. The third time, Skill++ has it ready.
 
-<table>
-<tr>
-<td width="33%" valign="top"><a href="docs/images/session-cut.png"><img src="docs/images/session-cut.png" alt="The end of a session: three jobs in one chat, then Skill++ reports the session cut into 3 tasks, the sprint review seen 3 times and ready to review"></a></td>
-<td width="33%" valign="top"><a href="docs/images/review-candidate.png"><img src="docs/images/review-candidate.png" alt="The review page: the sprint review candidate at 3x, its five requests with the tools each used, and the three sessions it was seen in"></a></td>
-<td width="33%" valign="top"><a href="docs/images/skill-installed.png"><img src="docs/images/skill-installed.png" alt="The drafted SKILL.md, installed in the project: when to use it, the GitHub MCP tools it requires, and the procedure"></a></td>
-</tr>
-<tr>
-<td valign="top"><b>① You work as usual.</b><br><sub>Three jobs in one chat. When it ends, a local model cuts it into tasks and counts the sprint review a third time.</sub></td>
-<td valign="top"><b>② It shows you the repeat.</b><br><sub>The candidate at 3×: every request with the tools it used, and the three sessions it came from.</sub></td>
-<td valign="top"><b>③ Your agent writes the skill.</b><br><sub>Drafted from the first run, with the GitHub MCP tools it needs, installed in the project.</sub></td>
-</tr>
-</table>
+**① You work as usual.** Three jobs in one chat: action items, a LinkedIn post,
+the sprint review. When the session ends, a local model cuts it into its tasks
+and counts the sprint review a third time.
 
-This is the demo in the video above, on a demo repo. Click an image for the
-full size.
+<img src="docs/images/session-cut.png" alt="The end of the session: Skill++ reports it cut into 3 tasks, two new candidates and the sprint review seen 3 times, ready to review">
+
+**② It shows you the repeat.** On the review page, the candidate is at 3× and
+ready to promote, with every request you made and the tools each one used.
+
+<img src="docs/images/review-candidate.png" alt="The sprint review candidate on the review page: 3x, Promote and Dismiss, a summary, and five requests with the tools each used">
+
+**③ Your agent writes the skill.** Drafted from the first run: when to use it,
+the procedure, and the GitHub MCP tools it needs. Installed in the project,
+where Claude Code picks it up.
+
+<img src="docs/images/skill-installed.png" alt="The drafted skill, installed in the project: its description and a frontmatter that requires four GitHub MCP tools">
+
+This is the demo from the video above, run on a demo repo.
 
 ---
 
@@ -209,7 +212,7 @@ new Code session in the desktop app) and work as usual.
    write your own. Each answer is folded back into the skill; **Revise** sends
    any other instruction.
 
-   <img src="docs/images/draft-questions.png" width="560" alt="A draft on the Drafts tab with three open questions, each with three suggested answers and a field for your own; the first answer is picked">
+   <img src="docs/images/draft-questions.png" alt="A draft on the Drafts tab: its first open question with three suggested answers and a field for your own, the first answer picked">
 
 7. **Install in your project** (commit `.claude/skills/` to share it), or **just
    for you** (③ above). A later revision reaches it with **Update**.
