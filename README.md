@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 
 🆓 **Runs on local models: no tokens, no API calls, no cost.** Your agent is called only when you ask it to write a skill.
 
-📏 **Tested on 22 public recordings anyone can replay: every change of task found, not one task split by mistake.** **[→ Under the hood](#-under-the-hood)**
+📏 **Tested on 30 public recordings anyone can replay: every change of task found, not one task split by mistake.** **[→ Under the hood](#-under-the-hood)**
 
 ⚡ **Three commands, no account.** **[→ Quick Start](#-quick-start)**
 
@@ -62,6 +62,9 @@ where Claude Code picks it up.
 <img src="docs/images/skill-installed.png" alt="The drafted skill, installed in the project: its description and a frontmatter that requires four GitHub MCP tools">
 
 This is the session from the video above: real Claude Code, with the GitHub MCP.
+It is one of the public recordings
+([6b143dec-demo-take.json](tests/fixtures/sessions/6b143dec-demo-take.json)),
+so you can replay what it did.
 
 ---
 
@@ -128,20 +131,20 @@ it.
 
 Three problems stand between a chat log and a skill. The first two are solved
 on your machine by two small open models, with no tokens and no API calls; the
-third is one call to your own agent. Every number below is measured on the 22
+third is one call to your own agent. Every number below is measured on the 30
 public recordings in [tests/fixtures/sessions/](tests/fixtures/sessions/),
 which anyone can replay.
 
 ### 1. Where does one task end?
 
 One chat is rarely one task. At every message you typed between two tool calls,
-Skill++ asks a local model (`gemma4:e4b`, through Ollama) one question: 86
-questions for 271 tool calls across the recordings. The question sets the
+Skill++ asks a local model (`gemma4:e4b`, through Ollama) one question: 113
+questions for 415 tool calls across the recordings. The question sets the
 earlier task and your new message side by side in named sections, says what
 counts as a new task, and asks for one word. It runs in the background after
 the session ends, in under a second and a half per message.
 
-**Every one of the 9 task switches found, 0 false cuts in 77 places** where a
+**Every one of the 13 task switches found, 0 false cuts in 100 places** where a
 review, a correction or a follow-up must stay in its task.
 
 ### 2. Is this the same procedure again?
@@ -154,7 +157,7 @@ decide what it was. A task joins a candidate only at a cosine similarity of
 can see is cheap, and a wrong merge would mix two procedures into one skill.
 
 **0 wrong merges. The same prompts, and the same goal driven differently,
-merged 12 of 12 times.**
+merged 37 of 38 times.**
 
 ### 3. What goes into the skill?
 
@@ -245,22 +248,23 @@ first time it is seen.
 
 ## 📊 The numbers
 
-Measured on the 22 public recordings of code and knowledge work in
+Measured on the 30 public recordings of code and knowledge work in
 [tests/fixtures/sessions/](tests/fixtures/sessions/), which anyone can replay
 with the commands below, with the defaults (`gemma4:e4b`, `nomic-embed-text`).
-The weak rows stay in the tables.
+Eight of them are the recordings of the video above, which were held out while
+the judge's question was tuned. The weak rows stay in the tables.
 
-**Where one task ends**: 22 of 22 sessions right; 9 of 9 task switches caught;
-**0 false cuts over 77 prompts**, reviews, corrections and side questions
-included.
+**Where one task ends**: 30 of 30 sessions right; 13 of 13 task switches
+caught; **0 false cuts over 100 prompts**, reviews, corrections and side
+questions included.
 
 | Check | Code | Knowledge work |
 |---|---|---|
-| one task, several follow-ups | 6/6 | 6/6 |
-| reviews and corrections stay in the task | 1/1 | 6/6 |
+| one task, several follow-ups | 7/7 | 11/11 |
+| reviews and corrections stay in the task | 1/1 | 10/10 |
 | a switch nobody announced | 1/1 | 1/1 |
 | an announced switch | 1/1 | 1/1 |
-| three tasks in one chat | 1/1 | 1/1 |
+| three tasks in one chat | 1/1 | 3/3 |
 | a second task of the same kind | 1/1 | – |
 
 **Do repeats become one candidate**: 0 wrong merges.
@@ -268,8 +272,8 @@ included.
 | How alike the runs are | Code | Knowledge work |
 |---|---|---|
 | the same prompts | 3/3 pairs | 3/3 pairs |
-| the same goal, driven differently | 3/3 | 3/3 |
-| the same procedure, another subject | 4/53 | 12/12 |
+| the same goal, driven differently | 6/6 | 25/26 |
+| the same procedure, another subject | 4/61 | 16/26 |
 
 > By design: code on a new subject stays a separate candidate. A duplicate you
 > can see is cheap; a wrong merge would mix two procedures into one skill.
