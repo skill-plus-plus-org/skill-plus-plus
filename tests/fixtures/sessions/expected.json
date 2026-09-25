@@ -1,21 +1,22 @@
 {
   "family_sizes": {
-    "action-items-from-notes": 3,
-    "add-feature-with-tests": 11,
-    "post-from-source": 4,
+    "action-items-from-notes": 5,
+    "add-feature-with-tests": 12,
+    "post-from-source": 6,
     "refactor-keeping-tests-green": 3,
     "release-notes-from-changelog": 3,
+    "sprint-review-deck": 7,
     "talk-deck-from-docs": 4,
     "write-makefile": 2
   },
   "notes": {
-    "family_sizes": "Runs labelled per family among the banked episodes. Every planned task banks as its own episode since the sectioned question (2026-09-24): add-feature-with-tests has all 11 of its planned runs, write-makefile its 2. Until then C-2said, C-3 and C-same each banked one episode that merged two planned tasks.",
-    "baseline_detection": "2026-09-24, gemma4:e4b judge with the sectioned question, thinking off: 22/22 sessions right, 9/9 real cuts caught, 0 false cuts over 77 gaps. Before it, 2026-09-22: 19/22, 6/9, 0 false cuts; missed C-2said (announced switch), C-3 (unannounced switch), C-same (same-kind switch).",
-    "baseline_merging": "2026-09-24, on the sectioned question's cuts, nomic-embed-text at the default floors: 0 wrong merges; merged pairs identical 3/3 code, 3/3 procedure; same goal 3/3 and 3/3; different subject 4/53 code, 12/12 procedure. 6/7 repeated procedures unified; add-feature-with-tests is split across 7 entries. Before it (2026-09-22, fewer episodes): 0 wrong merges, different subject 1/23 code, 5/6 unified.",
+    "family_sizes": "Runs labelled per family among the banked episodes. Every planned task banks as its own episode since the sectioned question (2026-09-24): add-feature-with-tests has all 12 of its planned runs, write-makefile its 2. Until then C-2said, C-3 and C-same each banked one episode that merged two planned tasks. The demo recordings (the README video, published 2026-09-25) add sprint-review-deck, 7 runs, and two runs each to action-items-from-notes and post-from-source, one to add-feature-with-tests.",
+    "baseline_detection": "2026-09-25, gemma4:e4b judge with the sectioned question, thinking off: 30/30 sessions right, 13/13 real cuts caught, 0 false cuts over 100 gaps. The 8 demo recordings were held out while the question was tuned and judged after it (4/4, 0/23). On the 22 catalogue sessions alone, 2026-09-24: 22/22, 9/9, 0/77. Before the sectioned question, 2026-09-22: 19/22, 6/9, 0 false cuts; missed C-2said (announced switch), C-3 (unannounced switch), C-same (same-kind switch).",
+    "baseline_merging": "2026-09-25, 30 sessions with the demo recordings, nomic-embed-text at the default floors: 0 wrong merges; merged pairs identical 3/3 code, 3/3 procedure; same goal 6/6 code, 25/26 procedure; different subject 4/61 code, 16/26 procedure. 5/8 repeated procedures unified: the 7 sprint reviews are one entry, while action-items-from-notes and post-from-source split in two, the takes' runs mostly apart from the catalogue's, and add-feature-with-tests is across 7 entries. On the 22 catalogue sessions, 2026-09-24: 0 wrong merges, different subject 4/53 code and 12/12 procedure, 6/7 unified; before the sectioned question, 2026-09-22: 1/23 code, 5/6 unified.",
     "judge_prompts": "Every judge prompt at the defaults over this set: the sectioned question, byte for byte as it was measured."
   },
   "judge_prompts": {
-    "count": 86,
-    "sha256": "28debed72879bc2765eb00d9ea62988e97a0a9b97c4c58001158302f66e0cc75"
+    "count": 113,
+    "sha256": "5d3cf5d6c33e31585d6237a1d8ebf753f8c84689f8480ada3ca946c940a63169"
   }
 }

@@ -1,0 +1,210 @@
+{
+  "tag": "34e8b42b",
+  "name": "demo-sprint-2",
+  "session": "demo-sprint-2",
+  "kind": "procedure",
+  "surface": "cli",
+  "checks": [
+    "detect.one",
+    "merge.varied"
+  ],
+  "captured": "2026-09-24",
+  "started": "2026-09-24T09:02:16.834Z",
+  "procedure": "sprint review deck from GitHub (MCP): outline, check against PRs/issues, fix, build on the template, check the slides",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "sprint-review-deck"
+    ],
+    "boundary_after": [],
+    "subjects": [
+      null
+    ],
+    "roles": [
+      "explore",
+      "correct",
+      "implement"
+    ],
+    "level": "same-goal"
+  },
+  "why": "Recorded for the README video, from its script, fixed before recording: the sprint review is one task of five prompts (outline, check against the tickets, fix, build on the template, check the slides), and in the takes the action items and the LinkedIn post before it are a task each, starting at prompts 3 and 5. lucazagaia/skycast is a demo repo made for the recording; its milestones, issues and pull requests are invented, and notes/ holds copies of recording/meeting-1.md and recording/notes.md. Level same-goal: the runs were made to be alike. recurrence.py sets levels per session, so the takes' post and action items count as another subject against P-F and P-2said, which read the same notes.",
+  "history": "Recorded 2026-09-23 and 24 for the README video. Held out while the boundary question was restructured, and judged only after: every switch found, no false cut (docs/research/benchmarks.md, \"The question restructured\"). Published 2026-09-25.",
+  "shape": {
+    "steps": 12,
+    "prompts": 3,
+    "failed": 0
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Prepare the sprint review for Sprint 2 from lucazagaia/skycast on GitHub: what was merged and closed in the milestone. Start with an outline of at most 6 slides; don't build anything yet."
+      },
+      "failed": false,
+      "reply": "Sprint 2 milestone \"Offline use, settings and stability\", due 2026-09-18, 7 items closed (3 issues + 4 PRs). Proposed 6-slide outline:\n\n1. **Title / Sprint 2 at a glance** — dates, theme, counts (3 features, 1 bug, 1 internal; 4 PRs merged, 3 issues closed).\n2. **Offline forecast** — #6 (issue) + #7 (PR): keep last forecast on device, show it when offline.\n3. **Stability: no-location crash** — #8 (bug) + #9 (PR): fall back to last known location instead of crashing.\n4. **Settings: °C / °F** — #10 (feature) + #11 (PR): user-selectable temperature unit.\n5. **Internal** — #12 (PR): test dependency bumps.\n6. **Wrap + look ahead** — sprint metrics, callouts, teaser for Sprint 3 (widget, dark mode, date-line fix).\n\nMerge slides 5+6 if want 5 total? Say word and build deck."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "gh api repos/lucazagaia/skycast/milestones --jq '.[] | {number, title, state, description, due_on, closed_issues, open_issues}'",
+        "description": "List skycast milestones"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{\"closed_issues\":7,\"description\":\"The widget, dark mode and a date-line fix.\",\"due_on\":\"2026-09-25T00:00:00Z\",\"number\":3,\"open_issues\":1,\"state\":\"open\",\"title\":\"Sprint 3\"}",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "gh api \"repos/lucazagaia/skycast/milestones?state=all\" --jq '.[] | {number, title, state, description, due_on, closed_issues, open_issues}'",
+        "description": "List all milestones incl closed"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{\"closed_issues\":5,\"description\":\"The week view and the first round of fixes.\",\"due_on\":\"2026-09-04T00:00:00Z\",\"number\":1,\"open_issues\":0,\"state\":\"closed\",\"title\":\"Sprint 1\"} {\"closed_issues\":7,\"description\":\"Offline use, settings and stability.\",\"due_on\":\"2026-09-18T00:00:00Z\",\"number\":2,\"open_issues\":0,\"state\":\"closed\",\"title\":\"Sprint 2\"} {\"closed_issues\":7,\"description\":\"The widget, dark mode a",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "gh issue list --repo lucazagaia/skycast --milestone \"Sprint 2\" --state all --limit 50 --json number,title,state,labels,url,closedAt,body",
+        "description": "Fetch Sprint 2 issues"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "[{\"body\":\"Travellers want their own unit, not the one of the region they are in.\",\"closedAt\":\"2026-09-24T08:47:47Z\",\"labels\":[{\"id\":\"LA_kwDOUo7Uxs8AAAAC37uX5Q\",\"name\":\"feature\",\"description\":\"New for users\",\"color\":\"0EA5A4\"}],\"number\":10,\"state\":\"CLOSED\",\"title\":\"Let users choose Celsius or Fahrenheit\",\"url\":\"https://github.com/lucazagaia/skycast/issues/10\"},{\"body\":\"Open the app with location tur",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "gh api \"repos/lucazagaia/skycast/issues?milestone=2&state=all&per_page=100\" --jq '.[] | {number, title, state, pull_request: (.pull_request != null), closed_at, labels: [.labels[].name], url}'",
+        "description": "All Sprint 2 issues+PRs via API"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{\"closed_at\":\"2026-09-24T08:47:57Z\",\"labels\":[\"internal\"],\"number\":12,\"pull_request\":true,\"state\":\"closed\",\"title\":\"Internal: bump test dependencies\",\"url\":\"https://api.github.com/repos/lucazagaia/skycast/issues/12\"} {\"closed_at\":\"2026-09-24T08:47:46Z\",\"labels\":[\"feature\"],\"number\":11,\"pull_request\":true,\"state\":\"closed\",\"title\":\"Add a temperature unit setting\",\"url\":\"https://api.github.com/repos/",
+      "closing_note": "Revised outline, 5 slides, no internal: 1. **Sprint 2 at glance** — theme \"Offline use, settings, stability\"; window through 2026-09-18; 3 features + 1 bug shipped; 3 PRs merged. 2. **Offline forecast** — #6 + #7: cache last forecast on device, show when offline. 3. **No-location crash fix** — #8 + #9: fall back to last known location instead of crash. 4. **°C / °F setting** — #10 + #11: …",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Fix those, and leave out internal changes."
+      },
+      "failed": false,
+      "reply": "Revised outline, 5 slides, no internal:\n\n1. **Sprint 2 at glance** — theme \"Offline use, settings, stability\"; window through 2026-09-18; 3 features + 1 bug shipped; 3 PRs merged.\n2. **Offline forecast** — #6 + #7: cache last forecast on device, show when offline.\n3. **No-location crash fix** — #8 + #9: fall back to last known location instead of crash.\n4. **°C / °F setting** — #10 + #11: user-selectable temp unit.\n5. **Wrap + Sprint 3 teaser** — metrics; next: widget, dark mode, date-line fix.\n\nSay word, build deck."
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Approved. Build it as sprint-2-review.pptx using our company design template, brand/company-design-template.pptx."
+      },
+      "failed": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls -la ${DEMO}/company-decks/ && ls -la ${DEMO}/company-decks/brand/ 2>/dev/null",
+        "description": "List working dir + brand folder"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "total 64 drwxr-xr-x@ 8 ${USER} wheel 256 Sep 24 10:58 . drwxr-xr-x@ 11 ${USER} wheel 352 Sep 24 10:54 .. drwxr-xr-x@ 4 ${USER} wheel 128 Sep 24 10:50 .claude drwxr-xr-x@ 12 ${USER} wheel 384 Sep 24 10:50 .git -rw-r--r--@ 1 ${USER} wheel 9 Sep 24 10:50 .gitignore -rw-r--r--@ 1 ${USER} wheel 76 Sep 24 10:50 README.md drwxr-xr-x@ 3 ${USER} wheel 96 Sep 24 10:50 brand -rw-r--r--@ 1 ${USER} wheel 23047",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "cat ${DEMO}/company-decks/README.md ${DEMO}/company-decks/.claude/*.md 2>/dev/null; ls ${DEMO}/company-decks/.claude/",
+        "description": "Check README + local claude config"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "(eval):1: no matches found: ${DEMO}/company-decks/.claude/*.md commands settings.json",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${DEMO}/company-decks/README.md"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "1 # Company decks 2 3 The slides we present. The design template is in `brand/`. 4",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${DEMO}/company-decks/.claude/commands/ && cat ${DEMO}/company-decks/.claude/settings.json",
+        "description": "Inspect commands + settings"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "skill-plus-plus-new.md skill-plus-plus-review.md { \"hooks\": { \"UserPromptSubmit\": [ { \"matcher\": \"*\", \"hooks\": [ { \"type\": \"command\", \"command\": \"PYTHONPATH=\\\"${HOME}/ai_projects/skill-plus-plus\\\" python3 -m skill_plus_plus hook\" } ] } ], \"PostToolUse\": [ { \"matcher\": \"*\", \"hooks\": [ { \"type\": \"command\", \"command\": \"PYTHONPATH=\\\"${HOME}/ai_projects/skill-plus-plus\\\" python3 -m skill_plus_plus hook",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -c \"\nfrom pptx import Presentation\np = Presentation('${DEMO}/company-decks/brand/company-design-template.pptx')\nprint('slide_width', p.slide_width, 'slide_height', p.slide_height)\nprint('num slides in template:', len(p.slides))\nfor i,s in enumerate(p.slides):\n    print(f'--slide {i} layout={s.slide_layout.name}--')\n    for sh in s.shapes:\n        print(' shape', sh.shape_type, sh.name, 'has_tf', sh.has_text_frame)\n        if sh.has_text_frame:\n            for para in sh.text_frame.paragraphs:\n                for r in para.runs:\n                    print('   run:', repr(r.text[:60]), 'font=', r.font.name, 'size=', r.font.size, 'bold=', r.font.bold)\nprint()\nprint('LAYOUTS:')\nfor l in p.slide_layouts:\n    print(' -', l.name)\n\"\n",
+        "description": "Inspect template slides + layouts"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "slide_width 12191695 slide_height 6858000 num slides in template: 4 --slide 0 layout=Title-- shape PLACEHOLDER (14) Title 1 has_tf True run: 'Sprint 12 review' font= None size= None bold= None shape PLACEHOLDER (14) Subtitle 2 has_tf True run: 'Team Skycast · 2 weeks, 9 changes shipped' font= None size= None bold= None --slide 1 layout=Section-- shape PLACEHOLDER (14) Title 1 has_tf True run: 'Wha",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -c \"\nfrom pptx import Presentation\np = Presentation('${DEMO}/company-decks/sprint-1-review.pptx')\nprint('num slides:', len(p.slides))\nfor i,s in enumerate(p.slides):\n    print(f'--slide {i} layout={s.slide_layout.name}--')\n    for sh in s.shapes:\n        if sh.has_text_frame:\n            for para in sh.text_frame.paragraphs:\n                for r in para.runs:\n                    print(' ', repr(r.text[:80]))\n\"\n",
+        "description": "Peek sprint-1-review for style"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "num slides: 5 --slide 0 layout=Title-- 'Sprint 1 review' 'Team Skycast · milestone closed 2026-09-04 · 5/5 items, 0 spillover' --slide 1 layout=Section-- 'What shipped' '1 feature, 1 bug fix (internal work excluded from this review)' --slide 2 layout=Content-- '7-day forecast' 'Issue #1 → PR #2' 'week() returns the next 7 days, today first' 'Need: weekend planning requires the full week' --slide 3",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -c \"\nfrom pptx import Presentation\np = Presentation('${DEMO}/company-decks/brand/company-design-template.pptx')\nfor l in p.slide_layouts:\n    print('LAYOUT', l.name)\n    for ph in l.placeholders:\n        print(' ph idx=', ph.placeholder_format.idx, 'type=', ph.placeholder_format.type, 'name=', ph.name)\n\"\n",
+        "description": "Enumerate layout placeholders"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "LAYOUT Title ph idx= 0 type= CENTER_TITLE (3) name= Title 1 ph idx= 1 type= SUBTITLE (4) name= Subtitle 2 ph idx= 10 type= DATE (16) name= Date Placeholder 3 ph idx= 11 type= FOOTER (15) name= Footer Placeholder 4 ph idx= 12 type= SLIDE_NUMBER (13) name= Slide Number Placeholder 5 LAYOUT Content ph idx= 0 type= TITLE (1) name= Title 1 ph idx= 1 type= OBJECT (7) name= Content Placeholder 2 ph idx= ",
+      "end": false
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "/tmp/build_sprint2.py",
+        "content": "from pptx import Presentation\nfrom copy import deepcopy\nfrom lxml import etree\n\nTEMPLATE = \"${DEMO}/company-decks/brand/company-design-template.pptx\"\nOUT = \"${DEMO}/company-decks/sprint-2-review.pptx\"\n\nprs = Presentation(TEMPLATE)\n\n# Wipe example slides from template so we start clean but keep masters/layouts.\nsldIdLst = prs.slides._sldIdLst\nfor sldId in list(sldIdLst):\n    rId = sldId.get(\"{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id\")\n    prs.part.drop_rel(rId)\n    sldIdLst.remove(sldId)\n\nlayouts = {l.name: l for l in prs.slide_layouts}\n\n\ndef set_ph(slide, idx, text_lines):\n    ph = slide.placeholders[idx]\n    tf = ph.text_frame\n    tf.clear()\n    for i, line in enumerate(text_lines):\n        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()\n        p.text = line\n\n\n# Slide 1: Title\ns1 = prs.slides.add_slide(layouts[\"Title\"])\nset_ph(s1, 0, [\"Sprint 2 review\"])\nset_ph(s1, 1, [\"Team Skycast · milestone closed 2026-09-18 · 7/7 items, 0 spillover\"])\n\n# Slide 2: Offline forecast\ns2 = prs.slides.add_slide(layouts[\"Content\"])\nset_ph(s2, 0, [\"Offline forecast\"])\nset_ph(s2, 1, [\n    \"Issue #6 → PR #7\",\n    \"Last forecast cached on device\",\n    \"Shown when network is unavailable\",\n    \"Need: keep useful info on trains, planes, tunnels\",\n])\n\n# Slide 3: No-location crash fix\ns3 = prs.slides.add_slide(layouts[\"Content\"])\nset_ph(s3, 0, [\"No-location crash fix\"])\nset_ph(s3, 1, [\n    \"Issue #8 → PR #9\",\n    \"App crashed on launch when location services were off\",\n    \"Now falls back to last known location\",\n    \"Impact: stops immediate-exit for users who deny location\",\n])\n\n# Slide 4: °C / °F setting\ns4 = prs.slides.add_slide(layouts[\"Content\"])\nset_ph(s4, 0, [\"°C / °F setting\"])\nset_ph(s4, 1, [\n    \"Issue #10 → PR #11\",\n    \"User-selectable temperature unit\",\n    \"Overrides the region default\",\n    \"Reported by travellers who want their home unit abroad\",\n])\n\n# Slide 5: Wrap + Sprint 3 look-ahea… [truncated 317 chars]"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "File created successfully at: /tmp/build_sprint2.py (file state is current in your context — no need to Read it back)",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "question": "6b453520d07d",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "prompt_chars": -1,
+    "reply_before": 0,
+    "send_description": false,
+    "endings": 0,
+    "answered": 1,
+    "replayed": "2026-09-24"
+  }
+}

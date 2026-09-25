@@ -1507,8 +1507,10 @@ every run valid (no gap unanswered). Three sets:
 | holdout: the README-video demo recordings | 8 | 4 | 23 |
 
 The holdout's truth comes from the recording script, written before any of the
-variants below existed. It is kept outside the repo, with the private set,
-because it reads a private GitHub repo.
+variants below existed. It was kept outside the repo while the variants were
+measured, and published after, on 2026-09-25, as the `*-demo-*` fixtures in
+`tests/fixtures/sessions/`: the GitHub repo it reads is a demo repo with
+invented data. The public set counts 30 sessions from then on.
 
 ### Why the prose question missed every code switch
 
@@ -1599,6 +1601,22 @@ measured again (`recurrence.py`, `nomic-embed-text`): still 0 wrong merges;
 6 of 7 repeated procedures in one candidate (5 of 6 before), the two Makefile
 runs and the three refactors among them; code on another subject 4/53 (1/23
 before, on fewer pairs), with add-feature-with-tests across 7 entries.
+
+With the demo recordings published, the public ledger holds 42 episodes from
+30 sessions, and merging was measured once more: still 0 wrong merges, the
+seven sprint reviews in one candidate (none of them joined the talk decks), the
+same goal driven differently 6/6 code and 25/26 procedure. Knowledge work on
+another subject fell from 12/12 to 16/26, and 5 of 8 repeated procedures are in
+one candidate: the takes' LinkedIn posts and action items read the same notes
+as the catalogue's, but inside a chat of three tasks, and most of them stayed
+apart. A duplicate, as the floors intend, rather than a wrong merge.
+
+The rows by how alike the runs are rest on one `truth.level` per session, and
+that counts some pairs in the wrong row: the takes' posts read the same notes
+as P-F1–3 yet count as another subject, and the P-V talk decks read three
+different documents yet count as the same goal. The README therefore reports
+what no label decides: runs and candidates per procedure, and the wrong merges,
+the number that matters most.
 
 What this does not show:
 

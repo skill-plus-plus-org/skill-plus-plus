@@ -1,0 +1,266 @@
+{
+  "tag": "8c3c2590",
+  "name": "demo-sprint-a",
+  "session": "demo-sprint-a",
+  "kind": "procedure",
+  "surface": "cli",
+  "checks": [
+    "detect.one",
+    "detect.review",
+    "merge.varied"
+  ],
+  "captured": "2026-09-24",
+  "started": "2026-09-24T09:17:40.493Z",
+  "procedure": "sprint review deck from GitHub (MCP): outline, check against PRs/issues, fix, build on the template, check the slides",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "sprint-review-deck"
+    ],
+    "boundary_after": [],
+    "subjects": [
+      null
+    ],
+    "roles": [
+      "explore",
+      "review",
+      "correct",
+      "implement",
+      "verify"
+    ],
+    "level": "same-goal"
+  },
+  "why": "Recorded for the README video, from its script, fixed before recording: the sprint review is one task of five prompts (outline, check against the tickets, fix, build on the template, check the slides), and in the takes the action items and the LinkedIn post before it are a task each, starting at prompts 3 and 5. lucazagaia/skycast is a demo repo made for the recording; its milestones, issues and pull requests are invented, and notes/ holds copies of recording/meeting-1.md and recording/notes.md. Level same-goal: the runs were made to be alike. recurrence.py sets levels per session, so the takes' post and action items count as another subject against P-F and P-2said, which read the same notes.",
+  "history": "Recorded 2026-09-23 and 24 for the README video. Held out while the boundary question was restructured, and judged only after: every switch found, no false cut (docs/research/benchmarks.md, \"The question restructured\"). Published 2026-09-25.",
+  "shape": {
+    "steps": 15,
+    "prompts": 5,
+    "failed": 0
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Prepare the sprint review for last sprint from lucazagaia/skycast, using the GitHub MCP: what we merged and closed in its milestone. Start with an outline of at most 6 slides; don't build anything yet."
+      },
+      "failed": false,
+      "reply": "I'll find the most recent sprint milestone and gather what was merged and closed in it.\n\nSprint 1 is the most recently ended sprint (milestone #1, due 2026-09-23, now closed — Sprints 2 and 3 are still upcoming). It shipped under the theme \"The week view and the first round of fixes.\" Seven merged/closed items belong to it: 5 issues + PRs that pair up into three deliverables.\n\nHere's the proposed 6-slide outline — nothing built yet.\n\n**Sprint 1 review — proposed outline**\n\n1. **Title / at-a-glance**\n   Sprint 1 · closed 2026-09-24 · due 2026-09-23 · theme: \"The week view and the first round of fixes\" · 3 deliverables · 5 issues + 3 PRs merged.\n\n2. **What we set out to do**\n   Ship the 7-day view users have been asking for, and land the first round of fixes on top of the MVP.\n\n3. **Shipped — 7-day forecast** (feature)\n   Issue #1 · PR #2 — the headline feature: forecast for the next seven days.\n\n4. **Shipped — regional temperature units** (bug)\n   Issue #3 · PR #4 — temperatures now follow the user's region instead of defaulting to Fahrenheit outside the US.\n\n5. **Under the hood** (internal)\n   PR #5 — API client extracted into its own module; sets up Sprint 2's offline and settings work.\n\n6. **What's next → Sprint 2**\n   Theme: \"Offline use, settings and stability\" (due 2026-10-07). All 7 items already closed on GitHub — worth flagging as ahead of schedule / candidate to demo alongside.\n\nA couple of choices worth your call before I build:\n- **Scope of \"last sprint\"** — I read this as Sprint 1 (the one whose due date has passed). If you meant Sprint 2 (all work done but not yet marked closed), say the word and I'll re-outline.\n- **Slide 6** — I combined \"what's next\" with a flag about Sprint 2 being complete. If you'd rather have a dedicated \"metrics / velocity\" slide, I can swap."
+    },
+    {
+      "tool": "ToolSearch",
+      "input": {},
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{'type': 'tool_reference', 'tool_name': 'mcp__github__list_issues'} {'type': 'tool_reference', 'tool_name': 'mcp__github__search_issues'} {'type': 'tool_reference', 'tool_name': 'mcp__github__list_pull_requests'} {'type': 'tool_reference', 'tool_name': 'mcp__github__search_pull_requests'} {'type': 'tool_reference', 'tool_name': 'mcp__github__get_me'}",
+      "end": false
+    },
+    {
+      "tool": "mcp__github__search_pull_requests",
+      "input": {
+        "query": "repo:lucazagaia/skycast is:merged",
+        "sort": "updated",
+        "order": "desc",
+        "perPage": 20
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{\"incomplete_results\":false,\"items\":[{\"html_url\":\"https://github.com/lucazagaia/skycast/pull/19\",\"labels\":[{\"color\":\"6B7280\",\"default\":false,\"description\":\"No change users can see\",\"id\":12343548201,\"name\":\"internal\",\"node_id\":\"LA_kwDOUo7Uxs8AAAAC37uZKQ\",\"url\":\"https://api.github.com/repos/lucazagaia/skycast/labels/internal\"}],\"milestone\":{\"closed_issues\":7,\"created_at\":\"2026-09-24T08:46:34Z\",\"crea",
+      "assistant_note": "I'll find the most recent sprint milestone and gather what was merged and closed in it.",
+      "end": false
+    },
+    {
+      "tool": "mcp__github__search_issues",
+      "input": {
+        "query": "repo:lucazagaia/skycast is:closed is:issue",
+        "sort": "updated",
+        "order": "desc",
+        "perPage": 20
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{\"incomplete_results\":false,\"items\":[{\"closed_at\":\"2026-09-24T08:48:37Z\",\"html_url\":\"https://github.com/lucazagaia/skycast/issues/17\",\"labels\":[{\"color\":\"0EA5A4\",\"default\":false,\"description\":\"New for users\",\"id\":12343547877,\"name\":\"feature\",\"node_id\":\"LA_kwDOUo7Uxs8AAAAC37uX5Q\",\"url\":\"https://api.github.com/repos/lucazagaia/skycast/labels/feature\"}],\"milestone\":{\"closed_issues\":7,\"created_at\":\"20",
+      "closing_note": "Revised outline — corrected counts, \"MVP\"/\"headline\"/\"ahead of schedule\"/\"users have been asking for\" removed, internal changes (PR #5) dropped. Now 5 slides. **Sprint 1 review — proposed outline (v2)** 1. **Title / at-a-glance** Sprint 1 · closed 2026-09-24 · due 2026-09-23 · theme: \"The week view and the first round of fixes\" · 2 user-facing deliverables (1 feature, 1 bug fix). 2. **What we set …",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Check every bullet in the outline against the pull requests and issues and tell me which ones aren't backed by them."
+      },
+      "failed": false,
+      "reply": "Went back through the milestone data. Several claims aren't supported.\n\n**Not backed by the PRs/issues:**\n\n- **Intro** — \"Seven merged/closed items ... 5 issues + PRs that pair up into three deliverables.\" Sprint 1 has **5 items total**: 2 issues (#1, #3) + 3 PRs (#2, #4, #5). The \"seven\" and \"5 issues\" are both wrong.\n- **Slide 1** — \"5 issues + 3 PRs merged.\" Same error: it's 2 issues + 3 PRs.\n- **Slide 2** — \"the 7-day view users have been asking for.\" Nothing in the issues or PRs mentions user requests or demand.\n- **Slide 2** — \"the first round of fixes on top of **the MVP**.\" \"First round of fixes\" is straight from the milestone description; **\"MVP\" is my addition** and appears nowhere.\n- **Slide 3** — \"**the headline feature**.\" My framing, not stated anywhere.\n- **Slide 5** — \"sets up **Sprint 2's offline and settings work**.\" No link in the data ties PR #5 to Sprint 2's scope; that's an inference.\n- **Slide 6** — \"worth flagging as **ahead of schedule**.\" Sprint 2's due date is 2026-10-07 and all items are closed as of today, but nothing in the data calls it ahead of schedule — that's my read.\n\n**Backed by the data:**\n\n- Sprint 1 closed 2026-09-24, due 2026-09-23, theme quote is verbatim from the milestone description.\n- 3 PRs shipped (#2, #4, #5) with the labels shown (feature / bug / internal).\n- Slide 4 pairing (Issue #3 ↔ PR #4) and slide 3 pairing (Issue #1 ↔ PR #2) — titles match cleanly, though the data doesn't show an explicit \"closes\" link, so this is a strong inference rather than a confirmed link.\n- Sprint 2 theme quote, due date (2026-10-07), and \"all items closed\" (7/7) — all match the milestone data exactly.\n\nWant me to tighten the outline to only what's supported (and drop the framing words like \"headline\" / \"ahead of schedule\"), or keep them as narrative and just fix the counts?"
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Fix those, and leave out internal changes."
+      },
+      "failed": false,
+      "reply": "Revised outline — corrected counts, \"MVP\"/\"headline\"/\"ahead of schedule\"/\"users have been asking for\" removed, internal changes (PR #5) dropped. Now 5 slides.\n\n**Sprint 1 review — proposed outline (v2)**\n\n1. **Title / at-a-glance**\n   Sprint 1 · closed 2026-09-24 · due 2026-09-23 · theme: \"The week view and the first round of fixes\" · 2 user-facing deliverables (1 feature, 1 bug fix).\n\n2. **What we set out to do**\n   The week view, and the first round of fixes.\n\n3. **Shipped — 7-day forecast** (feature)\n   Issue #1 \"Show the forecast for the next 7 days\" · PR #2 \"Add the 7-day forecast\".\n\n4. **Shipped — regional temperature units** (bug fix)\n   Issue #3 \"Temperatures show in Fahrenheit outside the US\" · PR #4 \"Pick the temperature unit from the region\".\n\n5. **What's next → Sprint 2**\n   Theme: \"Offline use, settings and stability\" · due 2026-10-07 · 7/7 items already closed on GitHub.\n\nTwo things to flag:\n- **Slide 2 is now thin** — it just re-states the milestone description. If you want it to say more, I'd need a source (release notes, a planning doc, your own framing).\n- **Internal work is hidden entirely** — Sprint 1 also merged PR #5 (API client extraction). Fine to omit if the audience is non-technical; let me know if you'd rather footnote it somewhere.\n\nSay the word and I'll build the deck."
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Approved. Build it on our company design template, brand/company-design-template.pptx, and name the file after the sprint."
+      },
+      "failed": false,
+      "reply": "Template has 4 layouts (Title, Section, Content, Closing) and 4 sample slides I'll drop. Building now.\n\nBuilt `Sprint 1.pptx` at the repo root, 5 slides using the template's Title / Section / Content layouts (the 4 sample slides shipped with the template were removed first so branding stays but demo content doesn't). Open it and let me know if any slide needs adjusting — I haven't been able to visually verify the layout fit."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls -la ${DEMO}/company-decks/ && ls -la ${DEMO}/company-decks/brand/ 2>/dev/null",
+        "description": "List working directory and brand folder"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "total 16 drwxr-xr-x@ 7 ${USER} wheel 224 Sep 24 11:16 . drwxr-xr-x@ 13 ${USER} wheel 416 Sep 24 11:16 .. drwxr-xr-x@ 4 ${USER} wheel 128 Sep 24 11:16 .claude drwxr-xr-x@ 12 ${USER} wheel 384 Sep 24 11:16 .git -rw-r--r--@ 1 ${USER} wheel 9 Sep 24 11:16 .gitignore -rw-r--r--@ 1 ${USER} wheel 76 Sep 24 11:16 README.md drwxr-xr-x@ 3 ${USER} wheel 96 Sep 24 11:16 brand total 48 drwxr-xr-x@ 3 ${USER} wh",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls -la ${DEMO}/company-decks/.claude/ 2>/dev/null",
+        "description": "Check project .claude for skills/config"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "total 8 drwxr-xr-x@ 4 ${USER} wheel 128 Sep 24 11:16 . drwxr-xr-x@ 7 ${USER} wheel 224 Sep 24 11:16 .. drwxr-xr-x@ 4 ${USER} wheel 128 Sep 24 11:16 commands -rw-r--r--@ 1 ${USER} wheel 1304 Sep 24 11:16 settings.json",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${DEMO}/company-decks/.claude/settings.json"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "1 { 2 \"hooks\": { 3 \"UserPromptSubmit\": [ 4 { 5 \"matcher\": \"*\", 6 \"hooks\": [ 7 { 8 \"type\": \"command\", 9 \"command\": \"PYTHONPATH=\\\"${HOME}/ai_projects/skill-plus-plus\\\" python3 -m skill_plus_plus hook\" 10 } 11 ] 12 } 13 ], 14 \"PostToolUse\": [ 15 { 16 \"matcher\": \"*\", 17 \"hooks\": [ 18 { 19 \"type\": \"command\", 20 \"command\": \"PYTHONPATH=\\\"${HOME}/ai_projects/skill-plus-plus\\\" python3 -m skill_plus_plus ho",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${DEMO}/company-decks/README.md"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "1 # Company decks 2 3 The slides we present. The design template is in `brand/`. 4",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${DEMO}/company-decks/.claude/commands/",
+        "description": "List commands folder"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "skill-plus-plus-new.md skill-plus-plus-review.md",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -c \"import pptx; print(pptx.__version__)\" 2>&1; which python3; which uv 2>&1",
+        "description": "Check python-pptx availability"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "1.0.2 /opt/homebrew/bin/python3 /opt/homebrew/bin/uv",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 <<'EOF'\nfrom pptx import Presentation\nfrom pptx.util import Emu\np = Presentation(\"${DEMO}/company-decks/brand/company-design-template.pptx\")\nprint(\"Slide size (EMU):\", p.slide_width, p.slide_height)\nprint(\"Slide size (in):\", p.slide_width/914400, \"x\", p.slide_height/914400)\nprint(f\"Existing slides: {len(p.slides)}\")\nfor i, s in enumerate(p.slides):\n    print(f\"  slide {i}: layout={s.slide_layout.name!r}\")\nprint(\"\\nLayouts:\")\nfor i, lay in enumerate(p.slide_layouts):\n    print(f\"  [{i}] {lay.name!r}\")\n    for ph in lay.placeholders:\n        print(f\"      ph idx={ph.placeholder_format.idx} type={ph.placeholder_format.type} name={ph.name!r}\")\nprint(\"\\nMasters:\", [m.name for m in p.slide_masters])\nEOF\n",
+        "description": "Inspect template layouts and placeholders"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "Slide size (EMU): 12191695 6858000 Slide size (in): 13.33299978127734 x 7.5 Existing slides: 4 slide 0: layout='Title' slide 1: layout='Section' slide 2: layout='Content' slide 3: layout='Closing' Layouts: [0] 'Title' ph idx=0 type=CENTER_TITLE (3) name='Title 1' ph idx=1 type=SUBTITLE (4) name='Subtitle 2' ph idx=10 type=DATE (16) name='Date Placeholder 3' ph idx=11 type=FOOTER (15) name='Footer ",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 <<'EOF'\nfrom pptx import Presentation\nfrom copy import deepcopy\nfrom lxml import etree\n\nSRC = \"${DEMO}/company-decks/brand/company-design-template.pptx\"\nOUT = \"${DEMO}/company-decks/Sprint 1.pptx\"\n\nprs = Presentation(SRC)\n\n# Drop the sample slides that ship with the template\nsldIdLst = prs.slides._sldIdLst\nrels = prs.part.rels\nfor sld_id in list(sldIdLst):\n    rId = sld_id.get(\"{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id\")\n    sldIdLst.remove(sld_id)\n    prs.part.drop_rel(rId)\n\nlayouts = {lay.name: lay for lay in prs.slide_layouts}\n\ndef set_ph(slide, idx, text):\n    ph = slide.placeholders[idx]\n    tf = ph.text_frame\n    lines = text.split(\"\\n\") if isinstance(text, str) else text\n    tf.text = lines[0]\n    for line in lines[1:]:\n        p = tf.add_paragraph()\n        p.text = line\n    return ph\n\ndef set_bullets(slide, idx, bullets):\n    ph = slide.placeholders[idx]\n    tf = ph.text_frame\n    tf.text = bullets[0]\n    for b in bullets[1:]:\n        p = tf.add_paragraph()\n        p.text = b\n\n# 1 — Title\ns = prs.slides.add_slide(layouts[\"Title\"])\nset_ph(s, 0, \"Sprint 1 review\")\nset_ph(s, 1, \"The week view and the first round of fixes\\nClosed 2026-09-24 · Due 2026-09-23 · 2 user-facing deliverables\")\n\n# 2 — Section: what we set out to do\ns = prs.slides.add_slide(layouts[\"Section\"])\nset_ph(s, 0, \"What we set out to do\")\nset_ph(s, 1, \"The week view, and the first round of fixes.\")\n\n# 3 — Content: 7-day forecast\ns = prs.slides.add_slide(layouts[\"Content\"])\nset_ph(s, 0, \"Shipped — 7-day forecast\")\nset_bullets(s, 1, [\n    \"Feature\",\n    \"Issue #1 — Show the forecast for the next 7 days\",\n    \"PR #2 — Add the 7-day forecast\",\n])\n\n# 4 — Content: regional temperature units\ns = prs.slides.add_slide(layouts[\"Content\"])\nset_ph(s, 0, \"Shipped — regional temperature units\")\nset_bullets(s, 1, [\n    \"Bug fix\",\n    \"Issue #3 — Temperatures show in Fahrenheit outside the US\",\n    \"PR #4 — Pick the te… [truncated 543 chars]",
+        "description": "Build Sprint 1 deck from template"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "wrote: ${DEMO}/company-decks/Sprint 1.pptx slides: 5 [0] layout='Title' title='Sprint 1 review' [1] layout='Section' title='What we set out to do' [2] layout='Content' title='Shipped — 7-day forecast' [3] layout='Content' title='Shipped — regional temperature units' [4] layout='Content' title=\"What's next → Sprint 2\"",
+      "assistant_note": "Template has 4 layouts (Title, Section, Content, Closing) and 4 sample slides I'll drop. Building now.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls -la \"${DEMO}/company-decks/Sprint 1.pptx\"",
+        "description": "Confirm file exists"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "-rw-r--r--@ 1 ${USER} wheel 23075 Sep 24 11:21 ${DEMO}/company-decks/Sprint 1.pptx",
+      "closing_note": "Built `Sprint 1.pptx` at the repo root, 5 slides using the template's Title / Section / Content layouts (the 4 sample slides shipped with the template were removed first so branding stays but demo content doesn't). Open it and let me know if any slide needs adjusting — I haven't been able to visually verify the layout fit.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Open it and check the slides follow the outline, in order."
+      },
+      "failed": false,
+      "reply": "All five slides match the approved v2 outline, in order:\n\n1. ✅ **Title** — \"Sprint 1 review\" + theme quote + close/due dates + \"2 user-facing deliverables\"\n2. ✅ **What we set out to do** — theme quoted verbatim\n3. ✅ **Shipped — 7-day forecast** — feature label + Issue #1 + PR #2\n4. ✅ **Shipped — regional temperature units** — bug-fix label + Issue #3 + PR #4\n5. ✅ **What's next → Sprint 2** — theme + due 2026-10-07 + 7/7 closed\n\nOne minor drift: the outline for slide 1 said \"2 user-facing deliverables **(1 feature, 1 bug fix)**\"; the slide shows just \"2 user-facing deliverables\". The (1 feature, 1 bug fix) breakdown is implicit from slides 3 and 4 but not on slide 1. Want me to add it back?"
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "which soffice libreoffice 2>&1; ls /Applications/ | grep -i libre 2>&1",
+        "description": "Look for LibreOffice binary"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "/opt/homebrew/bin/soffice libreoffice not found LibreOffice.app",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "mkdir -p /tmp/sprint1-render && soffice --headless --convert-to pdf --outdir /tmp/sprint1-render \"${DEMO}/company-decks/Sprint 1.pptx\" 2>&1 | tail -5 && ls /tmp/sprint1-render/",
+        "description": "Convert deck to PDF for inspection"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "convert ${DEMO}/company-decks/Sprint 1.pptx as a Impress document -> /private/tmp/sprint1-render/Sprint 1.pdf using filter : impress_pdf_Export Sprint 1.pdf",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "/tmp/sprint1-render/Sprint 1.pdf"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "PDF file read: /tmp/sprint1-render/Sprint 1.pdf (100.1KB)",
+      "closing_note": "All five slides match the approved v2 outline, in order: 1. ✅ **Title** — \"Sprint 1 review\" + theme quote + close/due dates + \"2 user-facing deliverables\" 2. ✅ **What we set out to do** — theme quoted verbatim 3. ✅ **Shipped — 7-day forecast** — feature label + Issue #1 + PR #2 4. ✅ **Shipped — regional temperature units** — bug-fix label + Issue #3 + PR #4 5. ✅ **What's next → Sprint 2** — theme …",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "question": "6b453520d07d",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "prompt_chars": -1,
+    "reply_before": 0,
+    "send_description": false,
+    "endings": 0,
+    "answered": 2,
+    "replayed": "2026-09-24"
+  }
+}

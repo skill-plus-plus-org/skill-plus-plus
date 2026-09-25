@@ -11,7 +11,8 @@ One task banked as six fragments, for example, and a commit made with
 ## The public set
 
 The public sessions are recorded from a plan fixed in advance, `catalogue.json`:
-22 sessions of two kinds of work, each written to test named functions.
+22 sessions of two kinds of work, each written to test named functions, and the
+8 demo recordings described below.
 - **Code:** one procedure in a small seeded git repo, `recording/seed-repo/`:
   explore → implement → test → commit.
 - **Procedure:** knowledge work from a source file: read → write → check.
@@ -35,6 +36,22 @@ recording folders `C-F1`, `C-F2` and `C-F3` would be three projects there.
 `draft_cases.json` holds what a drafted skill must contain for four of these
 sessions. `tests/benchmarks/draft_check.py` prepares each draft and checks it.
 The drafting itself is a frontier-model call, so you run it.
+
+### The demo recordings
+
+Eight more sessions, `*-demo-*.json`, are the recordings behind the README
+video: five runs of a sprint review deck built from GitHub through the GitHub
+MCP, two takes that do action items, a LinkedIn post and the sprint review in
+one chat, and one run of the `--min-length` feature. The repo they read,
+`lucazagaia/skycast`, was made for the recording: its milestones, issues and
+pull requests are invented, and the notes they read are copies of
+`recording/meeting-1.md` and `recording/notes.md`.
+
+They are not in the catalogue, because they were recorded outside
+`~/skillpp-recordings/`, but their truth was fixed the same way, before
+recording, by the video's script, and each fixture's `why` states it. They were
+held out while the judge's question was restructured and judged only after it
+(`docs/research/benchmarks.md`, "The question restructured").
 
 ## Public and private sets
 

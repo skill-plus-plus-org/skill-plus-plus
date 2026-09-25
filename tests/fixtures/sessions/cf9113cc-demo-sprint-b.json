@@ -1,0 +1,315 @@
+{
+  "tag": "cf9113cc",
+  "name": "demo-sprint-b",
+  "session": "demo-sprint-b",
+  "kind": "procedure",
+  "surface": "cli",
+  "checks": [
+    "detect.one",
+    "detect.review",
+    "merge.varied"
+  ],
+  "captured": "2026-09-24",
+  "started": "2026-09-24T09:36:16.595Z",
+  "procedure": "sprint review deck from GitHub (MCP): outline, check against PRs/issues, fix, build on the template, check the slides",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "sprint-review-deck"
+    ],
+    "boundary_after": [],
+    "subjects": [
+      null
+    ],
+    "roles": [
+      "explore",
+      "review",
+      "correct",
+      "implement",
+      "verify"
+    ],
+    "level": "same-goal"
+  },
+  "why": "Recorded for the README video, from its script, fixed before recording: the sprint review is one task of five prompts (outline, check against the tickets, fix, build on the template, check the slides), and in the takes the action items and the LinkedIn post before it are a task each, starting at prompts 3 and 5. lucazagaia/skycast is a demo repo made for the recording; its milestones, issues and pull requests are invented, and notes/ holds copies of recording/meeting-1.md and recording/notes.md. Level same-goal: the runs were made to be alike. recurrence.py sets levels per session, so the takes' post and action items count as another subject against P-F and P-2said, which read the same notes.",
+  "history": "Recorded 2026-09-23 and 24 for the README video. Held out while the boundary question was restructured, and judged only after: every switch found, no false cut (docs/research/benchmarks.md, \"The question restructured\"). Published 2026-09-25.",
+  "shape": {
+    "steps": 19,
+    "prompts": 5,
+    "failed": 1
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Prepare the sprint review for last sprint from lucazagaia/skycast, using the GitHub MCP: what we merged and closed in its milestone. Start with an outline of at most 6 slides; don't build anything yet."
+      },
+      "failed": false,
+      "reply": "I'll start by loading the GitHub tools I need, then find the last sprint's milestone in lucazagaia/skycast.\n\nNow let me find the milestones in skycast to identify the last sprint.\n\nI can see 3 sprints. Sprint 1 is the only closed one (due 2026-09-23, closed 2026-09-24) — that's the \"last sprint.\" Let me pull all issues and PRs in its milestone.\n\nHere's what I found and a proposed outline. Nothing built yet — awaiting your go-ahead.\n\n## Last sprint = **Sprint 1** (only closed milestone)\n- Theme: *\"The week view and the first round of fixes\"*\n- Due 2026-09-23, closed 2026-09-24\n- 2 issues closed, 3 PRs merged\n\n**Closed issues**\n- #1 Show the forecast for the next 7 days — *feature*\n- #3 Temperatures show in Fahrenheit outside the US — *bug*\n\n**Merged PRs**\n- #2 Add the 7-day forecast — *feature*\n- #4 Pick the temperature unit from the region — *bug*\n- #5 Internal: move the API client into its own module — *internal*\n\n## Proposed outline (6 slides)\n\n1. **Title** — \"Skycast · Sprint 1 Review\" + dates and presenter.\n2. **Sprint at a glance** — theme, dates, by-the-numbers (2 issues closed, 3 PRs merged, 1 feature / 1 bug / 1 internal).\n3. **Shipped: 7-day forecast** — the headline feature (#1 → #2). What users now see.\n4. **Fixed: temperature unit by region** — the bug that misread US-vs-metric (#3 → #4). Before/after behavior.\n5. **Under the hood: API client extracted** — internal refactor (#5). Why it matters for Sprint 2's offline work.\n6. **What's next** — Sprint 2 preview: offline mode, unit settings, stability (per milestone description).\n\nWant me to trim (e.g., merge slides 3 + 4 into a single \"What shipped\" slide for a 5-slide deck), or proceed to build in a Claude Doc/Google Slides/etc.?"
+    },
+    {
+      "tool": "ToolSearch",
+      "input": {},
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{'type': 'tool_reference', 'tool_name': 'mcp__github__get_me'} {'type': 'tool_reference', 'tool_name': 'mcp__github__list_issues'} {'type': 'tool_reference', 'tool_name': 'mcp__github__list_pull_requests'} {'type': 'tool_reference', 'tool_name': 'mcp__github__search_issues'} {'type': 'tool_reference', 'tool_name': 'mcp__github__search_pull_requests'}",
+      "assistant_note": "I'll start by loading the GitHub tools I need, then find the last sprint's milestone in lucazagaia/skycast.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "gh api repos/lucazagaia/skycast/milestones --paginate -q '.[] | {number, title, state, due_on, closed_at, updated_at, open_issues, closed_issues}'",
+        "description": "List milestones in skycast repo"
+      },
+      "failed": true,
+      "serves": 1,
+      "tool_returned": "Permission to use Bash with command gh api repos/lucazagaia/skycast/milestones --paginate -q '.[] | {number, title, state, due_on, closed_at, updated_at, open_issues, closed_issues}' has been denied.",
+      "assistant_note": "Now let me find the milestones in skycast to identify the last sprint.",
+      "end": false
+    },
+    {
+      "tool": "mcp__github__search_issues",
+      "input": {
+        "query": "repo:lucazagaia/skycast is:issue milestone:*",
+        "perPage": 50
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{\"incomplete_results\":false,\"items\":[{\"milestone\":{\"closed_issues\":7,\"created_at\":\"2026-09-24T08:46:34Z\",\"creator\":{\"avatar_url\":\"https://avatars.githubusercontent.com/u/192005487?v=4\",\"events_url\":\"https://api.github.com/users/lucazagaia/events{/privacy}\",\"followers_url\":\"https://api.github.com/users/lucazagaia/followers\",\"following_url\":\"https://api.github.com/users/lucazagaia/following{/other_u",
+      "end": false
+    },
+    {
+      "tool": "mcp__github__search_issues",
+      "input": {
+        "query": "repo:lucazagaia/skycast milestone:\"Sprint 1\" is:issue",
+        "perPage": 50
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{\"incomplete_results\":false,\"items\":[{\"closed_at\":\"2026-09-24T08:46:59Z\",\"html_url\":\"https://github.com/lucazagaia/skycast/issues/3\",\"labels\":[{\"color\":\"D73A4A\",\"default\":true,\"description\":\"Something users hit\",\"id\":12343547760,\"name\":\"bug\",\"node_id\":\"LA_kwDOUo7Uxs8AAAAC37uXcA\",\"url\":\"https://api.github.com/repos/lucazagaia/skycast/labels/bug\"}],\"number\":3,\"state\":\"closed\",\"state_reason\":\"complet",
+      "assistant_note": "I can see 3 sprints. Sprint 1 is the only closed one (due 2026-09-23, closed 2026-09-24) — that's the \"last sprint.\" Let me pull all issues and PRs in its milestone.",
+      "end": false
+    },
+    {
+      "tool": "mcp__github__search_pull_requests",
+      "input": {
+        "query": "repo:lucazagaia/skycast milestone:\"Sprint 1\"",
+        "perPage": 50
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "{\"incomplete_results\":false,\"items\":[{\"closed_at\":\"2026-09-24T08:47:08Z\",\"html_url\":\"https://github.com/lucazagaia/skycast/pull/5\",\"labels\":[{\"color\":\"6B7280\",\"default\":false,\"description\":\"No change users can see\",\"id\":12343548201,\"name\":\"internal\",\"node_id\":\"LA_kwDOUo7Uxs8AAAAC37uZKQ\",\"url\":\"https://api.github.com/repos/lucazagaia/skycast/labels/internal\"}],\"number\":5,\"state\":\"closed\",\"title\":\"I",
+      "closing_note": "Here's what I found and a proposed outline. Nothing built yet — awaiting your go-ahead. ## Last sprint = **Sprint 1** (only closed milestone) - Theme: *\"The week view and the first round of fixes\"* - Due 2026-09-23, closed 2026-09-24 - 2 issues closed, 3 PRs merged **Closed issues** - #1 Show the forecast for the next 7 days — *feature* - #3 Temperatures show in Fahrenheit outside the US — *bug* …",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Check every bullet in the outline against the pull requests and issues and tell me which ones aren't backed by them."
+      },
+      "failed": false,
+      "reply": "Let me verify PR merged status and issue/PR linkage before answering.\n\nGoing through each bullet — most are backed once I read the PR bodies (they contain `Closes #N` and a one-line rationale). Only a few claims aren't:\n\n**Not backed by the data:**\n\n- **Slide 1 — \"presenter\"**: no data on who's presenting; that's a template placeholder, not from GitHub.\n- **Slide 1 / Slide 2 — sprint start date**: I only have the milestone's `due_on` (2026-09-23) and `closed_at` (2026-09-24). No start date, so \"dates\" would be end-of-sprint only.\n- **Slide 3 — \"What users now see\"**: no screenshots or UI copy in the issue/PR data. PR #2's body only says *\"Adds `week()`: the next seven days, today first\"* — that's a code-level description, not a user-facing walkthrough.\n- **Slide 4 — \"Before/after behavior\"**: no before/after captured. PR #4 body only describes the new rule (*\"Fahrenheit only in the regions that use it; Celsius everywhere else\"*).\n- **Slide 4 — \"misread US-vs-metric\"**: my paraphrase. The issue title is *\"Temperatures show in Fahrenheit outside the US\"* and the fix picks by region — accurate enough, but \"US-vs-metric\" is my wording, not from the tickets.\n\n**Backed after re-checking (I was wrong to flag these earlier):**\n\n- Issue→PR linkage (#1→#2, #3→#4): confirmed — PR bodies literally say `Closes #1` and `Closes #3`.\n- \"3 PRs merged\": confirmed — all three have `merged_at` timestamps.\n- Slide 5's *\"Why it matters for Sprint 2's offline work\"*: **actually backed** — PR #5's body says *\"`fetch()` moves to `skycast/api.py` so the cache can wrap it next sprint\"*, and Sprint 2 does contain the offline-cache PR (#7 \"Keep the last forecast on the device\"). Good link to keep.\n- Slide 6's \"unit settings\": backed — Sprint 2 contains issue #10 *\"Let users choose Celsius or Fahrenheit\"* / PR #11 *\"Add a temperature unit setting\"*.\n\nNet: the outline is solid; just drop or mark the presenter, sprint start date, screenshots, and before/after as things you'll need to supply (or I'll leave placeholders). Want me to proceed to build with those as `TBD` fields?"
+    },
+    {
+      "tool": "mcp__github__list_pull_requests",
+      "input": {
+        "owner": "lucazagaia",
+        "repo": "skycast",
+        "state": "closed",
+        "perPage": 20
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "[{\"body\":\"No behaviour change. Finding today and trimming the week each get a function.\",\"merged\":false,\"merged_at\":\"2026-09-24T08:48:48Z\",\"milestone\":\"Sprint 3\",\"number\":19,\"state\":\"closed\",\"title\":\"Internal: split forecast parsing into smaller functions\"},{\"body\":\"Follows the system setting; both themes use the same accent colour.\\n\\nCloses #17\",\"merged\":false,\"merged_at\":\"2026-09-24T08:48:36Z\",",
+      "assistant_note": "Let me verify PR merged status and issue/PR linkage before answering.",
+      "closing_note": "Revised outline — 5 slides, all bullets grounded in the GitHub data (PR bodies + milestone descriptions). Internal PR #5 dropped. 1. **Title** — \"Skycast · Sprint 1 Review\" · closed 2026-09-24 (due 2026-09-23). 2. **Sprint at a glance** — theme *\"The week view and the first round of fixes\"* · 2 issues closed · 2 user-facing PRs merged (1 feature, 1 bug) · internal work excluded from this review. …",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Fix those, and leave out internal changes."
+      },
+      "failed": false,
+      "reply": "Revised outline — 5 slides, all bullets grounded in the GitHub data (PR bodies + milestone descriptions). Internal PR #5 dropped.\n\n1. **Title** — \"Skycast · Sprint 1 Review\" · closed 2026-09-24 (due 2026-09-23).\n2. **Sprint at a glance** — theme *\"The week view and the first round of fixes\"* · 2 issues closed · 2 user-facing PRs merged (1 feature, 1 bug) · internal work excluded from this review.\n3. **Shipped: 7-day forecast** (#1 → #2) — delivered: *\"the next seven days, today first.\"*\n4. **Fixed: temperature unit by region** (#3 → #4) — new behavior: *\"Fahrenheit only in the regions that use it; Celsius everywhere else.\"*\n5. **What's next — Sprint 2** — theme *\"Offline use, settings and stability\"*:\n   - Offline mode — #6 / PR #7 (keep the last forecast on device)\n   - Unit setting — #10 / PR #11 (Celsius/Fahrenheit override)\n   - Stability — #8 / PR #9 (fallback when location services are off)\n\nSay the word and I'll build it — Claude Doc, Google Slides, or somewhere else?"
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Approved. Build it on our company design template, brand/company-design-template.pptx, and name the file after the sprint."
+      },
+      "failed": false,
+      "reply": "Let me inspect the template layouts before I write anything.\n\nBuilding now.\n\nAll 5 slides land on the correct layouts (Title for slide 1, Content for slides 2–5) and content matches the approved outline.\n\n**Built:** `${DEMO}/company-decks/Sprint 1.pptx` — 5 slides on the company template. Open it to confirm the design renders the way you expect; I only verified the XML, not the rendered layout."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls -la ${DEMO}/company-decks/",
+        "description": "List working directory contents"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "total 8 drwxr-xr-x@ 5 ${USER} wheel 160 Sep 24 11:26 . drwxr-xr-x@ 14 ${USER} wheel 448 Sep 24 11:35 .. drwxr-xr-x@ 12 ${USER} wheel 384 Sep 24 11:26 .git -rw-r--r--@ 1 ${USER} wheel 76 Sep 24 11:26 README.md drwxr-xr-x@ 3 ${USER} wheel 96 Sep 24 11:26 brand",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls -la ${DEMO}/company-decks/brand/",
+        "description": "List brand folder contents"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "total 48 drwxr-xr-x@ 3 ${USER} wheel 96 Sep 24 11:26 . drwxr-xr-x@ 5 ${USER} wheel 160 Sep 24 11:26 .. -rw-r--r--@ 1 ${USER} wheel 21996 Sep 24 11:26 company-design-template.pptx",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${DEMO}/company-decks/README.md"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "1 # Company decks 2 3 The slides we present. The design template is in `brand/`. 4",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "cd /tmp && rm -rf pptx-inspect && mkdir pptx-inspect && cd pptx-inspect && unzip -q ${DEMO}/company-decks/brand/company-design-template.pptx && ls ppt/slideLayouts/ && echo \"--- SLIDES ---\" && ls ppt/slides/ 2>/dev/null || echo \"(no slides)\"",
+        "description": "Unzip template and list layouts and slides"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "_rels slideLayout1.xml slideLayout2.xml slideLayout3.xml slideLayout6.xml --- SLIDES --- _rels slide1.xml slide2.xml slide3.xml slide4.xml Shell cwd was reset to ${DEMO}/company-decks",
+      "assistant_note": "Let me inspect the template layouts before I write anything.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "for f in /tmp/pptx-inspect/ppt/slideLayouts/slideLayout*.xml; do echo \"=== $f ===\"; grep -oE '<p:cSld name=\"[^\"]+\"' $f | head -1; grep -oE 'type=\"[a-zA-Z]+\"' $f | sort -u; grep -oE '<a:t>[^<]*</a:t>' $f | head -20; echo; done",
+        "description": "Peek layout names, placeholder types, and sample text"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "=== /tmp/pptx-inspect/ppt/slideLayouts/slideLayout1.xml === <p:cSld name=\"Title\" type=\"ctrTitle\" type=\"datetimeFigureOut\" type=\"dt\" type=\"ftr\" type=\"sldNum\" type=\"slidenum\" type=\"subTitle\" type=\"title\" <a:t>Company</a:t> <a:t>Click to edit Master title style</a:t> <a:t>Click to edit Master subtitle style</a:t> <a:t>1/27/13</a:t> <a:t>‹#›</a:t> === /tmp/pptx-inspect/ppt/slideLayouts/slideLayout2.xm",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "for f in /tmp/pptx-inspect/ppt/slides/slide*.xml; do echo \"=== $f ===\"; grep -oE '<a:t>[^<]*</a:t>' $f | head -10; echo; done",
+        "description": "Peek existing slide content"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "=== /tmp/pptx-inspect/ppt/slides/slide1.xml === <a:t>Sprint 12 review</a:t> <a:t>Team Skycast · 2 weeks, 9 changes shipped</a:t> === /tmp/pptx-inspect/ppt/slides/slide2.xml === <a:t>What we shipped</a:t> <a:t>Merged pull requests, grouped by theme</a:t> === /tmp/pptx-inspect/ppt/slides/slide3.xml === <a:t>Faster start-up</a:t> <a:t>Forecast cached on the device</a:t> <a:t>Start time 3.2 s → 1.1 s<",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 -c \"import pptx; print(pptx.__version__)\" 2>&1 || echo \"MISSING\"",
+        "description": "Check python-pptx availability"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "1.0.2",
+      "end": false
+    },
+    {
+      "tool": "Write",
+      "input": {
+        "file_path": "/tmp/build_sprint1_deck.py",
+        "content": "from pptx import Presentation\nfrom pptx.util import Pt\nfrom copy import deepcopy\nfrom lxml import etree\nimport shutil, os\n\nSRC = \"${DEMO}/company-decks/brand/company-design-template.pptx\"\nOUT = \"${DEMO}/company-decks/Sprint 1.pptx\"\n\nshutil.copyfile(SRC, OUT)\nprs = Presentation(OUT)\n\nlayouts = {l.name: l for l in prs.slide_layouts}\nprint(\"Layouts:\", list(layouts.keys()))\n\n# Drop the four sample slides so we start from a clean template.\nsldIdLst = prs.slides._sldIdLst\nrels = prs.part.rels\nfor sldId in list(sldIdLst):\n    rId = sldId.get(\"{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id\")\n    sldIdLst.remove(sldId)\n    prs.part.drop_rel(rId)\n\ndef set_ph(slide, idx, text):\n    ph = slide.placeholders[idx]\n    ph.text = text\n    return ph\n\ndef set_body_bullets(slide, ph_idx, items):\n    tf = slide.placeholders[ph_idx].text_frame\n    tf.text = items[0]\n    for extra in items[1:]:\n        p = tf.add_paragraph()\n        p.text = extra\n\n# ---- Slide 1: Title\ns1 = prs.slides.add_slide(layouts[\"Title\"])\n# ctrTitle is placeholder idx 0, subTitle idx 1 (per layout XML).\ns1.placeholders[0].text = \"Sprint 1 review\"\ns1.placeholders[1].text = \"Team Skycast · closed 2026-09-24\"\n\n# ---- Slide 2: Sprint at a glance\ns2 = prs.slides.add_slide(layouts[\"Content\"])\ns2.placeholders[0].text = \"Sprint at a glance\"\nset_body_bullets(s2, 1, [\n    \"Theme: the week view and the first round of fixes\",\n    \"Milestone due 2026-09-23, closed 2026-09-24\",\n    \"2 issues closed, 2 user-facing PRs merged (1 feature, 1 bug)\",\n    \"Internal work excluded from this review\",\n])\n\n# ---- Slide 3: Shipped\ns3 = prs.slides.add_slide(layouts[\"Content\"])\ns3.placeholders[0].text = \"Shipped: 7-day forecast\"\nset_body_bullets(s3, 1, [\n    \"Issue #1 → PR #2\",\n    \"Delivered: the next seven days, today first\",\n])\n\n# ---- Slide 4: Fixed\ns4 = prs.slides.add_slide(layouts[\"Content\"])\ns4.placeholders[0].text = \"Fixed: temperature unit by region\"\nset_b… [truncated 693 chars]"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "File created successfully at: /tmp/build_sprint1_deck.py (file state is current in your context — no need to Read it back)",
+      "assistant_note": "Building now.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "python3 /tmp/build_sprint1_deck.py",
+        "description": "Build the Sprint 1 deck"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "Layouts: ['Title', 'Content', 'Section', 'Closing'] Wrote ${DEMO}/company-decks/Sprint 1.pptx 23201 bytes Slides: 5",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "cd /tmp && rm -rf pptx-verify && mkdir pptx-verify && cd pptx-verify && unzip -q \"${DEMO}/company-decks/Sprint 1.pptx\" && ls ppt/slides/ && echo \"---\" && for f in ppt/slides/slide*.xml; do echo \"=== $f ===\"; grep -oE '<a:t>[^<]*</a:t>' $f; echo; done && echo \"--- LAYOUT MAP ---\" && for f in ppt/slides/_rels/*.rels; do echo \"$f:\"; grep -oE 'Target=\"[^\"]+\"' $f; done",
+        "description": "Verify generated deck contents and layout wiring"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "_rels slide1.xml slide2.xml slide3.xml slide4.xml slide5.xml --- === ppt/slides/slide1.xml === <a:t>Sprint 1 review</a:t> <a:t>Team Skycast · closed 2026-09-24</a:t> === ppt/slides/slide2.xml === <a:t>Sprint at a glance</a:t> <a:t>Theme: the week view and the first round of fixes</a:t> <a:t>Milestone due 2026-09-23, closed 2026-09-24</a:t> <a:t>2 issues closed, 2 user-facing PRs merged (1 feature,",
+      "closing_note": "All 5 slides land on the correct layouts (Title for slide 1, Content for slides 2–5) and content matches the approved outline. **Built:** `${DEMO}/company-decks/Sprint 1.pptx` — 5 slides on the company template. Open it to confirm the design renders the way you expect; I only verified the XML, not the rendered layout.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Open it and check the slides follow the outline, in order."
+      },
+      "failed": false,
+      "reply": "I'll render the deck to images so I can visually confirm slides match the outline in order.\n\nReviewed all 5 rendered slides against the approved outline — order and content match.\n\n| # | Outline | Rendered | Match |\n|---|---------|----------|-------|\n| 1 | Title · closed 2026-09-24 (due 2026-09-23) | \"Sprint 1 review\" / \"Team Skycast · closed 2026-09-24\" | ✅ order/content, ⚠️ due date not on this slide |\n| 2 | Sprint at a glance — theme, counts, internal excluded | Same four bullets, matches | ✅ |\n| 3 | Shipped: 7-day forecast (#1 → #2), delivered line | Same title, `#1 → #2`, delivery line | ✅ |\n| 4 | Fixed: temperature unit by region (#3 → #4), new behavior | Same title, `#3 → #4`, new-behavior line | ✅ |\n| 5 | What's next — Sprint 2, three sub-bullets | Theme + offline/unit/stability sub-bullets | ✅ |\n\n**One minor deviation:** the outline's title-slide bullet mentioned both \"closed 2026-09-24 (due 2026-09-23)\"; the rendered title only shows the close date. The due date does appear on slide 2 so no information is lost — say the word if you want me to add \"(due 2026-09-23)\" to the title subtitle too.\n\nDesign template rendered cleanly: brand mark on the title slide, teal accent rule under each title, \"Internal · Sprint review\" footer on content slides."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "which soffice libreoffice 2>/dev/null; ls /Applications/LibreOffice.app/Contents/MacOS/soffice 2>/dev/null; which qlmanage",
+        "description": "Look for a renderer (LibreOffice or Quick Look)"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "/opt/homebrew/bin/soffice libreoffice not found /Applications/LibreOffice.app/Contents/MacOS/soffice /usr/bin/qlmanage",
+      "assistant_note": "I'll render the deck to images so I can visually confirm slides match the outline in order.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "cd /tmp && rm -rf sprint1-render && mkdir sprint1-render && /opt/homebrew/bin/soffice --headless --convert-to pdf --outdir /tmp/sprint1-render \"${DEMO}/company-decks/Sprint 1.pptx\" 2>&1 | tail -5 && ls /tmp/sprint1-render/",
+        "description": "Convert deck to PDF via LibreOffice"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "convert ${DEMO}/company-decks/Sprint 1.pptx as a Impress document -> /private/tmp/sprint1-render/Sprint 1.pdf using filter : impress_pdf_Export Sprint 1.pdf Shell cwd was reset to ${DEMO}/company-decks",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "/tmp/sprint1-render/Sprint 1.pdf"
+      },
+      "failed": false,
+      "serves": 5,
+      "tool_returned": "PDF file read: /tmp/sprint1-render/Sprint 1.pdf (97.2KB)",
+      "closing_note": "Reviewed all 5 rendered slides against the approved outline — order and content match. | # | Outline | Rendered | Match | |---|---------|----------|-------| | 1 | Title · closed 2026-09-24 (due 2026-09-23) | \"Sprint 1 review\" / \"Team Skycast · closed 2026-09-24\" | ✅ order/content, ⚠️ due date not on this slide | | 2 | Sprint at a glance — theme, counts, internal excluded | Same four bullets, …",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "question": "6b453520d07d",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "prompt_chars": -1,
+    "reply_before": 0,
+    "send_description": false,
+    "endings": 0,
+    "answered": 3,
+    "replayed": "2026-09-24"
+  }
+}

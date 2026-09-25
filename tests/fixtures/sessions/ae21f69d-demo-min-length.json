@@ -1,0 +1,292 @@
+{
+  "tag": "ae21f69d",
+  "name": "demo-min-length",
+  "session": "demo-min-length",
+  "kind": "code",
+  "surface": "cli",
+  "checks": [
+    "detect.one",
+    "merge.varied"
+  ],
+  "captured": "2026-09-24",
+  "started": "2026-09-23T12:34:06.712Z",
+  "procedure": "explore how to add --min-length to wordfreq, implement it, add tests and run the suite, commit",
+  "truth": {
+    "episodes": 1,
+    "markers": null,
+    "title": null,
+    "must_contain": [],
+    "families": [
+      "add-feature-with-tests"
+    ],
+    "boundary_after": [],
+    "subjects": [
+      "wordfreq --min-length"
+    ],
+    "roles": [
+      "explore",
+      "implement",
+      "test",
+      "commit"
+    ],
+    "level": "same-goal"
+  },
+  "why": "Recorded for the README video, from its script, fixed before recording: the sprint review is one task of five prompts (outline, check against the tickets, fix, build on the template, check the slides), and in the takes the action items and the LinkedIn post before it are a task each, starting at prompts 3 and 5. lucazagaia/skycast is a demo repo made for the recording; its milestones, issues and pull requests are invented, and notes/ holds copies of recording/meeting-1.md and recording/notes.md. Level same-goal: the runs were made to be alike. recurrence.py sets levels per session, so the takes' post and action items count as another subject against P-F and P-2said, which read the same notes.",
+  "history": "Recorded 2026-09-23 and 24 for the README video. Held out while the boundary question was restructured, and judged only after: every switch found, no false cut (docs/research/benchmarks.md, \"The question restructured\"). Published 2026-09-25.",
+  "shape": {
+    "steps": 18,
+    "prompts": 4,
+    "failed": 1
+  },
+  "steps": [
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Look at textkit/wordfreq.py and suggest how to add a --min-length option that skips words shorter than N letters. Don't change anything yet."
+      },
+      "failed": false,
+      "reply": "Suggestion:\n\n**CLI (line 44-45):**\n```python\nparser.add_argument(\"--min-length\", type=int, default=1,\n                    help=\"skip words shorter than N letters\")\n```\n\n**Thread through `top_words` (line 24):**\n```python\ndef top_words(text, min_length=1):\n    counts = {}\n    for word in words(text):\n        if len(word) < min_length:\n            continue\n        ...\n```\n\n**Call site (line 48):**\n```python\nfor word, count in top_words(text, args.min_length):\n```\n\nNotes:\n- `argparse` maps `--min-length` → `args.min_length` automatically.\n- Default `1` = no change in behavior (empty words already filtered in `words()`).\n- Filter in `top_words`, not `words()` — keeps `words()` reusable, matches where counting happens.\n- Apostrophes count toward length (`\"don't\"` = 5). If want letters-only, use `sum(c != \"'\" for c in word)` instead. Ask user which.\n- Check `tests/` — add case for `min_length=4` on sample text."
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${DEMO}/textkit/wordfreq.py"
+      },
+      "failed": true,
+      "serves": 1,
+      "tool_returned": "File does not exist. Note: your current working directory is ${DEMO}/textkit.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${DEMO}/textkit/",
+        "description": "List textkit dir"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "README.md tests textkit",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${DEMO}/textkit/textkit/",
+        "description": "List inner textkit dir"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "__init__.py __pycache__ slugify.py titlecase.py wordfreq.py",
+      "end": false
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${DEMO}/textkit/textkit/wordfreq.py"
+      },
+      "failed": false,
+      "serves": 1,
+      "tool_returned": "1 \"\"\"Print the most common words in a text file.\"\"\" 2 3 import argparse 4 5 LETTERS = \"abcdefghijklmnopqrstuvwxyz'\" 6 7 8 def words(text): 9 \"\"\"Split text into lowercase words, dropping punctuation and digits.\"\"\" 10 cleaned = \"\" 11 for char in text.lower(): 12 if char in LETTERS: 13 cleaned = cleaned + char 14 else: 15 cleaned = cleaned + \" \" 16 result = [] 17 for word in cleaned.split(\" \"): 18 wo",
+      "closing_note": "Suggestion: **CLI (line 44-45):** ```python parser.add_argument(\"--min-length\", type=int, default=1, help=\"skip words shorter than N letters\") ``` **Thread through `top_words` (line 24):** ```python def top_words(text, min_length=1): counts = {} for word in words(text): if len(word) < min_length: continue ... ``` **Call site (line 48):** ```python for word, count in top_words(text, …",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Go ahead and implement it."
+      },
+      "failed": false,
+      "reply": "Verify with tests.\n\nDone. `--min-length` filters in `top_words` via `len(word) < min_length`. Default 1 = no behavior change. 6 existing tests pass. Smoke: `--min-length 4` drops `the`, `fox`, `dog`."
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${DEMO}/textkit/textkit/wordfreq.py",
+        "old_string": "def top_words(text):\n    \"\"\"The five most common words, most common first, ties alphabetical.\"\"\"\n    counts = {}\n    for word in words(text):\n        if word in counts:\n            counts[word] = counts[word] + 1\n        else:\n            counts[word] = 1",
+        "new_string": "def top_words(text, min_length=1):\n    \"\"\"The five most common words, most common first, ties alphabetical.\"\"\"\n    counts = {}\n    for word in words(text):\n        if len(word) < min_length:\n            continue\n        if word in counts:\n            counts[word] = counts[word] + 1\n        else:\n            counts[word] = 1"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "The file ${DEMO}/textkit/textkit/wordfreq.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${DEMO}/textkit/textkit/wordfreq.py",
+        "old_string": "    parser.add_argument(\"path\", help=\"the text file to read\")\n    args = parser.parse_args(argv)\n    with open(args.path, encoding=\"utf-8\") as handle:\n        text = handle.read()\n    for word, count in top_words(text):\n        print(f\"{count:>5}  {word}\")",
+        "new_string": "    parser.add_argument(\"path\", help=\"the text file to read\")\n    parser.add_argument(\n        \"--min-length\",\n        type=int,\n        default=1,\n        help=\"skip words shorter than N letters\",\n    )\n    args = parser.parse_args(argv)\n    with open(args.path, encoding=\"utf-8\") as handle:\n        text = handle.read()\n    for word, count in top_words(text, args.min_length):\n        print(f\"{count:>5}  {word}\")"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "The file ${DEMO}/textkit/textkit/wordfreq.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "ls ${DEMO}/textkit/tests/",
+        "description": "List tests"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "__init__.py test_slugify.py test_titlecase.py test_wordfreq.py",
+      "assistant_note": "Verify with tests.",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "uv run --with pytest pytest tests/test_wordfreq.py -q 2>&1 | tail -30",
+        "description": "Run wordfreq tests"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "Installed 5 packages in 22ms ...... [100%] 6 passed in 0.02s",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "printf \"the quick brown fox jumps over the lazy dog. the fox is quick.\" > /tmp/wf.txt && uv run python -m textkit.wordfreq /tmp/wf.txt && echo \"---\" && uv run python -m textkit.wordfreq --min-length 4 /tmp/wf.txt",
+        "description": "Smoke test flag"
+      },
+      "failed": false,
+      "serves": 2,
+      "tool_returned": "3 the 2 fox 2 quick 1 brown 1 dog --- 2 quick 1 brown 1 jumps 1 lazy 1 over",
+      "closing_note": "Done. `--min-length` filters in `top_words` via `len(word) < min_length`. Default 1 = no behavior change. 6 existing tests pass. Smoke: `--min-length 4` drops `the`, `fox`, `dog`.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "Add tests for --min-length and run all the tests."
+      },
+      "failed": false,
+      "reply": "16/16 pass. 3 new tests: `top_words` min_length filter, default keeps all, CLI `--min-length` flag end-to-end."
+    },
+    {
+      "tool": "Read",
+      "input": {
+        "file_path": "${DEMO}/textkit/tests/test_wordfreq.py"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "1 import io 2 import os 3 import tempfile 4 import unittest 5 from contextlib import redirect_stdout 6 7 from textkit.wordfreq import main, top_words, words 8 9 10 class TestWords(unittest.TestCase): 11 def test_lowercases_and_drops_punctuation(self): 12 self.assertEqual(words(\"Hello, hello! World.\"), [\"hello\", \"hello\", \"world\"]) 13 14 def test_keeps_apostrophes_inside_words(self): 15 self.assertE",
+      "end": false
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${DEMO}/textkit/tests/test_wordfreq.py",
+        "old_string": "    def test_at_most_five(self):\n        self.assertEqual(len(top_words(\"a b c d e f g\")), 5)",
+        "new_string": "    def test_at_most_five(self):\n        self.assertEqual(len(top_words(\"a b c d e f g\")), 5)\n\n    def test_min_length_skips_short_words(self):\n        self.assertEqual(\n            top_words(\"a bb ccc dddd bb ccc dddd\", min_length=3),\n            [(\"ccc\", 2), (\"dddd\", 2)],\n        )\n\n    def test_min_length_default_keeps_all(self):\n        self.assertEqual(top_words(\"a bb a\"), [(\"a\", 2), (\"bb\", 1)])"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "The file ${DEMO}/textkit/tests/test_wordfreq.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Edit",
+      "input": {
+        "file_path": "${DEMO}/textkit/tests/test_wordfreq.py",
+        "old_string": "        self.assertEqual(out.getvalue().split(), [\"2\", \"sun\", \"1\", \"rain\"])\n\n\nif __name__ == \"__main__\":",
+        "new_string": "        self.assertEqual(out.getvalue().split(), [\"2\", \"sun\", \"1\", \"rain\"])\n\n    def test_min_length_flag(self):\n        with tempfile.TemporaryDirectory() as tmp:\n            path = os.path.join(tmp, \"t.txt\")\n            with open(path, \"w\", encoding=\"utf-8\") as handle:\n                handle.write(\"a bb ccc a bb ccc\")\n            out = io.StringIO()\n            with redirect_stdout(out):\n                self.assertEqual(main([path, \"--min-length\", \"2\"]), 0)\n        self.assertEqual(out.getvalue().split(), [\"2\", \"bb\", \"2\", \"ccc\"])\n\n\nif __name__ == \"__main__\":"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "The file ${DEMO}/textkit/tests/test_wordfreq.py has been updated successfully. (file state is current in your context — no need to Read it back)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "uv run --with pytest pytest -q 2>&1 | tail -20",
+        "description": "Run full test suite"
+      },
+      "failed": false,
+      "serves": 3,
+      "tool_returned": "................ [100%] 16 passed in 0.02s",
+      "closing_note": "16/16 pass. 3 new tests: `top_words` min_length filter, default keeps all, CLI `--min-length` flag end-to-end.",
+      "end": false
+    },
+    {
+      "tool": "UserPrompt",
+      "input": {
+        "text": "commit this"
+      },
+      "failed": false,
+      "reply": "Committed `b6e71d9`. Untracked `.claude/` + `__pycache__` left alone."
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git status",
+        "description": "Show working tree status"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "On branch master Changes not staged for commit: (use \"git add <file>...\" to update what will be committed) (use \"git restore <file>...\" to discard changes in working directory) modified: tests/test_wordfreq.py modified: textkit/wordfreq.py Untracked files: (use \"git add <file>...\" to include in what will be committed) .claude/ tests/__pycache__/ textkit/__pycache__/__init__.cpython-312.pyc textkit",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git diff tests/test_wordfreq.py textkit/wordfreq.py",
+        "description": "Show diff of tracked changes"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "diff --git a/tests/test_wordfreq.py b/tests/test_wordfreq.py index 3c86ac5..54bf3dc 100644 --- a/tests/test_wordfreq.py +++ b/tests/test_wordfreq.py @@ -25,6 +25,15 @@ class TestTopWords(unittest.TestCase): def test_at_most_five(self): self.assertEqual(len(top_words(\"a b c d e f g\")), 5) + def test_min_length_skips_short_words(self): + self.assertEqual( + top_words(\"a bb ccc dddd bb ccc dddd\", min",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git log --oneline -5",
+        "description": "Recent commit style"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "13e8dfa Initial textkit",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git add tests/test_wordfreq.py textkit/wordfreq.py && git commit -m \"$(cat <<'EOF'\nAdd --min-length option to wordfreq\n\nSkip words shorter than N letters when computing top words.\nThreaded through top_words(min_length=1) so default behavior is unchanged.\n\nCo-Authored-By: Claude Opus 4.7 (1M context) <[REDACTED:email]>\nEOF\n)\"",
+        "description": "Stage and commit changes"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "[master b6e71d9] Add --min-length option to wordfreq 2 files changed, 29 insertions(+), 2 deletions(-)",
+      "end": false
+    },
+    {
+      "tool": "Bash",
+      "input": {
+        "command": "git status",
+        "description": "Verify commit"
+      },
+      "failed": false,
+      "serves": 4,
+      "tool_returned": "On branch master Untracked files: (use \"git add <file>...\" to include in what will be committed) .claude/ tests/__pycache__/ textkit/__pycache__/__init__.cpython-312.pyc textkit/__pycache__/slugify.cpython-312.pyc textkit/__pycache__/titlecase.cpython-312.pyc textkit/__pycache__/wordfreq.cpython-312.pyc nothing added to commit but untracked files present (use \"git add\" to track)",
+      "closing_note": "Committed `b6e71d9`. Untracked `.claude/` + `__pycache__` left alone.",
+      "end": false
+    }
+  ],
+  "judged": {
+    "model": "gemma4:e4b",
+    "question": "6b453520d07d",
+    "prior_steps": 3,
+    "next_steps": 3,
+    "value_chars": 80,
+    "prompt_chars": -1,
+    "reply_before": 0,
+    "send_description": false,
+    "endings": 0,
+    "answered": 3,
+    "replayed": "2026-09-24"
+  }
+}
