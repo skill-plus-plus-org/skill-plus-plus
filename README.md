@@ -7,18 +7,24 @@
 
 # Spot the work you keep repeating. Turn it into skills.
 
-**A local model cuts your Claude Code sessions into tasks and spots the procedures you repeat. On the third run, your own agent writes one down as a skill.**
+**Skills are usually written by hand. Skill++ writes them from the work you already did.**
+
+A local model cuts your Claude Code sessions into tasks and spots the procedures
+you repeat; on the third run, your own agent writes one down as a skill. Nothing
+about how you work changes.
 
 https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT license"></a>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square" alt="Python 3.10+">
-<img src="https://img.shields.io/badge/detection-runs_locally-orange?style=flat-square" alt="Detection runs locally">
+<img src="https://img.shields.io/badge/token_cost-0-brightgreen?style=flat-square" alt="Token cost: 0">
 <img src="https://img.shields.io/badge/for-Claude_Code-8A2BE2?style=flat-square" alt="For Claude Code">
 
-📏 **51 recorded sessions: 14 of 15 task switches found, 0 false cuts in 143 places.** **[→ Under the hood](#-under-the-hood)**
+🆓 **Runs on local models: no tokens, no API calls, no cost.** Your agent is called only when you ask it to write a skill.
 
-⚡ **Three commands, no API key, no account.** **[→ Quick Start](#-quick-start)**
+📏 **Tested on 22 public recordings anyone can replay: every change of task found, not one task split by mistake.** **[→ Under the hood](#-under-the-hood)**
+
+⚡ **Three commands, no account.** **[→ Quick Start](#-quick-start)**
 
 </div>
 
@@ -26,7 +32,7 @@ https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 
 <div align="center">
 
-**[See it](#-see-it) · [Why](#-why-this-exists) · [How it works](#-how-it-works) · [Under the hood](#-under-the-hood) · [Quick Start](#-quick-start) · [Your first skill](#-your-first-skill) · [The numbers](#-the-numbers) · [When to use](#-when-to-use--when-to-skip) · [Docs](docs/usage.md)**
+**[See it](#-see-it) · [Why](#-why-this-exists) · [How it works](#-how-it-works) · [What it costs](#-what-it-costs-nothing-until-you-ask) · [Under the hood](#-under-the-hood) · [Quick Start](#-quick-start) · [Your first skill](#-your-first-skill) · [The numbers](#-the-numbers) · [When to use](#-when-to-use--when-to-skip) · [Docs](docs/usage.md)**
 
 </div>
 
@@ -55,7 +61,7 @@ where Claude Code picks it up.
 
 <img src="docs/images/skill-installed.png" alt="The drafted skill, installed in the project: its description and a frontmatter that requires four GitHub MCP tools">
 
-This is the demo from the video above, run on a demo repo.
+This is the session from the video above: real Claude Code, with the GitHub MCP.
 
 ---
 
@@ -68,16 +74,16 @@ time, but almost nobody writes them: by the time a procedure is worth a skill,
 you have done it three times and moved on.
 
 Skill++ finds those procedures for you. It watches your Claude Code sessions,
-notices when you repeat the same kind of work within a project, and shows it to
-you as a candidate. Promote one, and your own agent drafts the skill from what
-you actually did. Nothing is installed without you.
+with no tags, rules or notes from you, notices when you repeat the same kind of
+work within a project, and shows it to you as a candidate. Promote one, and
+your own agent drafts the skill from what you actually did. Nothing is installed
+without you.
 
-**Where it is going.** The goal is skills shared across a team, so that a
-procedure one person worked out is done the same way by everyone: faster, and
-without the mistakes each person would otherwise make on their own. This first
-version works end to end for one person, and its skills already reach a team
-the simple way: install one into the repo's `.claude/skills/`, commit it, and
-everyone working in the repo has it.
+**Skills reach your team today:** install one into the repo's `.claude/skills/`,
+commit it, and everyone working in the repo has it. **Where it is going:**
+skills shared across a team, so that a procedure one person worked out is done
+the same way by everyone: faster, and without the mistakes each person would
+otherwise make on their own.
 
 ---
 
@@ -107,24 +113,36 @@ everyone working in the repo has it.
 
 ---
 
+## 💸 What it costs: nothing, until you ask
+
+Watching, cutting and matching run on two open models on your machine
+(`gemma4:e4b` and `nomic-embed-text`, through Ollama): no tokens, no API calls,
+and nothing leaves your laptop. The only call to a frontier model is your own
+agent writing the skill: once per draft or revision, and only when you press
+**Draft Skill** or **Revise**. Only then does that one run's conversation go to
+it.
+
+---
+
 ## 🧠 Under the hood
 
-Three problems stand between a chat log and a skill. Skill++ solves the first
-two on your machine, and every answer below is measured on recorded sessions:
-22 public recordings anyone can replay, 21 sessions of private work, and 8
-recordings held out while the method was tuned.
+Three problems stand between a chat log and a skill. The first two are solved
+on your machine by two small open models, with no tokens and no API calls; the
+third is one call to your own agent. Every number below is measured on the 22
+public recordings in [tests/fixtures/sessions/](tests/fixtures/sessions/),
+which anyone can replay.
 
 ### 1. Where does one task end?
 
 One chat is rarely one task. At every message you typed between two tool calls,
-Skill++ asks a local model (`gemma4:e4b`, through Ollama) one question: 158
-questions for 979 tool calls across the recordings. The question sets the
+Skill++ asks a local model (`gemma4:e4b`, through Ollama) one question: 86
+questions for 271 tool calls across the recordings. The question sets the
 earlier task and your new message side by side in named sections, says what
 counts as a new task, and asks for one word. It runs in the background after
-the session ends, in about a second and a half per message.
+the session ends, in under a second and a half per message.
 
-**14 of 15 task switches found, 0 false cuts in 143 places** where a review, a
-correction or a follow-up must stay in its task.
+**Every one of the 9 task switches found, 0 false cuts in 77 places** where a
+review, a correction or a follow-up must stay in its task.
 
 ### 2. Is this the same procedure again?
 
@@ -140,11 +158,14 @@ merged 12 of 12 times.**
 
 ### 3. What goes into the skill?
 
-Your own agent (`claude -p` by default) drafts it from the candidate's first run
-and your note: the method, in its own words, not the subject of that run. What
-it cannot tell from the run becomes an open question, at most three, each with
-three suggested answers, and your answers are folded back in. The CLIs and MCP
-tools the run needed become the skill's requirements.
+Your own agent (`claude -p` by default, or any agent CLI) drafts it from the
+candidate's first run and your note: the method, in its own words, not the
+subject of that run. What it cannot tell from the run becomes an open question,
+at most three, each with three suggested answers, and your answers are folded
+back in. The result is a standard `SKILL.md`, and it keeps working without
+Skill++. The CLIs and MCP tools the run needed become the skill's requirements,
+and a skill whose requirement is missing says so and stops instead of
+improvising a workaround.
 
 **The method was right in all 4 drafts checked**, by a Claude judge that has to
 quote the line of the draft behind every yes.
@@ -218,25 +239,16 @@ new Code session in the desktop app) and work as usual.
    for you** (③ above). A later revision reaches it with **Update**.
 
 **Faster than three repeats:** `SKILL_PLUS_PLUS_RECURRENCE=1` makes a candidate ready the
-first time it is seen. **Describing a procedure instead of doing it** (work in
-progress): run `/skill-plus-plus-new` in a session and describe it.
-
----
-
-## 💸 What it costs
-
-Watching and detecting run entirely on your machine, with two local models
-through Ollama: no API calls, no cost, and nothing leaves your laptop. The
-frontier model is called only at the very end, once per skill: after you have
-promoted a candidate and pressed **Draft Skill**. Only then does that one run's
-conversation go to it.
+first time it is seen.
 
 ---
 
 ## 📊 The numbers
 
-Measured on 22 public recordings of code and knowledge work, with the defaults
-(`gemma4:e4b`, `nomic-embed-text`). The weak rows stay in the tables.
+Measured on the 22 public recordings of code and knowledge work in
+[tests/fixtures/sessions/](tests/fixtures/sessions/), which anyone can replay
+with the commands below, with the defaults (`gemma4:e4b`, `nomic-embed-text`).
+The weak rows stay in the tables.
 
 **Where one task ends**: 22 of 22 sessions right; 9 of 9 task switches caught;
 **0 false cuts over 77 prompts**, reviews, corrections and side questions
@@ -251,33 +263,25 @@ included.
 | three tasks in one chat | 1/1 | 1/1 |
 | a second task of the same kind | 1/1 | – |
 
-Beyond the public set, on 21 sessions of private work and 8 recordings held out
-while the question was tuned: 5 of 6 task switches found, 0 false cuts in 66
-places.
-
 **Do repeats become one candidate**: 0 wrong merges.
 
 | How alike the runs are | Code | Knowledge work |
 |---|---|---|
 | the same prompts | 3/3 pairs | 3/3 pairs |
 | the same goal, driven differently | 3/3 | 3/3 |
-| the same procedure, another subject | **4/53** | 12/12 |
+| the same procedure, another subject | 4/53 | 12/12 |
 
-> The bold row is real. Code on a new subject is what matching keeps apart: it
-> prefers a duplicate you can see to a wrong merge that mixes two procedures into
-> one skill.
+> By design: code on a new subject stays a separate candidate. A duplicate you
+> can see is cheap; a wrong merge would mix two procedures into one skill.
 
-**Drafts**: on four recorded sessions, every draft's method was right. A
-Claude judge checked each one, and every yes it gave quotes the line of the
-draft that backs it. The latest
-change to the draft prompt took the drafts whose description says when to use
-the skill from 2/4 to 4/4, and the drafts that leaked a path from the run from
-1 to 0.
+**Drafts**: on four recorded sessions, every draft's method was right, checked
+by a Claude judge that quotes the line of the draft behind every yes. All four
+say when to use the skill; none leaks a path from the run.
 
-Reproduce them from [tests/fixtures/sessions/](tests/fixtures/sessions/): `score.py`,
-`recurrence.py`, `tests/benchmarks/judge_replay.py` and
-`tests/benchmarks/draft_check.py`. The earlier measurements are in
-[docs/research/](docs/research/).
+Reproduce them with `score.py`, `recurrence.py`,
+`tests/benchmarks/judge_replay.py` and `tests/benchmarks/draft_check.py`. The
+[research log](docs/research/) has every measurement behind them, and more,
+including sessions of our own work that we cannot publish.
 
 ---
 
