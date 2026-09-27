@@ -167,8 +167,9 @@ For each release:
    workflow checks that the tag matches, builds and uploads to PyPI.
 
 PyPI shows the README from the release build, where
-`scripts/pypi_readme.py` has made its links and images absolute; they load
-once the repo is public.
+`scripts/pypi_readme.py` has made its links and images absolute, pointing at
+`main` on GitHub. The README's video is a GitHub upload, which PyPI cannot
+embed, so there it shows as a link.
 
 Security problems: please report them privately; see [SECURITY.md](SECURITY.md).
 By taking part you agree to the [code of conduct](CODE_OF_CONDUCT.md).
