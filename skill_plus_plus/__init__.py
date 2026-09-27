@@ -6,4 +6,4 @@ prose, deciding what a skill is really for, asking the developer the questions
 that matter — belongs to the agent at review time.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
