@@ -40,6 +40,9 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    # A release waits in `pypi` for a maintainer's approval, and PyPI accepts
+    # uploads only from that environment; a dry run needs no approval.
+    environment: ${{ github.event_name == 'release' && 'pypi' || 'testpypi' }}
     permissions:
       id-token: write   # what Trusted Publishing proves the upload with
     steps:
