@@ -1,11 +1,16 @@
 name: pages
 
 # The docs site: docs/ with the README as its home page, built by MkDocs
-# (mkdocs.yml, scripts/pages_hooks.py) and served by GitHub Pages at
-# https://skill-plus-plus-org.github.io/skill-plus-plus/. Every PR builds it,
-# so a broken link fails there; only main deploys it.
+# (mkdocs.yml, scripts/pages_hooks.py) and served at
+# https://skill-plus-plus-org.github.io/. Every PR builds it, so a broken link
+# fails there; only main deploys it.
 #
-# Once, in the repo's Settings → Pages: Source "GitHub Actions".
+# The org's root address is served only from the repo named after it, so the
+# built site is pushed to skill-plus-plus-org/skill-plus-plus-org.github.io,
+# whose Pages serves its main branch. Set up once:
+#   - that repo, Settings → Deploy keys: the public key, with write access
+#   - this repo, Settings → Secrets → Actions: PAGES_DEPLOY_KEY, the private key
+#   - that repo, Settings → Pages: Source "Deploy from a branch", main, / (root)
 on:
   push:
     branches: [main]
@@ -15,10 +20,13 @@ on:
 permissions:
   contents: read
 
-# One deploy at a time; a newer push replaces a queued one, never a running one.
+# One deploy at a time, in the order they were pushed.
 concurrency:
   group: pages
   cancel-in-progress: false
+
+env:
+  SITE_REPO: skill-plus-plus-org/skill-plus-plus-org.github.io
 
 jobs:
   build:
@@ -32,21 +40,40 @@ jobs:
       - run: python -m pip install --quiet "mkdocs>=1.6,<2" "mkdocs-material>=9.5,<10"
       - name: Build, failing on any broken link
         run: mkdocs build --strict
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: github.event_name != 'pull_request'
         with:
+          name: site
           path: site/
 
   deploy:
     if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      pages: write      # to publish the site
-      id-token: write   # what Pages checks the deploy came from this workflow with
     environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      name: docs
+      url: https://skill-plus-plus-org.github.io/
     steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: site/
+      # The site repo holds only the latest build: one commit, replaced each
+      # time, naming the commit here it was built from.
+      - name: Push the site to ${{ env.SITE_REPO }}
+        env:
+          DEPLOY_KEY: ${{ secrets.PAGES_DEPLOY_KEY }}
+        run: |
+          test -n "$DEPLOY_KEY" || { echo "PAGES_DEPLOY_KEY is not set (see the top of this file)"; exit 1; }
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          cd site
+          touch .nojekyll   # serve the files as built; Jekyll would skip some
+          git init -q -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Site built from ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}"
+          git push --force "git@github.com:${SITE_REPO}.git" main
