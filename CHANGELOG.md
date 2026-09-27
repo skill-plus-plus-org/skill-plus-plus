@@ -6,6 +6,16 @@ All notable changes to Skill++. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-27
+
+### Changed
+
+- The README says in the Quick Start that Windows isn't supported yet, and
+  credits the people and the company behind Skill++. PyPI shows the README
+  as of each release, so this is where its page catches up.
+- The code of conduct names the address reports go to.
+- The docs live at <https://skill-plus-plus-org.github.io/>.
+
 ## [0.1.0] - 2026-09-27
 
 The first public release.
