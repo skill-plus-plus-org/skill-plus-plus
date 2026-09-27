@@ -19,3 +19,4 @@ dist/
 
 # Generated while scoring
 tests/fixtures/episodes/
+site/

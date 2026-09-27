@@ -1,0 +1,55 @@
+# The GitHub Pages site: docs/ with the README as its home page
+# (scripts/pages_hooks.py). Deployed by .github/workflows/pages.yml.
+site_name: Skill++
+site_description: Spot the work you keep repeating in Claude Code, and turn it into reviewed skills.
+site_url: https://skill-plus-plus-org.github.io/skill-plus-plus/
+repo_url: https://github.com/skill-plus-plus-org/skill-plus-plus
+repo_name: skill-plus-plus-org/skill-plus-plus
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+# The generators beside the images are the repo's, not the site's.
+exclude_docs: |
+  images/*.py
+
+hooks:
+  - scripts/pages_hooks.py
+
+nav:
+  - Home: index.md
+  - Usage: usage.md
+  - Privacy: privacy.md
+  - Architecture: architecture.md
+  - Research log:
+      - research/README.md
+      - Benchmarks: research/benchmarks.md
+      - The episode filter: research/episode-filter.md
+  - Design (historical): design.md
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle: {icon: material/weather-night, name: Dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle: {icon: material/weather-sunny, name: Light mode}
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+      # GitHub's anchors, so the README's links to its own headings still land.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
