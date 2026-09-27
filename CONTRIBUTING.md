@@ -8,7 +8,7 @@ just different.
 ## Setting up
 
 ```bash
-git clone https://github.com/himanshu096/skill-plus-plus
+git clone https://github.com/skill-plus-plus-org/skill-plus-plus
 cd skill-plus-plus
 pip install -e .          # puts `skill-plus-plus` on your PATH; or run python3 bin/skill-plus-plus
 ```
@@ -41,6 +41,18 @@ It fails on home paths, email addresses, UUIDs and credential-shaped strings in
 tracked files. If you keep a list of terms that must never appear in public
 (an employer, a client, a colleague), pass it with `--denylist` or
 `SKILL_PLUS_PLUS_DENYLIST`, from outside the repo.
+
+## The docs site
+
+`docs/` is also published at
+<https://skill-plus-plus-org.github.io/skill-plus-plus/>, with the README as
+its home page (`mkdocs.yml`, `scripts/pages_hooks.py`). Every pull request
+builds it with `--strict`, so a broken link fails CI; `main` deploys it. To
+see it before pushing:
+
+```bash
+pip install "mkdocs>=1.6,<2" "mkdocs-material>=9.5,<10" && mkdocs serve
+```
 
 ## How the code is written
 
@@ -137,7 +149,7 @@ Publishing: GitHub vouches for the upload, so no token is stored anywhere.
 
 Once, for whoever owns the project on PyPI: on pypi.org and on test.pypi.org,
 under Account settings → Publishing, add a pending publisher with project
-`skill-plus-plus`, owner `himanshu096`, repository `skill-plus-plus`, workflow
+`skill-plus-plus`, owner `skill-plus-plus-org`, repository `skill-plus-plus`, workflow
 `publish.yml` and no environment.
 
 For each release:

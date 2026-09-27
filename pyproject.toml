@@ -33,10 +33,10 @@ classifiers = [
 skill-plus-plus = "skill_plus_plus.cli:main"
 
 [project.urls]
-Repository = "https://github.com/himanshu096/skill-plus-plus"
-Issues = "https://github.com/himanshu096/skill-plus-plus/issues"
-Changelog = "https://github.com/himanshu096/skill-plus-plus/blob/main/CHANGELOG.md"
-Documentation = "https://github.com/himanshu096/skill-plus-plus/blob/main/docs/usage.md"
+Repository = "https://github.com/skill-plus-plus-org/skill-plus-plus"
+Issues = "https://github.com/skill-plus-plus-org/skill-plus-plus/issues"
+Changelog = "https://github.com/skill-plus-plus-org/skill-plus-plus/blob/main/CHANGELOG.md"
+Documentation = "https://skill-plus-plus-org.github.io/skill-plus-plus/"
 
 [tool.setuptools]
 # The two folders hold only Markdown, but Python can import them, so setuptools

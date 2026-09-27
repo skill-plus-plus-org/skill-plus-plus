@@ -213,7 +213,7 @@ new Code session in the desktop app) and work as usual.
 - `skill-plus-plus install --project ~/code/my-repo --remove --apply` takes the hooks
   and slash commands out again.
 - The latest `main`, before it is released:
-  `pipx install git+https://github.com/himanshu096/skill-plus-plus`.
+  `pipx install git+https://github.com/skill-plus-plus-org/skill-plus-plus`.
 - From a clone: `pip install -e .`, or run `python3 bin/skill-plus-plus` without
   installing anything.
 

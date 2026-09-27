@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path
 
-REPO = "himanshu096/skill-plus-plus"
+REPO = "skill-plus-plus-org/skill-plus-plus"
 RAW = f"https://raw.githubusercontent.com/{REPO}/main/"
 BLOB = f"https://github.com/{REPO}/blob/main/"
 TREE = f"https://github.com/{REPO}/tree/main/"

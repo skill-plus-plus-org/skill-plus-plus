@@ -1,0 +1,52 @@
+name: pages
+
+# The docs site: docs/ with the README as its home page, built by MkDocs
+# (mkdocs.yml, scripts/pages_hooks.py) and served by GitHub Pages at
+# https://skill-plus-plus-org.github.io/skill-plus-plus/. Every PR builds it,
+# so a broken link fails there; only main deploys it.
+#
+# Once, in the repo's Settings → Pages: Source "GitHub Actions".
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push replaces a queued one, never a running one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # MkDocs 2.0 drops the plugin system Material is built on.
+      - run: python -m pip install --quiet "mkdocs>=1.6,<2" "mkdocs-material>=9.5,<10"
+      - name: Build, failing on any broken link
+        run: mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: site/
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write      # to publish the site
+      id-token: write   # what Pages checks the deploy came from this workflow with
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
