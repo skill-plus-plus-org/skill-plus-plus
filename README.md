@@ -352,7 +352,7 @@ model needed, about ten seconds) and measure a change.
   <img src="docs/images/headquarters.jpg" width="360" alt="A small glass meeting pod with two benches and a table: the Skill++ headquarters">
 </p>
 <p align="center"><sub>Skill++ headquarters: one meeting pod, where it all started.</sub></p>
-<p align="center">Made by <a href="https://github.com/himanshu096">Himanshu Yadav</a> and <a href="https://github.com/lucazagaia">Luca Zagaia</a> at acme, which supported releasing it as open source.</p>
+<p align="center">Made by <a href="https://github.com/himanshu096">Himanshu Yadav</a> and <a href="https://github.com/lucazagaia">Luca Zagaia</a> at <a href="https://www.conceptreply.de/">Concept Reply</a>, which supported releasing it as open source.</p>
 
 ---
 
