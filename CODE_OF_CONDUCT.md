@@ -9,5 +9,5 @@ It applies in the repository (issues, pull requests, discussions) and anywhere
 you represent the project.
 
 To report behaviour that breaks it, contact the maintainers at
-**[contact address]**. Reports are read only by the maintainers and handled
+**[himanshuyadav23196@gmail.com](mailto:himanshuyadav23196@gmail.com)**. Reports are read only by the maintainers and handled
 confidentially, and nobody is penalised for reporting in good faith.
