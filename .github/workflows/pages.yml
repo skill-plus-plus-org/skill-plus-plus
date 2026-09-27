@@ -32,15 +32,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       # MkDocs 2.0 drops the plugin system Material is built on.
       - run: python -m pip install --quiet "mkdocs>=1.6,<2" "mkdocs-material>=9.5,<10"
       - name: Build, failing on any broken link
         run: mkdocs build --strict
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
         with:
           name: site
@@ -54,7 +54,7 @@ jobs:
       name: docs
       url: https://skill-plus-plus-org.github.io/
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: site
           path: site/
