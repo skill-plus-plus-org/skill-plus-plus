@@ -2,7 +2,7 @@
 # (scripts/pages_hooks.py). Deployed by .github/workflows/pages.yml.
 site_name: Skill++
 site_description: Spot the work you keep repeating in Claude Code, and turn it into reviewed skills.
-site_url: https://skill-plus-plus-org.github.io/skill-plus-plus/
+site_url: https://skill-plus-plus-org.github.io/
 repo_url: https://github.com/skill-plus-plus-org/skill-plus-plus
 repo_name: skill-plus-plus-org/skill-plus-plus
 edit_uri: edit/main/docs/

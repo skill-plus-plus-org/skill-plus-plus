@@ -26,7 +26,7 @@ The first public release.
 - The repository moved to
   [skill-plus-plus-org/skill-plus-plus](https://github.com/skill-plus-plus-org/skill-plus-plus),
   and the docs are published as a site at
-  <https://skill-plus-plus-org.github.io/skill-plus-plus/>.
+  <https://skill-plus-plus-org.github.io/>.
 - Renamed from `skillpp` to `skill-plus-plus`: the command, the package
   (`skill_plus_plus` in Python), the data folder `~/.claude/skill-plus-plus/`,
   the slash commands and the `SKILL_PLUS_PLUS_*` settings. An existing
