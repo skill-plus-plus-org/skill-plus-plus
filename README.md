@@ -7,11 +7,10 @@
 
 # Spot the work you keep repeating. Turn it into skills.
 
-**Skills are usually written by hand. Skill++ writes them from the work you already did.**
-
-A local model cuts your Claude Code sessions into tasks and spots the procedures
-you repeat; on the third run, your own agent writes one down as a skill. Nothing
-about how you work changes.
+You do the same jobs with Claude again and again: the sprint deck, the release
+notes, the weekly post. Skill++ notices. After the third time, it writes down
+how *you* do it, so Claude does it your way from then on, and so does everyone
+on your team.
 
 https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 
@@ -20,9 +19,9 @@ https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 <img src="https://img.shields.io/badge/token_cost-0-brightgreen?style=flat-square" alt="Token cost: 0">
 <img src="https://img.shields.io/badge/for-Claude_Code-8A2BE2?style=flat-square" alt="For Claude Code">
 
-🆓 **Runs on local models: no tokens, no API calls, no cost.** Your agent is called only when you ask it to write a skill.
+🆓 **Free and private.** It runs on your laptop; nothing leaves it until you ask for a skill.
 
-📏 **Tested on 30 public recordings anyone can replay: every change of task found, not one task split by mistake, not one run counted toward the wrong skill.** **[→ Under the hood](#-under-the-hood)**
+📏 **Tested on 30 real sessions anyone can replay: it never mixed up two different jobs.** **[→ Under the hood](#-under-the-hood)**
 
 ⚡ **Three commands, no account.** **[→ Quick Start](#-quick-start)**
 
@@ -91,6 +90,10 @@ otherwise make on their own.
 ---
 
 ## 🔧 How it works
+
+A local model cuts your Claude Code sessions into tasks and spots the procedures
+you repeat; on the third run, your own agent writes one down as a skill. Nothing
+about how you work changes.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/how-it-works-dark.svg">
