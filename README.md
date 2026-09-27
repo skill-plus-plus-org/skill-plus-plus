@@ -191,7 +191,8 @@ quote the line of the draft behind every yes.
 
 ## ⚡ Quick Start
 
-You need macOS or Linux, Python 3.10+, [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+You need macOS or Linux (Windows isn't supported yet; WSL may work but is
+untested), Python 3.10+, [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 logged in, and [Ollama](https://ollama.com) running (`brew install ollama` on a Mac).
 
 ```bash
