@@ -36,6 +36,8 @@ EMAIL_ALLOWED = re.compile(
     r"@(?:(?:[\w-]+\.)*example\.(?:com|org|net)|acme\.co|corp\.com|b\.com|"
     r"github\.com|gitlab\.internal|bitbucket\.org|anthropic\.com|"
     r"users\.noreply\.github\.com|3\.14)$", re.IGNORECASE)
+# Published on purpose: the code of conduct's contact.
+EMAIL_ALLOWED_ADDRESSES = {"himanshuyadav23196@gmail.com"}
 UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
                   re.IGNORECASE)
 # A file uploaded to GitHub, such as the README's video, is linked by a UUID
@@ -74,7 +76,8 @@ def scan_text(where: str, text: str, terms: list[re.Pattern],
         if generic:
             found += [("home path", m.group()) for m in HOME_PATH.finditer(line)]
             found += [("email", m.group()) for m in EMAIL.finditer(line)
-                      if not EMAIL_ALLOWED.search(m.group())]
+                      if not EMAIL_ALLOWED.search(m.group())
+                      and m.group().lower() not in EMAIL_ALLOWED_ADDRESSES]
             found += [("uuid", m.group()) for m in UUID.finditer(line)
                       if not line[:m.start()].endswith(UUID_ALLOWED_AFTER)]
             found += [("secret", m.group()) for m in SECRET.finditer(line)
