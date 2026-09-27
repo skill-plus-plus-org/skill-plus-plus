@@ -45,7 +45,7 @@ tracked files. If you keep a list of terms that must never appear in public
 ## The docs site
 
 `docs/` is also published at
-<https://skill-plus-plus-org.github.io/skill-plus-plus/>, with the README as
+<https://skill-plus-plus-org.github.io/>, with the README as
 its home page (`mkdocs.yml`, `scripts/pages_hooks.py`). Every pull request
 builds it with `--strict`, so a broken link fails CI; `main` deploys it. To
 see it before pushing:
