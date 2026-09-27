@@ -6,6 +6,17 @@ All notable changes to Skill++. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The review page calls **Dismiss** what it does, **Ignore**: an ignored
+  candidate is still recognised, so it is never proposed again. Hovering says
+  so, the section is **Ignored**, and **Reinstate** is **Bring back**. The
+  command is still `dismiss`, and `ignore` now works as well.
+- A promoted or drafted candidate can be ignored from the page, after a
+  confirmation; before, only the command line could. Its draft is kept, and
+  returns if the candidate is brought back and promoted again. An installed
+  skill is uninstalled first.
+
 ## [0.1.1] - 2026-09-27
 
 ### Changed

@@ -1,9 +1,10 @@
 """A local page for deciding what becomes a skill.
 
 One list: the candidates recognized often enough to be worth a decision, and
-what was decided about them. Accept promotes, Decline dismisses, and an
-accepted candidate gets a Draft button that has the developer's agent
-write a draft. Everything else the ledger holds stays in the CLI.
+what was decided about them. Promote accepts one, Ignore parks it for good
+(still recognised, never proposed again), and a promoted candidate gets a
+Draft button that has the developer's agent write a draft. Everything else
+the ledger holds stays in the CLI.
 
 Every action runs an existing command — `skill-plus-plus promote`, `skill-plus-plus dismiss`,
 `skill-plus-plus draft --apply` — as a subprocess, so the page cannot drift from what
@@ -837,18 +838,37 @@ def accept(config: Config, entry_id: str) -> dict:
     return _decide(config, entry_id, "promote")
 
 
+# What Ignore may take back. A promoted candidate can be ignored too, draft
+# and all: the draft is kept, and returns if the candidate is brought back and
+# promoted again. Two cases wait: a draft still being written would land in an
+# ignored entry, and an installed skill would stay in its skills folder while
+# the page calls it ignored, so it is uninstalled first.
+IGNORABLE = ("undecided", "accepted", "drafted", "failed", "declined")
+
+
 def decline(config: Config, entry_id: str) -> dict:
-    """Dismiss: `skill-plus-plus dismiss <id>`."""
-    return _decide(config, entry_id, "dismiss")
+    """Ignore: `skill-plus-plus dismiss <id>`. Still recognised, never proposed again."""
+    entry = Ledger(config).get(entry_id)
+    if not entry:
+        return {"ok": False, "error": "no such entry"}
+    state = row_state(config, entry)["state"]
+    if state == "installed":
+        return {"ok": False, "error": "Uninstall the skill first, then ignore it."}
+    if state not in IGNORABLE:
+        return {"ok": False, "error": f"{entry.id} cannot be ignored while it is {state}"}
+    proc = _run(config, "dismiss", entry.id)
+    if proc.returncode != 0:
+        return {"ok": False, "error": _tail(proc.stderr or proc.stdout)}
+    return {"ok": True}
 
 
 def reinstate(config: Config, entry_id: str) -> dict:
-    """Reinstate a declined candidate: `skill-plus-plus reopen <id>`."""
+    """Bring back an ignored candidate: `skill-plus-plus reopen <id>`."""
     entry = Ledger(config).get(entry_id)
     if not entry:
         return {"ok": False, "error": "no such entry"}
     if entry.status != STATUS_DISMISSED:
-        return {"ok": False, "error": f"{entry.id} is not declined"}
+        return {"ok": False, "error": f"{entry.id} is not ignored"}
     proc = _run(config, "reopen", entry.id)
     if proc.returncode != 0:
         return {"ok": False, "error": _tail(proc.stderr or proc.stdout)}
@@ -1319,6 +1339,9 @@ PAGE = r"""<!doctype html>
  a.download{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;text-decoration:none;
    color:var(--dim);border:1px solid var(--line);white-space:nowrap}
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
+ /* A draft's row holds the most buttons (install, just for me, download,
+    ignore), so it breaks onto two lines sooner than a candidate's. */
+ @media(max-width:880px){.draft .row{flex-wrap:wrap}.draft .title{flex-basis:calc(100% - 40px)}}
 </style></head><body>
 <header><span style="display:flex;align-items:center;gap:18px"><b>Skill++</b>
 <nav id="nav"></nav></span><select id="project" aria-label="Project" hidden></select></header>
@@ -1346,18 +1369,40 @@ function actions(r){
   switch(r.state){
     case "collecting": return "";
     case "undecided": return `<button class="accept" data-act="accept" data-id="${id}"${off}>Promote</button>
-      <button class="decline" data-act="decline" data-id="${id}"${off}>Dismiss</button>`;
-    case "accepted": return draftButton(r);
+      <button class="decline" data-act="decline" data-id="${id}"${off} title="${IGNORE_HINT}">Ignore</button>`;
+    case "accepted": return draftButton(r) + ignoreButton(r);
     case "creating": return `<span class="state"><span class="spin"></span>Creating skill…</span>`;
     case "drafted": return `<a class="state ok" data-goto="${id}" title="Review in Drafts">Review</a>`;
     case "revising": return `<span class="state"><span class="spin"></span>Revising…</span>`;
     case "installed": return `<span class="state ok" title="${esc(r.path)}">Skill installed</span>`;
     case "failed": case "declined":
       return `<span class="msg" title="${esc(r.message)}">${r.state==="declined" ? "Agent declined" : "Failed"}: ${esc(r.message)}</span>
-        ${draftButton(r)}`;
-    case "dismissed": return `<button class="reinstate" data-act="reinstate" data-id="${id}"${off}>Reinstate</button>`;
+        ${draftButton(r)}${ignoreButton(r)}`;
+    case "dismissed": return `<button class="reinstate" data-act="reinstate" data-id="${id}"${off} title="Back to Pending, to decide again">Bring back</button>`;
     default: return "";
   }
+}
+
+// Ignore is the one decision that is easy to make by mistake and quiet
+// afterwards: an ignored procedure is still recognised, so it never shows up
+// again to remind anyone. A pending card says so on hover; a promoted one, which
+// someone already chose, asks first. An installed skill is uninstalled first,
+// or it would stay in its skills folder while the page calls it ignored.
+const IGNORE_HINT = "Won't be proposed again. You can bring it back from Ignored.";
+function ignoreButton(r, drafted){
+  if(noting.has(r.id)) return "";
+  const off = busy.has(r.id) ? " disabled" : "";
+  return ` <button class="decline" data-ignore="${esc(r.id)}" data-title="${esc(r.title)}"${drafted ? ` data-drafted="1"` : ""}${off} title="${IGNORE_HINT}">Ignore</button>`;
+}
+function ignoreWarning(title, drafted){
+  return `Ignore "${title || "this candidate"}"?\n\nSkill++ keeps recognising this procedure, but won't propose it again.`
+    + (drafted ? " Its draft is kept, and comes back if you bring the candidate back and promote it again." : "")
+    + "\n\nYou can bring it back any time from Ignored.";
+}
+function bindIgnore(list){
+  list.querySelectorAll("[data-ignore]").forEach(b => b.onclick = () => {
+    if(confirm(ignoreWarning(b.dataset.title, b.dataset.drafted))) act("decline", b.dataset.ignore);
+  });
 }
 
 // Draft Skill asks before it starts: an optional note tells the agent what to
@@ -1601,6 +1646,11 @@ function renderDrafts(list){
       + `<button data-install="${esc(d.id)}" data-target="personal" title="Into ~/.claude/skills/, only for you">${d.project_name ? "Just for me" : "Install for me"}</button>`
       + `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">Download</a>`;
   const kind = d => d.installed ? "installed" : d.downloaded_at ? "downloaded" : "review";
+  // A draft can be ignored like its candidate; one being revised waits, and an
+  // installed one is uninstalled first.
+  const draftIgnore = d => d.revising ? ""
+    : d.installed ? ` <button class="decline" disabled title="Uninstall the skill first, then ignore it">Ignore</button>`
+    : ignoreButton(d, true);
   const card = d => `<div class="draft ${kind(d)} ${open.has(d.id) || d.revising ? "open" : ""} ${d.revising ? "busy" : ""} ${isNew(d)?"fresh":""}">
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
@@ -1610,7 +1660,7 @@ function renderDrafts(list){
         <span class="badge ${kind(d)}">${{installed: "Installed", downloaded: "Downloaded", review: "To review"}[kind(d)]}</span>
         <span class="acts">${d.questions.length
           ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
-          : installActs(d)}</span>
+          : installActs(d)}${draftIgnore(d)}</span>
       </div>
       <p class="desc">${esc(d.description)}</p>
       <div class="body">
@@ -1644,6 +1694,7 @@ function renderDrafts(list){
     await load();
   });
   list.querySelectorAll("a.download").forEach(a => a.addEventListener("click", () => setTimeout(load, 1000)));
+  bindIgnore(list);
   list.querySelectorAll("[data-revise-open]").forEach(b => b.onclick = () => {
     writing.add(b.dataset.reviseOpen); render();
     const box = document.querySelector(`[data-instruction="${CSS.escape(b.dataset.reviseOpen)}"]`);
@@ -1825,11 +1876,11 @@ function paint(){
     : ["undecided", "collecting"].includes(r.state) ? (r.ready ? "ready" : "")
     : "accepted";
   const card = r => `<div class="cand ${highlight(r)} ${openRows.has(r.id) || r.state === "creating" ? "open" : ""} ${r.state === "creating" ? "busy" : ""}" title="${
-    {ready: `${S.threshold}× reached: ready to decide`, accepted: "promoted", drafted: "drafted", declined: "dismissed"}[highlight(r)] || ""}">
+    {ready: `${S.threshold}× reached: ready to decide`, accepted: "promoted", drafted: "drafted", declined: "ignored: still recognised, never proposed again"}[highlight(r)] || ""}">
       <div class="row" data-row="${esc(r.id)}">
       <span class="chev">›</span>
       <span class="title" title="${esc(r.title)}">${esc(r.title) || "(untitled)"}</span>
-      ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Promoted", drafted: "Drafted", declined: "Dismissed"}[highlight(r)]}</span>` : ""}
+      ${highlight(r) ? `<span class="badge ${highlight(r)}">${{ready: "Pending", accepted: "Promoted", drafted: "Drafted", declined: "Ignored"}[highlight(r)]}</span>` : ""}
       <span class="acts">${actions(r)}</span>
       ${r.days_left === null ? `<span class="clock"></span>` : `<span class="clock ${r.days_left === 0 ? "gone" : r.days_left <= 3 ? "soon" : ""}"
         title="Deleted by skill-plus-plus expire ${S.ttl} days after it was last recognized, unless you promote it first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
@@ -1843,14 +1894,15 @@ function paint(){
   list.innerHTML = `
     ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>Candidates you promoted. Draft a skill from them; the draft appears in the Drafts tab.</span></div>
     ${promoted.map(card).join("")}` : ""}
-    <div class="section"><h2>Still collecting</h2><span>Work Skill++ saw you repeat. Once something is seen ${S.threshold}×, you can promote or dismiss it.</span></div>
+    <div class="section"><h2>Still collecting</h2><span>Work Skill++ saw you repeat. Once something is seen ${S.threshold}×, you can promote or ignore it.</span></div>
     ${ready.length + collecting.length ? `<div class="collecting">
       <div class="thead"><span class="chev"></span><span class="title">Title</span>
         <span class="acts"></span><span class="clock">Time to expire</span><span class="count">Count</span></div>
       ${ready.concat(collecting).map(card).join("")}</div>` : `<p class="empty">No candidates yet.</p>`}
-    ${declined.length ? `<div class="section"><h2>Dismissed</h2><span>Candidates you dismissed. Reinstate one to bring it back.</span></div>
+    ${declined.length ? `<div class="section"><h2>Ignored</h2><span>Candidates you ignored. Skill++ still recognises them but won't propose them again. Bring one back to decide again.</span></div>
     ${declined.map(card).join("")}` : ""}`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
+  bindIgnore(list);
   list.querySelectorAll("[data-draft-open]").forEach(b => b.onclick = () => {
     noting.add(b.dataset.draftOpen); render();
     const box = document.querySelector(`[data-note="${CSS.escape(b.dataset.draftOpen)}"]`);
