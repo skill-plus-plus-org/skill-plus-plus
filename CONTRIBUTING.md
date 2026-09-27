@@ -142,20 +142,52 @@ found in the draft. Compare against the previous run of the same four cases.
       measurement on recorded sessions
 - [ ] the README or `docs/` say what changed, if a user would notice
 
+## Versioning
+
+Versions follow [Semantic Versioning](https://semver.org/), and the number
+comes from what a user notices. What users depend on:
+
+- the `skill-plus-plus` commands and their flags
+- the `SKILL_PLUS_PLUS_*` settings
+- the data folder, `~/.claude/skill-plus-plus/`, and what is stored in it
+- the hooks `install` writes
+- the `SKILL.md` files a draft produces
+
+While the version starts with 0:
+
+- **patch** (0.1.1): fixes, and changes nobody using the list above would notice
+- **minor** (0.2.0): new features, and any change that breaks something on the
+  list; the changelog entry then says how to upgrade
+
+1.0 comes once the commands and the data folder's format are settled. After
+that, breaking something on the list needs a new major version.
+
+Each pull request a user would notice adds a line under `## [Unreleased]` at
+the top of `CHANGELOG.md`; a release renames that heading to its version and
+date and starts a new, empty one.
+
 ## Releasing
 
 Releases go to PyPI from `.github/workflows/publish.yml`, with Trusted
 Publishing: GitHub vouches for the upload, so no token is stored anywhere.
 
+Anyone with write access can publish a GitHub release, so the upload itself is
+gated: the publish job runs in the `pypi` environment, whose required reviewers
+are the maintainers, and PyPI accepts uploads only from that environment. A dry
+run runs in `testpypi`, which needs no approval.
+
 Once, for whoever owns the project on PyPI: on pypi.org and on test.pypi.org,
 under Account settings → Publishing, add a pending publisher with project
-`skill-plus-plus`, owner `skill-plus-plus-org`, repository `skill-plus-plus`, workflow
-`publish.yml` and no environment.
+`skill-plus-plus`, owner `skill-plus-plus-org`, repository `skill-plus-plus` and
+workflow `publish.yml`; the environment is `pypi` on pypi.org and `testpypi` on
+test.pypi.org. In the repo's Settings → Environments, give `pypi` the
+maintainers as required reviewers.
 
 For each release:
 
-1. Set `__version__` in `skill_plus_plus/__init__.py`, date the version's
-   heading in `CHANGELOG.md`, and merge.
+1. Set `__version__` in `skill_plus_plus/__init__.py`, rename `## [Unreleased]`
+   in `CHANGELOG.md` to the version and date, start a new empty
+   `## [Unreleased]` above it, and merge.
 2. Dry run: in the Actions tab, run **publish** by hand. It uploads to
    TestPyPI. Then install from there and try it:
    ```bash
@@ -164,7 +196,8 @@ For each release:
    A version can be uploaded only once; a dry run of changed code needs a new
    one, such as `0.2.0.dev1`.
 3. Publish a GitHub release tagged `v` plus the version (`v0.1.0`). The
-   workflow checks that the tag matches, builds and uploads to PyPI.
+   workflow checks that the tag matches and builds, then waits: a maintainer
+   approves the `pypi` deployment in the run, and it uploads to PyPI.
 
 PyPI shows the README from the release build, where
 `scripts/pypi_readme.py` has made its links and images absolute, pointing at
