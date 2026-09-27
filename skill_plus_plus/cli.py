@@ -1513,6 +1513,36 @@ def _settings_target(args: argparse.Namespace) -> tuple[Path, Path] | None:
     return None
 
 
+DOCS_URL = "https://skill-plus-plus-org.github.io/usage/"
+
+
+def _next_steps(args: argparse.Namespace, threshold: int) -> str:
+    """What to do after `install --apply`, which used to end on the list of
+    files it wrote. The hooks load when a session starts, so the session the
+    install ran from is the one most likely to be tried first, and the one
+    that will never be captured."""
+    if args.project is not None:
+        root = (Path(args.project).expanduser() if args.project else Path.cwd()).resolve()
+        where = f" in {root}"
+    else:
+        where = ""
+    times = "the first time" if threshold <= 1 else f"the {_ordinal(threshold)} time"
+    return ("\nNext:\n"
+            f"  1. Start a new Claude Code session{where} and work as usual.\n"
+            "     Sessions that are already open are not captured.\n"
+            "  2. Open the review page any time: skill-plus-plus web\n"
+            f"  3. A procedure becomes a candidate {times} you repeat it.\n"
+            "     Can't wait? Describe one with /skill-plus-plus-new.\n"
+            f"How it works: {DOCS_URL}")
+
+
+def _ordinal(n: int) -> str:
+    words = {2: "second", 3: "third", 4: "fourth", 5: "fifth"}
+    if n in words:
+        return words[n]
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
 def _usable_interpreter(python: str | None) -> str:
     """Empty if this interpreter can run skill-plus-plus, else why it cannot.
 
@@ -1594,6 +1624,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         # install that ran with Ollama stopped.
         if models:
             _install_models(Config(args.root), apply=True)
+        if not args.remove:
+            print(_next_steps(args, Config(args.root).recurrence_threshold))
         return 0
 
     if not args.remove:
@@ -1616,6 +1648,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     # Last: a 10 GB download should not hold up the hooks.
     if models:
         _install_models(Config(args.root), apply=True)
+    print(_next_steps(args, Config(args.root).recurrence_threshold))
     return 0
 
 
