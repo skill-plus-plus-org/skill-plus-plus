@@ -99,4 +99,4 @@ Two things you can do that publish more than that, and should read first:
 - One session: start it as `SKILL_PLUS_PLUS_INTERNAL=1 claude`.
 - One project: wire the hooks with `--project` into the repos you want captured,
   rather than `--user` into every project.
-- A candidate: dismiss it on the review page, or delete its file in `ledger/`.
+- A candidate: ignore it on the review page, or delete its file in `ledger/`.

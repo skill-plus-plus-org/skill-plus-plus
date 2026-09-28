@@ -111,7 +111,7 @@ about how you work changes.
    the same procedure again adds to its count, anything else becomes a new
    candidate.
 3. **Review and draft.** Seen three times, a candidate is ready on the review
-   page, where you promote or dismiss it. **Draft Skill** hands its first run to
+   page, where you promote or ignore it. **Draft Skill** hands its first run to
    your own agent (`claude -p` by default), with a note from you if you like.
    The agent writes the procedure in its own words, and anything it could not
    tell from the run becomes an open question. Answer them, then install the
@@ -234,7 +234,7 @@ new Code session in the desktop app) and work as usual.
 3. **Pick the project** in the menu at the top right.
 4. **Candidates** lists what you repeated, most-seen first, each with a summary
    and its steps grouped under the requests they served (② above). At three
-   runs, a candidate can be promoted or dismissed.
+   runs, a candidate can be promoted or ignored.
 5. **Promote** it, then press **Draft Skill**. The optional note tells the agent
    what the later runs taught you: it reads only the first.
 6. **Answer its open questions** on the Drafts tab: pick a suggested answer or
@@ -280,7 +280,7 @@ questions included.
 **Do repeats become one candidate**: **0 wrong merges. This is the number that
 matters most.** A wrong merge counts a run toward the wrong candidate: it looks
 repeated before it is, and the skill drafted from it mixes two procedures. A
-missed merge only leaves a second candidate you can see and dismiss.
+missed merge only leaves a second candidate you can see and ignore.
 
 | Procedure in the recordings | Runs | Candidates |
 |---|---|---|
