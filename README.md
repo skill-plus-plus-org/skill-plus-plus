@@ -31,9 +31,31 @@ https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 
 <div align="center">
 
-**[See it](#-see-it) · [Why](#-why-this-exists) · [How it works](#-how-it-works) · [What it costs](#-what-it-costs-nothing-until-you-ask) · [Under the hood](#-under-the-hood) · [Quick Start](#-quick-start) · [Your first skill](#-your-first-skill) · [The numbers](#-the-numbers) · [When to use](#-when-to-use--when-to-skip) · [Docs](docs/usage.md)**
+**[Why](#-why-this-exists) · [See it](#-see-it) · [How it works](#-how-it-works) · [What it costs](#-what-it-costs-nothing-until-you-ask) · [Quick Start](#-quick-start) · [Your first skill](#-your-first-skill) · [Under the hood](#-under-the-hood) · [The numbers](#-the-numbers) · [When to use](#-when-to-use--when-to-skip) · [Docs](docs/usage.md)**
 
 </div>
+
+---
+
+## 🌍 Why this exists
+
+Every team has procedures it runs again and again: the sprint review deck,
+shipping a small feature with its tests, turning a document into a talk. An agent skill
+(`SKILL.md`) makes an agent follow such a procedure the same reliable way every
+time, but almost nobody writes them: by the time a procedure is worth a skill,
+you have done it three times and moved on.
+
+Skill++ finds those procedures for you. It watches your Claude Code sessions,
+with no tags, rules or notes from you, notices when you repeat the same kind of
+work within a project, and shows it to you as a candidate. Promote one, and
+your own agent drafts the skill from what you actually did. Nothing is installed
+without you.
+
+**Skills reach your team today:** install one into the repo's `.claude/skills/`,
+commit it, and everyone working in the repo has it. **Where it is going:**
+skills shared across a team, so that a procedure one person worked out is done
+the same way by everyone: faster, and without the mistakes each person would
+otherwise make on their own.
 
 ---
 
@@ -64,28 +86,6 @@ This is the session from the video above: real Claude Code, with the GitHub MCP.
 It is one of the public recordings
 ([6b143dec-demo-take.json](tests/fixtures/sessions/6b143dec-demo-take.json)),
 so you can replay what it did.
-
----
-
-## 🌍 Why this exists
-
-Every team has procedures it runs again and again: the sprint review deck,
-shipping a small feature with its tests, turning a document into a talk. An agent skill
-(`SKILL.md`) makes an agent follow such a procedure the same reliable way every
-time, but almost nobody writes them: by the time a procedure is worth a skill,
-you have done it three times and moved on.
-
-Skill++ finds those procedures for you. It watches your Claude Code sessions,
-with no tags, rules or notes from you, notices when you repeat the same kind of
-work within a project, and shows it to you as a candidate. Promote one, and
-your own agent drafts the skill from what you actually did. Nothing is installed
-without you.
-
-**Skills reach your team today:** install one into the repo's `.claude/skills/`,
-commit it, and everyone working in the repo has it. **Where it is going:**
-skills shared across a team, so that a procedure one person worked out is done
-the same way by everyone: faster, and without the mistakes each person would
-otherwise make on their own.
 
 ---
 
@@ -127,65 +127,6 @@ and nothing leaves your laptop. The only call to a frontier model is your own
 agent writing the skill: once per draft or revision, and only when you press
 **Draft Skill** or **Revise**. Only then does that one run's conversation go to
 it.
-
----
-
-## 🧠 Under the hood
-
-Three problems stand between a chat log and a skill. The first two are solved
-on your machine by two small open models, with no tokens and no API calls; the
-third is one call to your own agent. Every number below is measured on the 30
-public recordings in [tests/fixtures/sessions/](tests/fixtures/sessions/),
-which anyone can replay.
-
-### 1. Where does one task end?
-
-One chat is rarely one task. At every message you typed between two tool calls,
-Skill++ asks a local model (`gemma4:e4b`, through Ollama) one question: 113
-questions for 415 tool calls across the recordings. The question sets the
-earlier task and your new message side by side in named sections, says what
-counts as a new task, and asks for one word. It runs in the background after
-the session ends, in under a second and a half per message.
-
-**Every one of the 13 task switches found, 0 false cuts in 100 places** where a
-review, a correction or a follow-up must stay in its task.
-
-### 2. Is this the same procedure again?
-
-Each task is embedded (`nomic-embed-text`) as its conversation: your requests,
-the first 300 characters of each reply, the skills it used and the kinds of
-files it produced. File names are masked, so what a run was about does not
-decide what it was. A task joins a candidate only at a cosine similarity of
-0.85 or more (0.93 when there is no conversation to compare): a duplicate you
-can see is cheap, and a wrong merge would mix two procedures into one skill.
-
-**0 wrong merges**, the number that matters most here: a run counted toward the
-wrong candidate would make a skill of two procedures. **5 of the 8 repeated
-procedures became a single candidate**, the seven sprint reviews among them.
-
-### 3. What goes into the skill?
-
-Your own agent (`claude -p` by default, or any agent CLI) drafts it from the
-candidate's first run and your note: the method, in its own words, not the
-subject of that run. What it cannot tell from the run becomes an open question,
-at most three, each with three suggested answers, and your answers are folded
-back in. The result is a standard `SKILL.md`, and it keeps working without
-Skill++. The CLIs and MCP tools the run needed become the skill's requirements,
-and a skill whose requirement is missing says so and stops instead of
-improvising a workaround.
-
-**The method was right in all 4 drafts checked**, by a Claude judge that has to
-quote the line of the draft behind every yes.
-
-### And the parts you don't see
-
-- Keys, tokens, cookies, connection strings and email addresses are scrubbed
-  before anything is written.
-- A session the app was quit on is picked up the next time one starts.
-- The review page listens on `127.0.0.1` only and refuses requests from other
-  pages.
-- 530 tests run in about ten seconds, with no model. The
-  [research log](docs/research/) keeps every experiment, the failed ones too.
 
 ---
 
@@ -248,6 +189,65 @@ new Code session in the desktop app) and work as usual.
 
 **Faster than three repeats:** `SKILL_PLUS_PLUS_RECURRENCE=1` makes a candidate ready the
 first time it is seen.
+
+---
+
+## 🧠 Under the hood
+
+Three problems stand between a chat log and a skill. The first two are solved
+on your machine by two small open models, with no tokens and no API calls; the
+third is one call to your own agent. Every number below is measured on the 30
+public recordings in [tests/fixtures/sessions/](tests/fixtures/sessions/),
+which anyone can replay.
+
+### 1. Where does one task end?
+
+One chat is rarely one task. At every message you typed between two tool calls,
+Skill++ asks a local model (`gemma4:e4b`, through Ollama) one question: 113
+questions for 415 tool calls across the recordings. The question sets the
+earlier task and your new message side by side in named sections, says what
+counts as a new task, and asks for one word. It runs in the background after
+the session ends, in under a second and a half per message.
+
+**Every one of the 13 task switches found, 0 false cuts in 100 places** where a
+review, a correction or a follow-up must stay in its task.
+
+### 2. Is this the same procedure again?
+
+Each task is embedded (`nomic-embed-text`) as its conversation: your requests,
+the first 300 characters of each reply, the skills it used and the kinds of
+files it produced. File names are masked, so what a run was about does not
+decide what it was. A task joins a candidate only at a cosine similarity of
+0.85 or more (0.93 when there is no conversation to compare): a duplicate you
+can see is cheap, and a wrong merge would mix two procedures into one skill.
+
+**0 wrong merges**, the number that matters most here: a run counted toward the
+wrong candidate would make a skill of two procedures. **5 of the 8 repeated
+procedures became a single candidate**, the seven sprint reviews among them.
+
+### 3. What goes into the skill?
+
+Your own agent (`claude -p` by default, or any agent CLI) drafts it from the
+candidate's first run and your note: the method, in its own words, not the
+subject of that run. What it cannot tell from the run becomes an open question,
+at most three, each with three suggested answers, and your answers are folded
+back in. The result is a standard `SKILL.md`, and it keeps working without
+Skill++. The CLIs and MCP tools the run needed become the skill's requirements,
+and a skill whose requirement is missing says so and stops instead of
+improvising a workaround.
+
+**The method was right in all 4 drafts checked**, by a Claude judge that has to
+quote the line of the draft behind every yes.
+
+### And the parts you don't see
+
+- Keys, tokens, cookies, connection strings and email addresses are scrubbed
+  before anything is written.
+- A session the app was quit on is picked up the next time one starts.
+- The review page listens on `127.0.0.1` only and refuses requests from other
+  pages.
+- 530 tests run in about ten seconds, with no model. The
+  [research log](docs/research/) keeps every experiment, the failed ones too.
 
 ---
 
