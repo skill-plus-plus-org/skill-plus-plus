@@ -6168,7 +6168,7 @@ class TestJudgeInput(unittest.TestCase):
         saved = {k: getattr(boundary, k) for k in (
             "REPLY_BEFORE_CHARS", "REPLY_AFTER_CHARS", "STEP_OUTPUT_CHARS",
             "JUDGE_THINKS", "PRIOR_STEPS", "NEXT_STEPS", "SHOW_NEXT",
-            "NEXT_LABEL", "_PROMPT_CHARS", "ask")}
+            "NEXT_LABEL", "_PROMPT_CHARS", "SHOW_COMPLETION", "ask")}
         self.addCleanup(lambda: [setattr(boundary, k, v) for k, v in saved.items()])
 
     def _prompts(self):
@@ -6234,6 +6234,42 @@ class TestJudgeInput(unittest.TestCase):
         for label in ("last action returned", "assistant told the developer",
                       "assistant answered"):
             self.assertNotIn(label, text)
+
+    def _after(self, *tail, flag=True):
+        """The prompt at a gap after a commit, then *tail* before the gap."""
+        b = self.boundary
+        b.SHOW_COMPLETION = flag
+        steps = [
+            {"tool": "UserPrompt", "input": {"text": "add max_length, then commit"}},
+            {"tool": "Edit", "input": {"file_path": "slugify.py"}},
+            {"tool": "Bash", "input": {"command": "git add -A && git commit -m wip"}},
+            *tail,
+            {"tool": "UserPrompt", "input": {"text": "now titlecase"}},
+            {"tool": "Edit", "input": {"file_path": "titlecase.py"}},
+        ]
+        *_, (index, said, follow) = b.gaps(steps)
+        return b.build_prompt(*b.window(steps[:index]), steps[index],
+                              b.said_text(said), [b.render_step(s) for s in follow],
+                              b.gap_extras(steps, index, said))
+
+    def test_the_completion_flag_names_the_marker_the_work_ended_on(self):
+        flag = "Before the new message, `git commit` succeeded and nothing was changed after it."
+        self.assertIn("- ran `git add -A && git commit -m wip`\n\n" + flag
+                      + "\n\n## New message", self._after())
+        # Looking afterwards changes nothing; a look is not work.
+        self.assertIn(flag, self._after({"tool": "Bash", "input": {"command": "git log -1"}}))
+
+    def test_the_completion_flag_stays_silent_unless_the_work_ended_there(self):
+        edit = {"tool": "Edit", "input": {"file_path": "slugify.py"}}
+        rejected = {"tool": "Bash", "failed": True,
+                    "input": {"command": "git commit -m again"}}
+        # C-same's shape: the next task opens with a reply that only reads, and
+        # "Implement it." after that reply is not a message after a commit.
+        suggest = ({"tool": "UserPrompt", "input": {"text": "suggest how, change nothing"}},
+                   {"tool": "Read", "input": {"file_path": "titlecase.py"}})
+        for text in (self._after(flag=False), self._after(edit), self._after(rejected),
+                     self._after(*suggest)):
+            self.assertNotIn("succeeded and nothing was changed", text)
 
     def test_the_question_compares_two_sections_by_name(self):
         """The prose question asked whether "that" was "a new job, unrelated to

@@ -1630,6 +1630,60 @@ What this does not show:
   continuation: the new message asks for an article that includes what the
   task before it was about. A borderline case, and the only miss left.
 
+### A finished commit, said in one line
+
+Measured 28 Sep 2026 with `gemma4:e4b-it-qat` (Q4_0, 6.1 GB on disk against
+9.6 GB for `gemma4:e4b`), thinking off, V7. It misses one switch that
+`gemma4:e4b` catches, c-same: public 29/30 sessions · 12/13 · 0/100, private
+20/21 · 1/2 · 0/43, the same private result as `gemma4:e4b`. At c-same it
+answers "no" right after `git commit`, which the question shows only as the
+last action, inside a heredoc line.
+
+Rewording the definition came first and was dropped. Three rewrites of its
+"same kind of work" sentence each flipped c-same on both models, and the
+plainest, *"Doing the same kind of work again on another file, feature or
+document is a new task, even in the same project"*, went through the whole
+check: public 13/13 · 0/100 on both models, and it caught `263d65ce` step 9, but
+private false cuts went from 0 to 5 on `gemma4:e4b-it-qat` and to 1 on
+`gemma4:e4b`, all follow-ups inside one task (a lookup redone through another
+tool, the next case added, a generated file regenerated). A rule general enough
+to fix one switch reached five follow-ups. The other two were not measured: one
+keyed on the words "the same kind of thing", and one on "once the earlier task
+is done", which asks the model to decide the very thing the question asks.
+
+`SHOW_COMPLETION` states a fact instead. When the assistant's reply before the
+gap ended in a completion marker that succeeded, with only reads after it, one
+line follows the earlier task's actions:
+
+> Before the new message, `git commit` succeeded and nothing was changed after it.
+
+The definition is unchanged, so a message that works on what was committed can
+still be read as the same task. The line looks only at the reply to the last
+message: a first version walked on past a reply that only read ("suggest how,
+don't change anything yet") to the previous task's commit, and flagged
+"Implement it." at four gaps that are one task.
+
+Before any model ran, the line appears at 5 of 158 gaps, all real switches
+(c-2said, c-3 twice, c-2unsaid, c-same), and at no private gap: the seven
+private sessions with a commit end on it.
+
+| `gemma4:e4b-it-qat` | public: sessions · caught · false cuts | private |
+|---|---|---|
+| V7 | 29/30 · 12/13 · 0/100 | 20/21 · 1/2 · 0/43 |
+| V7 + the line | **30/30 · 13/13 · 0/100** | 20/21 · 1/2 · 0/43 |
+
+With the line, the smaller model matches `gemma4:e4b` on every recorded session.
+
+What this does not show:
+
+- **A follow-up right after a commit.** No recording has one: every message
+  after a commit in the public set starts a new task. "Commit it." followed by
+  "Push it." or "CI fails, fix it." is where the line could cause a false cut,
+  and it needs a recording before the line goes on by default.
+- **`gemma4:e4b` with the line.** It already catches all five flagged switches.
+- Off by default, so the prompts pinned in `expected.json` render unchanged;
+  `judge_replay.py --completion` turns it on.
+
 ## Same procedure, decided by embedding
 
 Whether a saved episode is a repeat of an existing candidate used to be decided

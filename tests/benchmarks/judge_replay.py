@@ -247,6 +247,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--step-output", type=_chars, default=None,
                     help="what the step before the gap returned, in characters "
                          "or `full` (default: not shown)")
+    ap.add_argument("--completion", action="store_true",
+                    help="say so when the earlier task's work ended in a commit, "
+                         "push or pull request (default: not said)")
     ap.add_argument("--no-next", action="store_true",
                     help="leave out the steps after the gap entirely")
     ap.add_argument("--next-label", default=None,
@@ -288,6 +291,7 @@ def main(argv: list[str]) -> int:
     if args.step_output is not None:
         boundary.STEP_OUTPUT_CHARS = args.step_output
     boundary.JUDGE_THINKS = args.think
+    boundary.SHOW_COMPLETION = args.completion
     boundary.SHOW_NEXT = not args.no_next
     if args.next_label is not None:
         boundary.NEXT_LABEL = args.next_label
@@ -305,6 +309,7 @@ def main(argv: list[str]) -> int:
              "reply_after": boundary.REPLY_AFTER_CHARS,
              "step_output": boundary.STEP_OUTPUT_CHARS,
              "think": boundary.JUDGE_THINKS,
+             "completion": boundary.SHOW_COMPLETION,
              "show_next": boundary.SHOW_NEXT, "next_label": boundary.NEXT_LABEL,
              "describe": boundary.SEND_DESCRIPTION, "summarise": args.summarise}
 
