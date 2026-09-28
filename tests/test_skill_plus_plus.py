@@ -4737,10 +4737,16 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
             self.assertIn(f'"{state}"', PAGE)
 
     def test_the_page_carries_no_external_references(self):
-        """Dependency-free on purpose, and offline by consequence."""
+        """Dependency-free on purpose, and offline by consequence. The one
+        address it names is the project's own docs, as a link a person clicks:
+        nothing is loaded from it."""
         from skill_plus_plus.web import PAGE
+        docs = '"https://skill-plus-plus-org.github.io/usage/"'
+        self.assertEqual(PAGE.count(docs), 1, "named once, as DOCS")
+        self.assertNotIn("fetch(DOCS", PAGE)
+        page = PAGE.replace(docs, "")
         for bad in ("http://", "https://", "//cdn.", "<script src", "<link"):
-            self.assertNotIn(bad, PAGE)
+            self.assertNotIn(bad, page)
 
 
 class TestLiveSessions(unittest.TestCase):
@@ -5790,6 +5796,96 @@ class TestInstallModels(TempRoot):
         with mock.patch("urllib.request.urlopen") as urlopen, redirect_stdout(io.StringIO()):
             urlopen.return_value.__enter__.return_value = [b'{"error":"pull model manifest: not found"}\n']
             self.assertIn("not found", real(self.config, "m"))
+
+
+class TestFirstRunGuidance(TempRoot):
+    """A new user is lost at two moments: right after installing, when the
+    command used to end on a list of files, and on first opening the review
+    page, which said only "No candidates yet" whether or not anything was
+    being captured."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.root / "proj"
+        (self.project / ".claude").mkdir(parents=True)
+        self.home = self.root / "home"
+        (self.home / ".claude").mkdir(parents=True)
+
+    def _install(self, *argv):
+        import io
+        from contextlib import redirect_stdout
+        from skill_plus_plus.cli import main
+        out = io.StringIO()
+        with redirect_stdout(out), mock.patch("sys.stderr"):
+            code = main(["--root", str(self.config.root), "install",
+                         "--project", str(self.project), "--no-models", *argv])
+        return code, out.getvalue()
+
+    def test_an_install_ends_by_saying_what_to_do_next(self):
+        code, out = self._install("--apply")
+        self.assertEqual(code, 0)
+        self.assertIn("Next:", out)
+        self.assertIn(f"session in {self.project.resolve()}", out)
+        self.assertIn("already open are not captured", out)
+        self.assertIn("skill-plus-plus web", out)
+        self.assertIn("the third time", out)
+        self.assertIn("/skill-plus-plus-new", out)
+        self.assertIn("https://skill-plus-plus-org.github.io/usage/", out)
+
+    def test_a_dry_run_and_a_removal_do_not(self):
+        self.assertNotIn("Next:", self._install()[1], "nothing was installed yet")
+        self._install("--apply")
+        self.assertNotIn("Next:", self._install("--remove", "--apply")[1])
+
+    def test_installing_again_still_says_what_to_do(self):
+        self._install("--apply")
+        out = self._install("--apply")[1]
+        self.assertIn("Already in that state", out)
+        self.assertIn("Next:", out)
+
+    def _wire(self, settings, drop=()):
+        from skill_plus_plus.install import apply_settings, plan_settings
+        merged, _ = plan_settings(settings)
+        for event in drop:
+            merged["hooks"].pop(event)
+        apply_settings(settings, merged)
+
+    def test_the_page_knows_when_nothing_is_being_captured(self):
+        from skill_plus_plus.web import capture_status
+        with mock.patch("pathlib.Path.cwd", return_value=self.root):
+            self.assertEqual(capture_status([str(self.project)], home=self.home)["state"], "unwired")
+            (self.home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {
+                "SessionEnd": [{"hooks": [{"type": "command",
+                                           "command": "python3 -m skillpp hook"}]}]}}))
+            self.assertEqual(capture_status([], home=self.home)["state"], "unwired",
+                             "hooks under the old name fail quietly: not capturing")
+            self._wire(self.project / ".claude" / "settings.json", drop=("SessionEnd",))
+            partial = capture_status([str(self.project)], home=self.home)
+            self.assertEqual(partial, {"state": "partial", "missing": ["SessionEnd"]})
+            self._wire(self.home / ".claude" / "settings.json")
+            self.assertEqual(capture_status([str(self.project)], home=self.home)["state"], "wired",
+                             "one place with all four is enough")
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_the_page_warns_and_explains_an_empty_list(self):
+        import subprocess
+        from skill_plus_plus.web import PAGE
+        script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
+        cases = [{"state": "wired"}, {"state": "unwired"}, {"state": "partial", "missing": ["SessionEnd"]}]
+        program = script + f"""
+const out = {json.dumps(cases)}.map(c => {{ S = {{threshold: 3, capture: c}}; return [captureWarning(), emptyCandidates()]; }});
+process.stdout.write(JSON.stringify(out));"""
+        wired, unwired, partial = json.loads(subprocess.run(
+            ["node", "-e", program], capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(wired[0], "", "no warning while it captures")
+        self.assertIn("watching your Claude Code sessions", wired[1])
+        self.assertIn("repeated it 3×", wired[1])
+        self.assertIn("/skill-plus-plus-new", wired[1])
+        self.assertIn("isn't capturing", unwired[0])
+        self.assertIn("install --user --apply", unwired[0])
+        self.assertNotIn("watching", unwired[1], "not claimed while nothing is wired")
+        self.assertIn("SessionEnd", partial[0])
+        self.assertIn("never added here", partial[0])
 
 
 class TestInstallScopes(TempRoot):
