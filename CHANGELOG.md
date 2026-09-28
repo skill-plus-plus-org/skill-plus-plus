@@ -6,6 +6,17 @@ All notable changes to Skill++. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `install --apply` ends by saying what to do next: start a new Claude Code
+  session (the ones already open are not captured), open `skill-plus-plus
+  web`, and when a candidate appears, with a link to the docs.
+- The review page warns when no hooks are wired, or some are missing, instead
+  of looking the same as having repeated nothing yet. It checks what `doctor`
+  checks, so hooks left under the old `skillpp` name count as not capturing.
+- An empty candidate list explains what will fill it, and how to add one now
+  with `/skill-plus-plus-new`.
+
 ## [0.1.1] - 2026-09-27
 
 ### Changed
