@@ -88,8 +88,10 @@ skill-plus-plus search deploy  # everything you did that mentions a word
 
 On the page, **Candidates** shows each one with a summary and its steps grouped
 under the requests they served; open a request to see every step in order.
-Promote what is worth a skill, dismiss what is not (a dismissed one can be
-reinstated).
+Promote what is worth a skill, ignore what is not. An ignored candidate is
+still recognised when you repeat it, so it is never proposed again; **Bring
+back** under **Ignored** undoes it. A promoted or drafted candidate can be
+ignored too, after a confirmation; an installed skill is uninstalled first.
 
 ### Shortcuts
 
@@ -170,7 +172,7 @@ edits settings or spends a model call is a dry run until you add `--apply`.
 | --- | --- |
 | Setting up | `install`, `doctor` |
 | Reviewing | `web`, `review`, `show`, `search`, `stats` |
-| Deciding | `promote`, `dismiss`, `reopen`, `ignored` |
+| Deciding | `promote`, `dismiss` (or `ignore`), `reopen`, `ignored` |
 | Drafting | `draft`, `revise`, `name`, `scaffold`, `dictate` (work in progress) |
 | Fixing candidates | `split`, `merge`, `retitle`, `sift` |
 | Skills you have | `lifecycle`, `tier`, `check`, `reconcile`, `bundle`, `expire`, `accuracy` |

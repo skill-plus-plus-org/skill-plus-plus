@@ -1831,7 +1831,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note")
     p.set_defaults(func=cmd_promote)
 
-    p = sub.add_parser("dismiss", help="dismiss a candidate")
+    # `ignore` is what the review page calls it: still recognised, never proposed again.
+    p = sub.add_parser("dismiss", aliases=["ignore"],
+                       help="ignore a candidate: still recognised, never proposed again")
     p.add_argument("id")
     p.add_argument("--note")
     p.set_defaults(func=cmd_dismiss)

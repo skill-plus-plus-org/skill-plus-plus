@@ -4061,6 +4061,84 @@ class TestWeb(TempRoot):
         log = (self.config.root / "decisions.jsonl").read_text()
         self.assertIn("declined, reinstated", log)
 
+    def test_a_promoted_candidate_can_still_be_ignored(self):
+        """Promoting used to be one-way on the page: only the command line
+        could take it back."""
+        from skill_plus_plus.ledger import STATUS_DISMISSED, STATUS_PROMOTED
+        from skill_plus_plus.web import decline
+        self._save("p", status=STATUS_PROMOTED)
+        self.assertEqual(self._rows()["p"]["state"], "accepted")
+        self.assertTrue(decline(self.config, "p")["ok"])
+        self.assertEqual(Ledger(self.config).get("p").status, STATUS_DISMISSED)
+
+    def test_an_ignored_draft_is_kept_and_returns_when_promoted_again(self):
+        from skill_plus_plus.web import accept, collect_state, decline, reinstate
+        self._drafted("x")
+        self.assertTrue(decline(self.config, "x")["ok"])
+        self.assertEqual(collect_state(self.config)["drafts"], [], "ignored: not under Drafts")
+        self.assertTrue((self.config.root / "drafts" / "x" / "SKILL.md").exists(), "but kept")
+        self.assertTrue(reinstate(self.config, "x")["ok"])
+        self.assertEqual(self._rows()["x"]["state"], "undecided", "back to deciding")
+        self.assertTrue(accept(self.config, "x")["ok"])
+        self.assertEqual(self._rows()["x"]["state"], "drafted")
+
+    def test_an_installed_skill_is_uninstalled_before_it_is_ignored(self):
+        """Otherwise the skill stays in its skills folder while the page calls
+        it ignored."""
+        from skill_plus_plus.ledger import STATUS_PROMOTED
+        from skill_plus_plus.web import decline, install_skill, uninstall_skill
+        self._in_repo("i")
+        self.assertTrue(install_skill(self.config, "i", "project")["ok"])
+        refused = decline(self.config, "i")
+        self.assertFalse(refused["ok"])
+        self.assertIn("Uninstall", refused["error"])
+        self.assertEqual(Ledger(self.config).get("i").status, STATUS_PROMOTED)
+        self.assertTrue(uninstall_skill(self.config, "i")["ok"])
+        self.assertTrue(decline(self.config, "i")["ok"])
+
+    def test_a_draft_being_written_cannot_be_ignored(self):
+        """The agent would finish into an entry the page calls ignored."""
+        from skill_plus_plus import web
+        from skill_plus_plus.ledger import STATUS_PROMOTED
+        self._save("w", status=STATUS_PROMOTED)
+        web._write_status(self.config, "w", state="running", started=time.time(), boot=web._BOOT)
+        self.assertEqual(self._rows()["w"]["state"], "creating")
+        self.assertFalse(web.decline(self.config, "w")["ok"])
+        self.assertEqual(Ledger(self.config).get("w").status, STATUS_PROMOTED)
+
+    def test_ignore_is_the_same_command_as_dismiss(self):
+        import contextlib, io
+        from skill_plus_plus.cli import main
+        from skill_plus_plus.ledger import STATUS_DISMISSED
+        self._save("c")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["--root", str(self.config.root), "ignore", "c"]), 0)
+        self.assertEqual(Ledger(self.config).get("c").status, STATUS_DISMISSED)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_the_page_offers_ignore_and_warns_before_ignoring_a_promoted_one(self):
+        import json, subprocess
+        from skill_plus_plus.web import PAGE
+        script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
+        rows = [{"id": "u", "title": "Deck", "state": "undecided"},
+                {"id": "a", "title": "Deck", "state": "accepted"},
+                {"id": "d", "title": "Deck", "state": "dismissed"}]
+        program = script + f"""
+const out = {json.dumps(rows)}.map(actions);
+out.push(ignoreWarning("Deck", false), ignoreWarning("Deck", true));
+process.stdout.write(JSON.stringify(out));"""
+        undecided, accepted, dismissed, plain, drafted = json.loads(subprocess.run(
+            ["node", "-e", program], capture_output=True, text=True, check=True).stdout)
+        self.assertIn(">Ignore<", undecided)
+        self.assertIn("Won't be proposed again", undecided, "says so on hover")
+        self.assertNotIn("data-ignore", undecided, "a pending one needs no confirmation")
+        self.assertIn('data-ignore="a"', accepted, "a promoted one asks first")
+        self.assertIn("Draft Skill", accepted)
+        self.assertIn(">Bring back<", dismissed)
+        self.assertIn("won't propose it again", plain)
+        self.assertNotIn("draft is kept", plain)
+        self.assertIn("draft is kept", drafted)
+
     def test_create_skill_needs_an_accepted_candidate(self):
         from skill_plus_plus.web import create_skill
         self._save("u")
