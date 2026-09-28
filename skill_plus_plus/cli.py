@@ -555,6 +555,32 @@ def cmd_split(args: argparse.Namespace) -> int:
     return 0
 
 
+def _memory_guarded(command):
+    """Run a command that calls the local models under the memory guard.
+
+    The same rule a fold follows (`skill_plus_plus.memory`): the models load
+    only if they fit and leave the reserve free, and are unloaded when the
+    command ends.
+    """
+    def run(args: argparse.Namespace) -> int:
+        from .memory import guarded
+        with guarded(Config(args.root)):
+            return command(args)
+    run.__doc__ = command.__doc__
+    return run
+
+
+def _model_trouble(exc: Exception) -> str:
+    from .local import MemoryShort
+    from .memory import BUSY
+    if isinstance(exc, MemoryShort):
+        if str(exc) == BUSY:
+            return f"Skill++ {exc}"
+        return f"not enough free memory: Skill++ {exc}"
+    return f"no local model: {exc}"
+
+
+@_memory_guarded
 def cmd_merge(args: argparse.Namespace) -> int:
     """Fold existing candidates that are the same procedure.
 
@@ -590,7 +616,8 @@ def cmd_merge(args: argparse.Namespace) -> int:
     try:
         vectors = {e.id: vector_for(e, config, cache) for e in entries}
     except LocalModelUnavailable as exc:
-        print(f"No embedding model: {exc}. Nothing was compared.", file=sys.stderr)
+        why = _model_trouble(exc)
+        print(f"{why[:1].upper()}{why[1:]}. Nothing was compared.", file=sys.stderr)
         return 1
     finally:
         save_cache(config, cache)
@@ -690,6 +717,15 @@ def cmd_fold_session(args: argparse.Namespace) -> int:
                       + (f" {result['id']}" if result.get("id") else ""))
     if args.verbose:
         print(json.dumps(result))
+    if result.get("memory"):
+        # Held because the models did not fit. This worker is detached and
+        # nobody waits on it, so it stays to fold the held sessions once the
+        # computer is idle and they fit (`capture.wait_for_memory`).
+        from .capture import wait_for_memory
+        try:
+            wait_for_memory(config)
+        except Exception as exc:  # noqa: BLE001 - detached; a traceback goes nowhere
+            log_error(config, f"memory wait failed: {type(exc).__name__}: {exc}")
     return 0
 
 
@@ -716,7 +752,8 @@ def cmd_fold_pending(args: argparse.Namespace) -> int:
 
     config = Config(args.root)
     config.ensure_dirs()
-    results = fold_pending(config, exclude=args.exclude, idle_hours=args.idle_hours)
+    results = fold_pending(config, exclude=args.exclude, idle_hours=args.idle_hours,
+                           now=args.now)
     if results == [{"status": "locked"}]:
         print("Another fold-pending is running.")
         return 0
@@ -726,6 +763,8 @@ def cmd_fold_pending(args: argparse.Namespace) -> int:
             what = "still live, skipped"
         elif r["status"] == "folding":
             what = "a worker is folding it"
+        elif r.get("memory"):
+            what = f"waiting for memory: {r.get('reason', '').removeprefix('memory: ')}"
         elif r["status"] == "offline":
             what = f"held again: {r.get('reason', '')}"
         elif episodes:
@@ -881,6 +920,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     return 1
 
 
+@_memory_guarded
 def cmd_retitle(args: argparse.Namespace) -> int:
     """Name candidates the fold could not name, because no model answered.
 
@@ -911,7 +951,7 @@ def cmd_retitle(args: argparse.Namespace) -> int:
         try:
             name, sentence = name_and_sentence(config, entry)
         except LocalModelUnavailable as exc:
-            print(f"no local model: {exc}")
+            print(_model_trouble(exc))
             return 1
         if sentence:
             store_summary(config, entry, sentence)
@@ -1239,6 +1279,26 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             here = _has_model(models, want)
             print(f"          {'':8} {want} {'✓' if here else '✗ not pulled'}")
 
+    # What the models take, from what free memory a fold starts, and whether
+    # this machine can ever get there (`skill_plus_plus.memory`).
+    from .memory import gb, status
+    m = status(config)
+    if m["available"] is None:
+        print(f"memory    {'':8} unknown on this system: the memory guard is off")
+    elif not config.memory_guard:
+        print(f"memory    {'':8} guard off (SKILL_PLUS_PLUS_MEMORY_GUARD=0); "
+              f"{gb(m['available'])} GB free of {gb(m['total'])} GB")
+    else:
+        print(f"memory    {'':8} {gb(m['total'])} GB RAM, {gb(m['available'])} GB free now")
+        print(f"          {'':8} the models take about {gb(m['need'])} GB here "
+              f"({'measured' if m['measured'] else 'estimated from their size'}); "
+              f"a fold starts at {gb(m['start_at'])} GB free")
+        if m["total"] is not None and m["start_at"] > m["total"]:
+            print(f"          {'':8} more than this machine has: sessions wait and "
+                  "never fold while the guard is on")
+            print(f"          {'':8} SKILL_PLUS_PLUS_MEMORY_GUARD=0 folds them anyway, "
+                  "at the risk of swapping")
+
     s = _waiting_sessions(config)
     pending = len(s["held"]) + len(s["waiting"])
     if pending or s["folding"]:
@@ -1278,18 +1338,27 @@ def cmd_stats(args: argparse.Namespace) -> int:
     # Only sessions `handle_session_end` stamped as held. A session still being
     # written has a file too, and counting it would report work lost from one
     # that is merely in flight.
-    held = []
+    held, for_memory = [], []
     for path in sorted(config.sessions_dir.glob("*.json")):
         try:
-            if json.loads(path.read_text(encoding="utf-8")).get("held"):
-                held.append(path)
+            stamp = json.loads(path.read_text(encoding="utf-8")).get("held")
         except (OSError, json.JSONDecodeError):
             continue
+        if stamp:
+            (for_memory if isinstance(stamp, dict) and stamp.get("memory") else held).append(path)
     if held:
         print(f"held        {len(held)} session(s) not banked, kept in "
               f"{config.sessions_dir}")
         print(f"            no local model answered ({config.local_model} at "
               f"{config.ollama_url}); the work is there, the candidates are not")
+    if for_memory:
+        from .memory import gb, status
+        s = status(config)
+        print(f"waiting     {len(for_memory)} session(s) held for memory, kept in "
+              f"{config.sessions_dir}")
+        print(f"            a fold starts when {gb(s['start_at'])} GB are free "
+              f"({gb(s['available'])} GB now); they fold once the computer is idle,")
+        print("            or run `skill-plus-plus fold-pending --now`")
     return 0
 
 
@@ -1733,6 +1802,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--exclude", help="a live session to leave alone")
     p.add_argument("--idle-hours", type=float, default=12.0,
                    help="treat a session untouched this long as ended")
+    p.add_argument("--now", action="store_true",
+                   help="retry sessions held for memory now, not after the pause "
+                        "(the models still load only if they fit)")
     p.set_defaults(func=cmd_fold_pending)
 
     p = sub.add_parser("web", help="browse the ledger in a local page")

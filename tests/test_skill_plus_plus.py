@@ -158,6 +158,16 @@ def setUpModule() -> None:
     def _no_pull(config, name):
         raise AssertionError(f"a test tried to pull {name}")
     cli._pull_model = _no_pull
+    # And for the memory guard, which reads this machine's memory and asks
+    # Ollama what is loaded before every fold. Left on, a test would pass or
+    # hold depending on what else the machine running it has open. The tests
+    # of the guard turn it on themselves, with memory readings they script.
+    # Notifications likewise: a test run must not post to Notification Center.
+    global _REAL_ENV
+    _REAL_ENV = {k: os.environ.get(k) for k in ("SKILL_PLUS_PLUS_MEMORY_GUARD",
+                                                "SKILL_PLUS_PLUS_NOTIFY")}
+    os.environ["SKILL_PLUS_PLUS_MEMORY_GUARD"] = "0"
+    os.environ["SKILL_PLUS_PLUS_NOTIFY"] = "0"
 
 
 def tearDownModule() -> None:
@@ -170,6 +180,11 @@ def tearDownModule() -> None:
     capture._name_from_model = _REAL_NAME
     import skill_plus_plus.cli as cli
     cli._available_models, cli._pull_model = _REAL_MODELS, _REAL_PULL
+    for key, value in _REAL_ENV.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 def _marker_judge(config, session, verdict=is_marker):
@@ -7063,3 +7078,492 @@ class TestPromotedSkillsStayMatchable(TempRoot):
         self.assertEqual(covered.status, STATUS_COVERED)
         self.assertNotIn("cand1", [c.id for c in led.candidates()],
                          "work a skill already does is not a proposal")
+
+
+GB = 1024 ** 3
+
+
+class _ScriptedMemory:
+    """This machine's memory and Ollama, as a memory-guard test scripts them.
+
+    `available` is what the kernel says it can hand out, and `load` takes a
+    model's cost from it the way a real load does. Nothing reaches Ollama:
+    which models are loaded, their sizes and every unload live here, and the
+    two notices are recorded rather than posted.
+    """
+
+    def __init__(self, test, *, available_gb, total_gb=18.0, loaded=()):
+        from skill_plus_plus import memory, notify
+        self.memory = memory
+        self.available = int(available_gb * GB)
+        self.total = int(total_gb * GB)
+        self.loaded = {memory.model_name(m) for m in loaded}
+        self.sizes = {"gemma4:e4b": int(9.6 * GB), "nomic-embed-text:latest": int(0.27 * GB)}
+        self.unloaded: list[str] = []
+        self.critical = False
+        self.notices: list[str] = []
+        scripted = {
+            "available_bytes": lambda: self.available,
+            "total_bytes": lambda: self.total,
+            "pressure_critical": lambda: self.critical,
+            "loaded_models": lambda config: set(self.loaded),
+            "model_sizes": lambda config: dict(self.sizes),
+            "unload": self._unload,
+            "WATCH_SECONDS": 0.01,
+            "_SETTLE_SECONDS": 0.0,
+        }
+        for name, value in scripted.items():
+            patch = mock.patch.object(memory, name, value)
+            patch.start()
+            test.addCleanup(patch.stop)
+        for kind in ("waiting", "stopped"):
+            patch = mock.patch.object(
+                notify, kind, lambda config, *args, _kind=kind: self.notices.append(_kind) or True)
+            patch.start()
+            test.addCleanup(patch.stop)
+
+    def _unload(self, config, models, **kwargs):
+        for name in models:
+            self.unloaded.append(name)
+            self.loaded.discard(name)
+
+    def load(self, model, cost_gb):
+        """What Ollama does on a model's first call: it is in memory now."""
+        self.loaded.add(self.memory.model_name(model))
+        self.available -= int(cost_gb * GB)
+
+
+class TestMemoryGuard(TempRoot):
+    """The local model never takes a machine below 2 GB of free memory.
+
+    Measured on an 18 GB Mac: gemma4:e4b and the embedder took 12.8 GB of
+    available memory, and a fold with other apps open ran at 92 % used with
+    4.7 GB swapped out in 100 s. Nothing leaked; the model is simply large. So
+    the models load only when they fit, a watchdog unloads them if memory runs
+    short mid-fold, and a session that does not fit waits to be folded later.
+    """
+
+    FOLD = ["gemma4:e4b", "nomic-embed-text"]
+    TWO_TASKS = ("npm test", "git commit -m 'fix'", "cargo build", "git commit -m 'feat'")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.config.memory_guard = True
+
+    def _wait(self, condition, seconds=2.0):
+        deadline = time.time() + seconds
+        while not condition():
+            if time.time() > deadline:
+                self.fail("timed out waiting")
+            time.sleep(0.01)
+
+    def _session_on_disk(self, sid="mem", commands=TWO_TASKS):
+        handle_prompt(self.config, {"session_id": sid, "cwd": "/r", "prompt": "ship it"})
+        for command in commands:
+            handle_tool(self.config, {"session_id": sid, "cwd": "/r", "tool_name": "Bash",
+                                      "tool_input": {"command": command}})
+
+    def _on_disk(self, sid="mem"):
+        from skill_plus_plus.capture import _session_file
+        return json.loads(_session_file(self.config, sid).read_text(encoding="utf-8"))
+
+    # -- the check before loading --------------------------------------------
+
+    def test_models_that_do_not_fit_are_not_loaded(self):
+        from skill_plus_plus.memory import Guard
+        _ScriptedMemory(self, available_gb=9.1)
+        guard = Guard(self.config)
+        # (9.6 + 0.27) GiB on disk x 1.39 = 13.7 GiB, plus the 2 GiB reserve.
+        self.assertEqual(guard.admit(self.FOLD),
+                         "needs 15.7 GB of free memory, 9.1 GB free now")
+        self.assertEqual(guard.ours, set())
+
+    def test_models_already_loaded_need_no_room_and_are_never_unloaded(self):
+        from skill_plus_plus.memory import Guard
+        mem = _ScriptedMemory(self, available_gb=1.0,
+                              loaded=["gemma4:e4b", "nomic-embed-text:latest"])
+        guard = Guard(self.config)
+        self.assertEqual(guard.admit(self.FOLD), "")
+        guard.release()
+        self.assertEqual(mem.unloaded, [], "someone else loaded them")
+
+    # -- the watchdog ---------------------------------------------------------
+
+    def test_the_watchdog_trips_below_the_reserve_and_unloads_only_its_own(self):
+        from skill_plus_plus.memory import Guard
+        mem = _ScriptedMemory(self, available_gb=16.0, loaded=["nomic-embed-text:latest"])
+        guard = Guard(self.config)
+        self.assertEqual(guard.admit(self.FOLD), "")
+        mem.load("gemma4:e4b", 12.6)                  # 3.4 GB left: still fine
+        time.sleep(0.05)
+        self.assertEqual(guard.tripped, "")
+        mem.available = int(1.5 * GB)                # something else grows
+        self._wait(lambda: guard.tripped)
+        guard.release()
+        self.assertEqual(guard.tripped, "free memory fell below 2.0 GB")
+        self.assertEqual(set(mem.unloaded), {"gemma4:e4b"}, "not the one someone else loaded")
+        self.assertEqual(mem.notices, ["stopped"])
+
+    def test_critical_pressure_trips_the_watchdog_too(self):
+        from skill_plus_plus.memory import Guard
+        mem = _ScriptedMemory(self, available_gb=16.0)
+        guard = Guard(self.config)
+        guard.admit(self.FOLD)
+        mem.critical = True
+        self._wait(lambda: guard.tripped)
+        guard.release()
+        self.assertEqual(guard.tripped, "memory pressure turned critical")
+
+    def test_a_tripped_guard_makes_no_call(self):
+        from skill_plus_plus import local, memory
+        _ScriptedMemory(self, available_gb=16.0)
+        with memory.guarded(self.config) as guard:
+            guard.tripped = "free memory fell below 2.0 GB"
+            with mock.patch.object(local.urllib.request, "urlopen",
+                                   side_effect=AssertionError("Ollama was called")):
+                with self.assertRaises(local.MemoryShort):
+                    local.ask("gemma4:e4b", "hi")
+                with self.assertRaises(local.MemoryShort):
+                    local.embed("hi")
+
+    def test_a_model_the_guard_loads_leaves_soon_and_is_unloaded_at_the_end(self):
+        import io
+        from skill_plus_plus import local, memory
+        mem = _ScriptedMemory(self, available_gb=16.0)
+        sent = []
+
+        def ollama(request, timeout=None):
+            sent.append(json.loads(request.data))
+            return io.BytesIO(b'{"response": "yes"}')
+
+        with memory.guarded(self.config):
+            with mock.patch.object(local.urllib.request, "urlopen", ollama):
+                self.assertEqual(local.ask("gemma4:e4b", "hi"), "yes")
+        self.assertEqual(sent[0]["keep_alive"], memory.KEEP_ALIVE)
+        self.assertEqual(mem.unloaded, ["gemma4:e4b"])
+
+    def test_a_model_someone_else_loaded_keeps_its_own_keep_alive(self):
+        import io
+        from skill_plus_plus import local, memory
+        mem = _ScriptedMemory(self, available_gb=16.0, loaded=["gemma4:e4b"])
+        sent = []
+
+        def ollama(request, timeout=None):
+            sent.append(json.loads(request.data))
+            return io.BytesIO(b'{"response": "yes"}')
+
+        with memory.guarded(self.config):
+            with mock.patch.object(local.urllib.request, "urlopen", ollama):
+                local.ask("gemma4:e4b", "hi")
+        self.assertNotIn("keep_alive", sent[0])
+        self.assertEqual(mem.unloaded, [])
+
+    # -- what the models take on this computer ---------------------------------
+
+    def test_what_a_load_took_is_remembered_and_the_highest_kept(self):
+        from skill_plus_plus.memory import Guard, need_bytes
+        mem = _ScriptedMemory(self, available_gb=16.0)
+        for cost in (12.8, 12.1):
+            mem.available, mem.loaded = int(16 * GB), set()
+            guard = Guard(self.config)
+            guard.admit(self.FOLD)
+            mem.load("gemma4:e4b", cost)
+            self._wait(lambda: guard._low == mem.available)
+            guard.release()
+        need, measured = need_bytes(self.config, self.FOLD)
+        self.assertTrue(measured)
+        self.assertAlmostEqual(need / GB, 12.8, places=1)
+
+    def test_a_drop_far_beyond_the_estimate_is_not_kept(self):
+        """Something else grew at the same time; it is not what the models took."""
+        from skill_plus_plus.memory import Guard, need_bytes
+        mem = _ScriptedMemory(self, available_gb=40.0, total_gb=64.0)
+        guard = Guard(self.config)
+        guard.admit(self.FOLD)
+        mem.load("gemma4:e4b", 30.0)
+        self._wait(lambda: guard._low == mem.available)
+        guard.release()
+        self.assertFalse(need_bytes(self.config, self.FOLD)[1])
+
+    # -- a session's fold ------------------------------------------------------
+
+    def test_a_session_that_does_not_fit_is_held_and_nothing_is_judged(self):
+        mem = _ScriptedMemory(self, available_gb=9.1)
+        self._session_on_disk()
+        result = handle_session_end(self.config, {"session_id": "mem"})
+        self.assertTrue(result["memory"])
+        held = self._on_disk()["held"]
+        self.assertTrue(held["memory"])
+        self.assertEqual(held["reason"],
+                         "memory: needs 15.7 GB of free memory, 9.1 GB free now")
+        self.assertEqual(self.judged, [], "the judge was asked with nothing loaded")
+        self.assertEqual(list(Ledger(self.config).all()), [])
+        self.assertEqual(mem.notices, ["waiting"])
+
+    def test_a_stop_while_judging_drops_every_verdict(self):
+        """Half-judged is worse than unjudged: the rest would read as one task."""
+        import skill_plus_plus.boundary as boundary
+        from skill_plus_plus import memory
+        mem = _ScriptedMemory(self, available_gb=16.0)
+
+        def judge_then_trip(config, session):
+            _marker_judge(config, session)
+            memory.active().trip("free memory fell below 2.0 GB")
+
+        self._session_on_disk()
+        with mock.patch.object(boundary, "judge_session", judge_then_trip):
+            result = handle_session_end(self.config, {"session_id": "mem"})
+        self.assertTrue(result["memory"])
+        self.assertFalse([s for s in self._on_disk()["steps"] if "end" in s])
+        self.assertEqual(list(Ledger(self.config).all()), [])
+        self.assertEqual(mem.notices, ["stopped"], "one notice, not a second")
+
+    def test_a_stop_between_episodes_keeps_what_was_banked_and_resumes(self):
+        from skill_plus_plus import capture, memory
+        from skill_plus_plus.local import MemoryShort
+        _ScriptedMemory(self, available_gb=16.0)
+        real, calls = capture._fold_steps, []
+
+        def second_trips(config, session, steps, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                memory.active().trip("free memory fell below 2.0 GB")
+                raise MemoryShort("free memory fell below 2.0 GB")
+            return real(config, session, steps, **kwargs)
+
+        self._session_on_disk()
+        with mock.patch.object(capture, "_fold_steps", second_trips):
+            first = handle_session_end(self.config, {"session_id": "mem"})
+        self.assertTrue(first["memory"])
+        doc = self._on_disk()
+        self.assertEqual(doc["folded"], [0])
+        self.assertTrue([s for s in doc["steps"] if "end" in s],
+                        "folding had begun: the verdicts stay")
+
+        again = handle_session_end(self.config, {"session_id": "mem"})
+        self.assertNotEqual(again["status"], "offline")
+        self.assertEqual(sum(e.occurrences for e in Ledger(self.config).all()), 2,
+                         "each task counted once, the banked one not twice")
+
+    # -- folding later ---------------------------------------------------------
+
+    def _held_for_memory(self, sid, minutes_ago):
+        from datetime import datetime, timedelta, timezone
+        from skill_plus_plus.capture import _session_file
+        at = (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat(
+            timespec="seconds")
+        steps = [{"tool": "UserPrompt", "input": {"text": f"ship {sid}"}},
+                 {"tool": "Bash", "input": {"command": "npm test"}},
+                 {"tool": "Bash", "input": {"command": "git commit -m x"}}]
+        _session_file(self.config, sid).write_text(json.dumps(
+            {"session_id": sid, "cwd": "/r", "prompts": [], "steps": steps,
+             "held": {"at": at, "reason": "memory: needs 15.7 GB", "memory": True}}),
+            encoding="utf-8")
+
+    def test_a_session_held_for_memory_is_retried_every_ten_minutes(self):
+        from datetime import datetime, timedelta, timezone
+        from skill_plus_plus.capture import _is_pending
+
+        def held(minutes_ago, memory=True):
+            at = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+            return {"held": {"at": at.isoformat(timespec="seconds"), "memory": memory}}
+
+        self.assertFalse(_is_pending(held(1), 0.0, 12.0))
+        self.assertTrue(_is_pending(held(1), 0.0, 12.0, now=True))
+        self.assertTrue(_is_pending(held(11), 0.0, 12.0))
+        self.assertTrue(_is_pending(held(1, memory=False), 0.0, 12.0),
+                        "a session no model answered waits for nothing")
+
+    def test_the_sweep_stops_at_the_first_session_that_does_not_fit(self):
+        from skill_plus_plus.capture import fold_pending
+        mem = _ScriptedMemory(self, available_gb=9.1)
+        for sid in ("a1", "b2", "c3"):
+            self._held_for_memory(sid, minutes_ago=11)
+        results = fold_pending(self.config)
+        self.assertEqual([r["session"] for r in results], ["a1"])
+        self.assertTrue(results[0]["memory"])
+        self.assertEqual(mem.notices, ["waiting"])
+
+    def test_the_idle_waiter_folds_once_nobody_is_at_the_keyboard_and_it_fits(self):
+        from skill_plus_plus import memory
+        from skill_plus_plus.capture import _session_file, wait_for_memory
+        mem = _ScriptedMemory(self, available_gb=9.1)
+        self._held_for_memory("w1", minutes_ago=1)
+        polls, now = [], [0.0]
+
+        def idle():
+            polls.append(1)
+            if len(polls) == 3:
+                mem.available = int(16 * GB)          # apps closed
+            return 30.0 if len(polls) == 1 else 600.0  # busy, then idle
+
+        with mock.patch.object(memory, "idle_seconds", idle):
+            wait_for_memory(self.config, sleep=lambda s: now.__setitem__(0, now[0] + s),
+                            clock=lambda: now[0])
+        self.assertFalse(_session_file(self.config, "w1").exists())
+        self.assertEqual(len(list(Ledger(self.config).all())), 1)
+        self.assertEqual(len(polls), 3, "busy, idle but short, then folded")
+
+    def test_only_one_idle_waiter(self):
+        import socket
+        from skill_plus_plus.capture import wait_for_memory
+        _ScriptedMemory(self, available_gb=16.0)
+        self._held_for_memory("w1", minutes_ago=1)
+        (self.config.root / "memory-wait.lock").write_text(
+            json.dumps({"pid": os.getpid(), "host": socket.gethostname()}))
+        self.assertEqual(wait_for_memory(self.config, sleep=lambda s: self.fail("waited")), [])
+
+    def test_idle_time_is_read_on_each_system(self):
+        from skill_plus_plus.memory import loginctl_idle, mac_idle, xprintidle_idle
+        self.assertEqual(mac_idle('    | |   "HIDIdleTime" = 125000000000\n'), 125.0)
+        self.assertIsNone(mac_idle("no such key"))
+        self.assertEqual(loginctl_idle("IdleHint=no\nIdleSinceHint=0\n"), 0.0)
+        self.assertAlmostEqual(
+            loginctl_idle("IdleHint=yes\nIdleSinceHint=1000000000\n", now=1600.0), 600.0)
+        self.assertIsNone(loginctl_idle(""))
+        self.assertEqual(xprintidle_idle("45000\n"), 45.0)
+        self.assertIsNone(xprintidle_idle("xprintidle: command not found"))
+
+    def test_fold_now_says_how_much_memory_is_missing(self):
+        from skill_plus_plus.web import fold_now
+        _ScriptedMemory(self, available_gb=9.1)
+        with mock.patch("skill_plus_plus.web._run", side_effect=AssertionError("folded anyway")):
+            result = fold_now(self.config)
+        self.assertFalse(result["ok"])
+        self.assertIn("needs 15.7 GB of free memory, 9.1 GB free now", result["error"])
+
+    def test_fold_now_folds_when_it_fits(self):
+        import subprocess
+        from skill_plus_plus.web import fold_now
+        _ScriptedMemory(self, available_gb=16.0)
+        ran = []
+        with mock.patch("skill_plus_plus.web._run", side_effect=lambda config, *args: ran.append(
+                args) or subprocess.CompletedProcess(args, 0, "", "")):
+            self.assertEqual(fold_now(self.config), {"ok": True})
+        self.assertEqual(ran, [("fold-pending", "--now")])
+
+    def test_stats_counts_the_sessions_waiting_for_memory(self):
+        import argparse
+        import contextlib
+        import io
+        from skill_plus_plus.cli import cmd_stats
+        _ScriptedMemory(self, available_gb=9.1)
+        self._held_for_memory("w1", minutes_ago=1)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cmd_stats(argparse.Namespace(root=self.config.root))
+        self.assertIn("waiting     1 session(s) held for memory", out.getvalue())
+        self.assertIn("a fold starts when 15.7 GB are free (9.1 GB now)", out.getvalue())
+
+
+class TestNotify(TempRoot):
+    """The notice reaches the person, or at least the log, and never raises."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.config.notify = True
+
+    def test_the_command_on_each_system(self):
+        from skill_plus_plus.notify import command
+        mac = command('say "hi"', platform="darwin")
+        self.assertEqual(mac[:2], ["osascript", "-e"])
+        self.assertIn('display notification "say \\"hi\\""', mac[2])
+        with mock.patch("skill_plus_plus.notify.shutil.which", return_value="/usr/bin/notify-send"):
+            self.assertEqual(command("hi", platform="linux")[0], "notify-send")
+        with mock.patch("skill_plus_plus.notify.shutil.which", return_value=None):
+            self.assertIsNone(command("hi", platform="linux"))
+        self.assertIsNone(command("hi", platform="win32"))
+
+    def test_waiting_at_most_hourly_and_stopped_every_time(self):
+        from skill_plus_plus import notify
+        sent = []
+        with mock.patch.object(notify, "command", return_value=["true"]), \
+                mock.patch.object(notify.subprocess, "run",
+                                  side_effect=lambda argv, **kwargs: sent.append(argv)):
+            self.assertTrue(notify.waiting(self.config, "needs 15.7 GB of free memory"))
+            self.assertFalse(notify.waiting(self.config, "needs 15.7 GB of free memory"))
+            self.assertTrue(notify.stopped(self.config, "free memory fell below 2.0 GB", 12 * GB))
+            self.assertTrue(notify.stopped(self.config, "free memory fell below 2.0 GB", None))
+        self.assertEqual(len(sent), 3)
+
+    def test_without_a_notifier_the_notice_goes_to_the_log(self):
+        from skill_plus_plus import notify
+        with mock.patch.object(notify, "command", return_value=None):
+            self.assertFalse(notify.stopped(self.config, "free memory fell below 2.0 GB", None))
+        self.assertIn("notice (stopped)", self.config.log_file.read_text(encoding="utf-8"))
+
+    def test_off_means_log_only(self):
+        from skill_plus_plus import notify
+        self.config.notify = False
+        with mock.patch.object(notify.subprocess, "run", side_effect=AssertionError("posted")):
+            self.assertFalse(notify.waiting(self.config, "needs 15.7 GB of free memory"))
+
+
+class TestMemoryGuardAcrossProcesses(TempRoot):
+    """Found by measuring, not by the tests above.
+
+    Replaying the demo recordings back to back, a fold started 0.2 s after the
+    one before had unloaded the models. Ollama was still listing gemma4, so the
+    new guard counted it as someone else's: it loaded it again, the watchdog
+    tripped at 9 % free, and unloaded only the embedder, leaving gemma4 in
+    memory for Ollama's five minutes.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.config.memory_guard = True
+
+    def test_unload_returns_once_ollama_has_let_go(self):
+        from skill_plus_plus import memory
+        listings = [{"gemma4:e4b"}, {"gemma4:e4b"}, set()]
+        asked = []
+        with mock.patch.object(memory, "_ollama", lambda config, path, payload=None, **kw:
+                               asked.append((path, payload)) or {}), \
+                mock.patch.object(memory, "loaded_models", lambda config: listings.pop(0)), \
+                mock.patch.object(memory.time, "sleep", lambda s: None):
+            memory.unload(self.config, ["gemma4:e4b"])
+        self.assertEqual(asked, [("/api/generate", {"model": "gemma4:e4b", "keep_alive": 0})])
+        self.assertEqual(listings, [], "returned before Ollama stopped listing it")
+
+    def test_one_process_at_a_time_holds_the_models(self):
+        import socket
+        from skill_plus_plus import local, memory
+        _ScriptedMemory(self, available_gb=16.0)
+        (self.config.root / "models.lock").write_text(
+            json.dumps({"pid": os.getpid(), "host": socket.gethostname()}))
+        with memory.guarded(self.config, wait=False) as guard:
+            self.assertEqual(guard.tripped, memory.BUSY)
+            with self.assertRaises(local.MemoryShort):
+                local.ask("gemma4:e4b", "hi")
+        self.assertTrue((self.config.root / "models.lock").exists(),
+                        "another process's lock is not ours to remove")
+
+    def test_a_lock_left_by_a_dead_process_is_taken_over(self):
+        import socket
+        from skill_plus_plus import memory
+        _ScriptedMemory(self, available_gb=16.0)
+        (self.config.root / "models.lock").write_text(
+            json.dumps({"pid": 2 ** 22 + 12345, "host": socket.gethostname()}))
+        with memory.guarded(self.config, wait=False) as guard:
+            self.assertEqual(guard.tripped, "")
+        self.assertFalse((self.config.root / "models.lock").exists())
+
+    def test_a_trip_during_a_load_unloads_the_model_once_it_lands(self):
+        """Not listed while it loads, so the first unload finds nothing."""
+        from types import SimpleNamespace
+        from skill_plus_plus import memory
+        now, asked = [0.0], []
+        clock = SimpleNamespace(time=lambda: now[0],
+                                sleep=lambda s: now.__setitem__(0, now[0] + s))
+
+        def listed(config):
+            if now[0] < 6.0:
+                return set()                          # still loading
+            return set() if len(asked) >= 2 else {"gemma4:e4b"}
+
+        with mock.patch.object(memory, "time", clock), \
+                mock.patch.object(memory, "loaded_models", listed), \
+                mock.patch.object(memory, "_ollama", lambda config, path, payload=None, **kw:
+                                  asked.append(payload["model"]) or {}):
+            memory.unload(self.config, ["gemma4:e4b"], linger=20.0)
+        self.assertEqual(asked, ["gemma4:e4b", "gemma4:e4b"])
