@@ -453,8 +453,31 @@ def collect_state(config: Config) -> dict:
                              r["days_left"] if r["days_left"] is not None else 0,
                              (r["title"] or "").lower()))
     drafts = list_drafts(config)
+    projects = project_list(rows, drafts)
     return {"threshold": threshold, "ttl": config.candidate_ttl_days,
-            "rows": rows, "drafts": drafts, "projects": project_list(rows, drafts)}
+            "rows": rows, "drafts": drafts, "projects": projects,
+            "capture": capture_status([p["path"] for p in projects])}
+
+
+def capture_status(project_paths: list[str], home: Path | None = None) -> dict:
+    """Whether the hooks that feed this page are wired anywhere it can see.
+
+    An empty page looks the same whether no work was repeated yet or nothing
+    is being captured at all. The second happened for a week: hooks written
+    under the old `skillpp` name kept failing quietly, and old candidates on
+    the page made it look alive. So the page asks what `doctor` asks, of the
+    user's settings and of every project it lists, and takes the best answer:
+    one place with all four hooks is enough.
+    """
+    from .install import HOOK_EVENTS, installed_events
+    places = [(home or Path.home()) / ".claude" / "settings.json", Path.cwd() / ".claude" / "settings.json"]
+    places += [Path(p) / ".claude" / "settings.json" for p in project_paths if p]
+    best = max((installed_events(place) for place in places), key=len, default=[])
+    if len(best) == len(HOOK_EVENTS):
+        return {"state": "wired"}
+    if best:
+        return {"state": "partial", "missing": [e for e in HOOK_EVENTS if e not in best]}
+    return {"state": "unwired"}
 
 
 def seen_runs(entry) -> list[dict]:
@@ -1162,6 +1185,12 @@ PAGE = r"""<!doctype html>
  .working .working-note{display:block;font-size:12px;color:var(--dim)}
  .working .elapsed{margin-left:auto;font:12px var(--mono);color:var(--dim)}
  .empty{color:var(--muted);padding:32px 0;text-align:center}
+ .empty p{margin:0 0 8px}.empty strong{color:var(--dim)}
+ .empty a,.warn a{color:var(--go)}
+ .empty code,.warn code{font:12px var(--mono);background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:1px 5px;white-space:nowrap}
+ .warn{margin:0 0 20px;padding:12px 16px;border:1px solid var(--noline);background:var(--nobg);
+   border-radius:8px;color:var(--fg);font-size:13px;line-height:1.6}
+ .warn strong{color:var(--no)}
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
  .cand.ready{border-left:3px solid #fbbf24;background:linear-gradient(90deg,rgba(251,191,36,.07),var(--panel) 40%)}
  .cand.accepted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
@@ -1328,6 +1357,27 @@ let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
 // A candidate with a draft is reviewed in the Drafts tab, not listed here.
 // A draft's row lives in the Drafts tab, installed ones too; a skill installed
 // by hand, with no draft here, stays on the Candidates tab.
+const DOCS = "https://skill-plus-plus-org.github.io/usage/";
+// Nothing captured looks the same as nothing repeated yet, so the page says
+// which: a warning while no hooks feed it, and an empty list that explains
+// what will fill it.
+function captureWarning(){
+  const c = S.capture || {state: "wired"};
+  if(c.state === "wired") return "";
+  const why = c.state === "partial"
+    ? `Some of its hooks are missing (${(c.missing || []).map(esc).join(", ")}), so sessions are recorded but never added here.`
+    : "No Claude Code hooks are wired, so nothing new is being recorded.";
+  return `<div class="warn"><strong>Skill++ isn't capturing.</strong> ${why}
+    Run <code>skill-plus-plus install --user --apply</code>, then start a new Claude Code session;
+    <code>skill-plus-plus doctor</code> checks it. <a href="${DOCS}#installing" target="_blank" rel="noopener">Installing →</a></div>`;
+}
+function emptyCandidates(){
+  const watching = (S.capture || {}).state === "wired"
+    ? `<p>Skill++ is watching your Claude Code sessions. A procedure shows up here once you've repeated it ${S.threshold}×.</p>` : "";
+  return `<div class="empty"><p><strong>No candidates yet.</strong></p>${watching}
+    <p>To add one now, describe it with <code>/skill-plus-plus-new</code> in a Claude Code session.</p>
+    <p><a href="${DOCS}" target="_blank" rel="noopener">How it works →</a></p></div>`;
+}
 const inDrafts = r => ["drafted", "revising"].includes(r.state)
   || (r.state === "installed" && (ALL || S).drafts.some(d => d.id === r.id));
 let view = "candidates", open = new Set(), writing = new Set(), drafts = {}, answers = {};
@@ -1840,14 +1890,14 @@ function paint(){
   const promoted = S.rows.filter(r => !["undecided", "collecting", "dismissed"].includes(r.state) && !inDrafts(r));
   const open_ = S.rows.filter(r => ["undecided", "collecting"].includes(r.state));
   const ready = open_.filter(r => r.ready), collecting = open_.filter(r => !r.ready);
-  list.innerHTML = `
+  list.innerHTML = `${captureWarning()}
     ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>Candidates you promoted. Draft a skill from them; the draft appears in the Drafts tab.</span></div>
     ${promoted.map(card).join("")}` : ""}
     <div class="section"><h2>Still collecting</h2><span>Work Skill++ saw you repeat. Once something is seen ${S.threshold}×, you can promote or dismiss it.</span></div>
     ${ready.length + collecting.length ? `<div class="collecting">
       <div class="thead"><span class="chev"></span><span class="title">Title</span>
         <span class="acts"></span><span class="clock">Time to expire</span><span class="count">Count</span></div>
-      ${ready.concat(collecting).map(card).join("")}</div>` : `<p class="empty">No candidates yet.</p>`}
+      ${ready.concat(collecting).map(card).join("")}</div>` : emptyCandidates()}
     ${declined.length ? `<div class="section"><h2>Dismissed</h2><span>Candidates you dismissed. Reinstate one to bring it back.</span></div>
     ${declined.map(card).join("")}` : ""}`;
   list.querySelectorAll("[data-act]").forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id));
