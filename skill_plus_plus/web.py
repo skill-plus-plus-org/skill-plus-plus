@@ -31,6 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from . import skills
 from .config import Config
 from .ledger import (STATUS_CANDIDATE, STATUS_DISMISSED, STATUS_PROMOTED,
                      Ledger)
@@ -50,13 +51,6 @@ _SAFE_SESSION = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 # running well past that died with the server that started it.
 DRAFT_STALE_SECONDS = 1200
 
-_SAFE_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
-# Written by this page or by the agent's editor, never part of the skill.
-# Bookkeeping beside a draft, never part of the skill. `agent.log` is the drafting
-# agent's transcript: it names local paths and it is not a file anyone who
-# installs the skill should receive.
-_NOT_SKILL_FILES = ("status.json", "downloaded.json", "installed.json", "agent.log")
-
 _jobs: dict[str, threading.Thread] = {}
 # Which server process started a run. A run marked running by a server that is
 # no longer the one serving died with it, so it is shown as failed at once
@@ -71,12 +65,8 @@ def _run(config: Config, *args: str) -> subprocess.CompletedProcess:
                           stdin=subprocess.DEVNULL)
 
 
-def _draft_dir(config: Config, entry_id: str) -> Path:
-    return config.root / "drafts" / entry_id
-
-
 def _status_path(config: Config, entry_id: str) -> Path:
-    return _draft_dir(config, entry_id) / "status.json"
+    return skills.draft_dir(config, entry_id) / "status.json"
 
 
 def _write_status(config: Config, entry_id: str, **status) -> None:
@@ -116,7 +106,7 @@ def row_state(config: Config, entry) -> dict:
     orphaned = status.get("boot") not in (None, _BOOT)
     fresh = (time.time() - status.get("started", 0) < DRAFT_STALE_SECONDS
              and not orphaned)
-    drafted = sorted(p for p in _draft_dir(config, entry.id).rglob("SKILL.md")
+    drafted = sorted(p for p in skills.draft_dir(config, entry.id).rglob("SKILL.md")
                      if ".revisions" not in p.parts)
     if status.get("state") == "running":
         if fresh:
@@ -597,16 +587,7 @@ def transcript(config: Config, session_id: str) -> dict:
 def _skill_name(entry, skill_md: Path) -> str:
     """The folder name the skill unpacks to: its frontmatter name, if safe."""
     name = str(parse_frontmatter(skill_md.read_text(encoding="utf-8")).get("name") or "")
-    return name if _SAFE_NAME.match(name) else entry.id
-
-
-def _draft_files(config: Config, entry_id: str) -> list[Path]:
-    root = _draft_dir(config, entry_id)
-    return sorted(p for p in root.rglob("*")
-                  if p.is_file() and p.name not in _NOT_SKILL_FILES
-                  and not p.name.endswith(".tmp")
-                  # `.revisions/` holds the versions before each revision.
-                  and not any(part.startswith(".") for part in p.relative_to(root).parts))
+    return name if skills.SAFE_NAME.match(name) else entry.id
 
 
 # `## Known gaps` was the scaffold's name for the same section and nothing read
@@ -658,11 +639,6 @@ def split_open_questions(text: str) -> tuple[list[dict], str]:
     return [q for q in questions if q["question"]], remaining
 
 
-def _skill_digest(skill_md: Path) -> str:
-    import hashlib
-    return hashlib.sha256(skill_md.read_bytes()).hexdigest()
-
-
 def record_download(config: Config, entry_id: str) -> None:
     """Remember that this version of the draft was downloaded.
 
@@ -674,31 +650,30 @@ def record_download(config: Config, entry_id: str) -> None:
     if not entry:
         return
     skill_md = Path(row_state(config, entry)["path"])
-    path = _draft_dir(config, entry.id) / "downloaded.json"
+    path = skills.draft_dir(config, entry.id) / "downloaded.json"
     path.write_text(json.dumps({
         "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "sha256": _skill_digest(skill_md)}), encoding="utf-8")
+        "sha256": skills.digest(skill_md)}), encoding="utf-8")
 
 
 def _downloaded_at(config: Config, entry_id: str, skill_md: Path) -> str:
     try:
-        record = json.loads((_draft_dir(config, entry_id) / "downloaded.json")
+        record = json.loads((skills.draft_dir(config, entry_id) / "downloaded.json")
                             .read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return ""
-    return record.get("at", "") if record.get("sha256") == _skill_digest(skill_md) else ""
+    return record.get("at", "") if record.get("sha256") == skills.digest(skill_md) else ""
 
 
 def _install_fields(config: Config, entry, skill_md: Path) -> dict:
     """What the card shows about installing: where it went, whether the draft
     changed since (a revision to pass on), and the project it would go to."""
     from .capture import project_of
-    record = _install_record(config, entry.id)
+    record = skills.install_record(config, entry.id)
     home = project_of(entry.projects[0]) if entry.projects else ""
     return {"installed": record.get("path", "") if entry.skill_path else "",
             "installed_target": record.get("target", ""),
-            "install_stale": bool(record) and record.get("files", {}).get("SKILL.md")
-                             not in (None, _skill_digest(skill_md)),
+            "install_stale": skills.install_stale(record, skill_md),
             "project_name": Path(home).name if home else ""}
 
 
@@ -723,8 +698,8 @@ def list_drafts(config: Config) -> list[dict]:
             "description": str(front.get("description") or ""),
             "body": shown,
             "questions": questions,
-            "files": [str(p.relative_to(_draft_dir(config, entry.id)))
-                      for p in _draft_files(config, entry.id)],
+            "files": [str(p.relative_to(skills.draft_dir(config, entry.id)))
+                      for p in skills.draft_files(config, entry.id)],
             "revising": state["state"] == "revising",
             "since": state.get("since"),
             "message": state.get("message", ""),
@@ -743,7 +718,7 @@ def list_drafts(config: Config) -> list[dict]:
 
 def _drafted_skill(config: Config, entry) -> Path | None:
     """The draft's SKILL.md, wherever its row stands (installed included)."""
-    found = sorted(p for p in _draft_dir(config, entry.id).rglob("SKILL.md")
+    found = sorted(p for p in skills.draft_dir(config, entry.id).rglob("SKILL.md")
                    if ".revisions" not in p.parts)
     return found[0] if found else None
 
@@ -778,20 +753,13 @@ def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
     if not got:
         return None
     entry, skill_md = got
-    root = _draft_dir(config, entry.id)
+    root = skills.draft_dir(config, entry.id)
     name = _skill_name(entry, skill_md)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for path in _draft_files(config, entry.id):
+        for path in skills.draft_files(config, entry.id):
             archive.write(path, f"{name}/{path.relative_to(root)}")
     return f"{name}.zip", buffer.getvalue()
-
-
-def _install_record(config: Config, entry_id: str) -> dict:
-    try:
-        return json.loads((_draft_dir(config, entry_id) / "installed.json").read_text())
-    except (OSError, ValueError):
-        return {}
 
 
 def install_skill(config: Config, entry_id: str, target: str,
@@ -823,26 +791,26 @@ def install_skill(config: Config, entry_id: str, target: str,
         base = Path(personal_dir or Path.home() / ".claude" / "skills").expanduser()
     dest = base / _skill_name(entry, skill_md)
 
-    previous = _install_record(config, entry.id)
+    previous = skills.install_record(config, entry.id)
     if previous and Path(previous["path"]) != dest:
         return {"ok": False, "error": f"already installed in {previous['path']}; uninstall it first"}
     if dest.exists() and not previous:
         return {"ok": False, "error": f"{dest} already exists and was not installed from "
                                       f"this draft; it is left alone"}
     if previous:
-        changed = _changed_since_install(previous)
+        changed = skills.changed_since_install(previous)
         if changed:
             return {"ok": False, "error": f"{changed[0]} was changed after it was installed; "
                                           f"keep your edits or remove the folder by hand"}
         _remove_installed(previous)
 
-    root = _draft_dir(config, entry.id)
+    root = skills.draft_dir(config, entry.id)
     files = {}
-    for path in _draft_files(config, entry.id):
+    for path in skills.draft_files(config, entry.id):
         rel = path.relative_to(root)
         (dest / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, dest / rel)
-        files[str(rel)] = _skill_digest(dest / rel)
+        files[str(rel)] = skills.digest(dest / rel)
     (root / "installed.json").write_text(json.dumps({
         "path": str(dest), "target": target, "files": files,
         "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}, indent=1))
@@ -850,12 +818,6 @@ def install_skill(config: Config, entry_id: str, target: str,
     entry.skill_path = str(dest / "SKILL.md")
     ledger.save(entry)
     return {"ok": True, "path": str(dest)}
-
-
-def _changed_since_install(record: dict) -> list[str]:
-    dest = Path(record["path"])
-    return [rel for rel, digest in record.get("files", {}).items()
-            if (dest / rel).exists() and _skill_digest(dest / rel) != digest]
 
 
 def _remove_installed(record: dict) -> None:
@@ -881,15 +843,15 @@ def uninstall_skill(config: Config, entry_id: str) -> dict:
     entry = Ledger(config).get(entry_id)
     if not entry:
         return {"ok": False, "error": "no such entry"}
-    record = _install_record(config, entry.id)
+    record = skills.install_record(config, entry.id)
     if not record:
         return {"ok": False, "error": "it was not installed from this page"}
-    changed = _changed_since_install(record)
+    changed = skills.changed_since_install(record)
     if changed:
         return {"ok": False, "error": f"{changed[0]} was changed after it was installed; "
                                       f"remove it by hand"}
     _remove_installed(record)
-    (_draft_dir(config, entry.id) / "installed.json").unlink()
+    (skills.draft_dir(config, entry.id) / "installed.json").unlink()
     ledger = Ledger(config)
     entry.skill_path = ""
     ledger.save(entry)
@@ -959,7 +921,7 @@ def _draft_job(config: Config, entry_id: str, note: str = "") -> None:
         said = (proc.stdout or "") + (proc.stderr or "")
         if proc.returncode != 0:
             _write_status(config, entry_id, state="failed", message=_tail(said))
-        elif not sorted(_draft_dir(config, entry_id).rglob("SKILL.md")):
+        elif not sorted(skills.draft_dir(config, entry_id).rglob("SKILL.md")):
             # `skill-plus-plus draft` exits 0 without a file only for a stated decline.
             _write_status(config, entry_id, state="declined", message=_tail(said, 1))
         else:
