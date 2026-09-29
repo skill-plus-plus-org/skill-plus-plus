@@ -8,6 +8,7 @@ whether the installed copy changed since.
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
@@ -486,6 +487,7 @@ def _card(config: Config, folder: Path, installs: dict, usage: dict, found: dict
         "made_by": "draft" if entry_id else "skill-plus-plus" if ours else "",
         "entry": entry_id,
         "update": bool(drafted) and install_stale(record, drafted),
+        "edit_block": edit_refusal(folder),
         "visibility": visibility(key, found),
         "uses": int(used.get("uses") or 0),
         "last_used": str(used.get("last_used") or ""),
@@ -553,3 +555,274 @@ def read_skill(folder: Path) -> dict:
         shown += len(text)
         item.update(text=text, truncated=cut)
     return {"files": files, "hidden": hidden}
+
+
+# -- edits ---------------------------------------------------------------------
+# An agent edits a copy of the skill, never the skill: the copy comes back as a
+# proposal under `edits/<project key>/<folder>/current/`, shown as a diff, and
+# only Apply writes it into the project.
+
+# What an agent edit may work on. A skill past these is edited by hand.
+EDIT_FILES_CAP = 100
+EDIT_BYTES_CAP = 1024 * 1024
+# How much of a proposal the page shows: a file past DIFF_FILE_CAP gets no diff.
+DIFF_FILE_CAP = 256 * 1024
+DIFF_OUT_CAP = 100 * 1024
+DIFF_TOTAL_CAP = 400 * 1024
+# Applied edits kept per skill, each with the version it replaced.
+HISTORY_KEPT = 10
+# The frontmatter keys claude.ai uploads and the Skills API accept. Claude Code
+# reads more, but a skill carrying any other key can no longer be uploaded.
+UPLOAD_KEYS = ("name", "description", "license", "compatibility", "metadata", "allowed-tools")
+
+
+def edit_root(config: Config, project: str | Path, folder_name: str) -> Path:
+    return config.root / "edits" / project_key(project) / folder_name
+
+
+def edit_dir(config: Config, project: str | Path, folder_name: str) -> Path:
+    """The one edit of this skill in progress or waiting: `status.json`,
+    `base.json`, `base/`, `proposal/` and `agent.log`."""
+    return edit_root(config, project, folder_name) / "current"
+
+
+def edit_refusal(folder: Path) -> str:
+    """Why the agent may not edit this skill, or "" when it may."""
+    if folder.is_symlink():
+        return "the skill folder is a link; edit it where it lives"
+    files = skill_files(folder)
+    if any(path.is_symlink() for path in files):
+        return "the skill contains links"
+    if len(files) > EDIT_FILES_CAP:
+        return f"it has more than {EDIT_FILES_CAP} files"
+    if sum(path.stat().st_size for path in files) > EDIT_BYTES_CAP:
+        return "it is larger than 1 MB"
+    try:
+        (folder / "SKILL.md").read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return "its SKILL.md is not UTF-8 text"
+    return ""
+
+
+def snapshot(folder: Path, dest: Path | None = None) -> dict[str, str]:
+    """`{relative path: sha256}` of a skill's regular files, dot files aside.
+    With *dest*, the files are also copied there."""
+    found = {}
+    for path in skill_files(folder):
+        if path.is_symlink() or not path.is_file():
+            continue
+        rel = path.relative_to(folder).as_posix()
+        found[rel] = digest(path)
+        if dest is not None:
+            (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest / rel)
+    return found
+
+
+def check_proposal(copy: Path, base: dict) -> str:
+    """Why the agent's copy cannot be proposed, or "" when it can. *base* is
+    the edit's `base.json`: the files it started from and the skill's name."""
+    if not (copy / "SKILL.md").is_file():
+        return "the agent removed SKILL.md"
+    if any(path.is_symlink() for path in copy.rglob("*")):
+        return "the agent added a link"
+    files = snapshot(copy)
+    if any(rel in NOT_SKILL_FILES for rel in files):
+        return "the agent added a file named like one of Skill++'s own records"
+    if (len(files) > EDIT_FILES_CAP
+            or sum((copy / rel).stat().st_size for rel in files) > EDIT_BYTES_CAP):
+        return "the edited skill is too large to apply from the page"
+    try:
+        text = (copy / "SKILL.md").read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return "SKILL.md is no longer UTF-8 text"
+    front = parse_frontmatter(text)
+    if base.get("had_front") and not front:
+        return "SKILL.md lost its frontmatter"
+    name = front.get("name") if isinstance(front.get("name"), str) else ""
+    if base.get("had_name") and name != base.get("name"):
+        return (f"the agent renamed the skill to {name or 'nothing'}; it is found and turned "
+                f"off by its name, so ask again without renaming it")
+    if not base.get("had_name") and name:
+        return "the agent gave the skill a name; it is named after its folder"
+    if files == base.get("files"):
+        return "the agent made no change"
+    return ""
+
+
+def collect_proposal(copy: Path, dest: Path) -> None:
+    """Keep the agent's version, its regular non-dot files, as the proposal."""
+    tmp = dest.with_name(dest.name + ".tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    snapshot(copy, tmp)
+    shutil.rmtree(dest, ignore_errors=True)
+    os.replace(tmp, dest)
+
+
+def _text_of(path: Path) -> str | None:
+    """A file's text for a diff, or None when it is binary or too large."""
+    if path.stat().st_size > DIFF_FILE_CAP:
+        return None
+    data = path.read_bytes()
+    if b"\0" in data:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _warnings(old_md: Path, new_md: Path) -> list[str]:
+    """What an edit does to the frontmatter that the developer should know."""
+    old = parse_frontmatter(old_md.read_text(encoding="utf-8", errors="replace"))
+    new = parse_frontmatter(new_md.read_text(encoding="utf-8", errors="replace"))
+    said = []
+    description = str(new.get("description") or "")
+    if description != str(old.get("description") or "") and len(description) > 200:
+        said.append(f"The description is {len(description)} characters; claude.ai "
+                    f"uploads take at most 200.")
+    for key in sorted(set(new) - set(old) - set(UPLOAD_KEYS)):
+        said.append(f"New frontmatter key `{key}`: Claude Code reads it, but claude.ai "
+                    f"uploads refuse any key outside {', '.join(UPLOAD_KEYS)}.")
+    return said
+
+
+def _order(rel: str) -> tuple[bool, str]:
+    return rel != "SKILL.md", rel.lower()
+
+
+def diff_proposal(current: Path, folder: Path) -> dict:
+    """What a proposed edit changes, file by file, as unified diffs; plus what
+    it does to the frontmatter, and whether the skill changed since the copy
+    was taken (`stale`: then it cannot be applied)."""
+    base = json.loads((current / "base.json").read_text(encoding="utf-8"))
+    before, after = base["files"], snapshot(current / "proposal")
+    files, total = [], 0
+    for rel in sorted(set(before) | set(after), key=_order):
+        if before.get(rel) == after.get(rel):
+            continue
+        item = {"path": rel, "added": 0, "removed": 0, "diff": "", "binary": False,
+                "truncated": False,
+                "change": "added" if rel not in before else
+                          "removed" if rel not in after else "changed"}
+        files.append(item)
+        old = _text_of(current / "base" / rel) if rel in before else ""
+        new = _text_of(current / "proposal" / rel) if rel in after else ""
+        if old is None or new is None:
+            item["binary"] = True
+            continue
+        lines = [line if line.endswith("\n") else line + "\n" for line in difflib.unified_diff(
+            old.splitlines(keepends=True), new.splitlines(keepends=True),
+            fromfile=f"a/{rel}", tofile=f"b/{rel}")]
+        item["added"] = sum(1 for line in lines[2:] if line.startswith("+"))
+        item["removed"] = sum(1 for line in lines[2:] if line.startswith("-"))
+        text, room = "".join(lines), max(0, min(DIFF_OUT_CAP, DIFF_TOTAL_CAP - total))
+        if len(text) > room:
+            text, item["truncated"] = text[:room], True
+        total += len(text)
+        item["diff"] = text
+    stale = not folder.is_dir() or folder.is_symlink() or snapshot(folder) != before
+    return {"files": files, "stale": stale, "instruction": base.get("instruction", ""),
+            "warnings": _warnings(current / "base" / "SKILL.md", current / "proposal" / "SKILL.md")}
+
+
+def _prune_empty(folder: Path) -> None:
+    """Remove folders an edit left empty, below the skill folder only."""
+    for path in sorted((p for p in folder.rglob("*") if p.is_dir() and not p.is_symlink()),
+                       key=lambda p: len(p.parts), reverse=True):
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+
+
+def _write_into(folder: Path, rel: str, source: Path) -> None:
+    """Write one file of an edit into the skill whole, keeping the mode the
+    installed file had (an agent's Write can drop `+x`)."""
+    target = folder / rel
+    for parent in target.relative_to(folder).parents:
+        if (folder / parent).is_symlink():
+            raise OSError(f"{folder / parent} is a link")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    mode = (target if target.exists() else source).stat().st_mode & 0o777
+    tmp = target.with_name(f".{target.name}.skill-plus-plus.tmp")
+    shutil.copyfile(source, tmp)
+    os.chmod(tmp, mode)
+    os.replace(tmp, target)
+
+
+def _sync_draft(config: Config, entry_id: str, proposal: Path, before: dict, after: dict) -> None:
+    """Give the draft a skill was installed from the same edit, so the page's
+    Update and Uninstall keep treating the installed copy as theirs. The
+    draft's SKILL.md before it is kept in `.revisions/`, as a revision's is."""
+    root = draft_dir(config, entry_id)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    history = root / ".revisions"
+    history.mkdir(parents=True, exist_ok=True)
+    if (root / "SKILL.md").is_file():
+        shutil.copy2(root / "SKILL.md", history / f"SKILL.{stamp}.md")
+    for rel, want in after.items():
+        if before.get(rel) != want:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(proposal / rel, root / rel)
+    for rel in before:
+        if rel not in after and (root / rel).is_file():
+            (history / stamp / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(root / rel), str(history / stamp / rel))
+
+
+def apply_edit(config: Config, project: str | Path, folder: Path) -> dict:
+    """Write a proposed edit into the skill.
+
+    Refused when the skill changed after the agent's copy was taken: the
+    proposal was made against files that are no longer there. On a failed
+    write, what was written is put back from the copy. The replaced version
+    goes to `history/`, with the last HISTORY_KEPT edits kept.
+    """
+    current = edit_dir(config, project, folder.name)
+    base = json.loads((current / "base.json").read_text(encoding="utf-8"))
+    before = base["files"]
+    if not folder.is_dir() or folder.is_symlink() or snapshot(folder) != before:
+        raise RuntimeError("the skill changed after the agent started; discard this edit "
+                           "and ask again")
+    why = check_proposal(current / "proposal", base)
+    if why:
+        raise RuntimeError(why)
+    after = snapshot(current / "proposal")
+    changed = [rel for rel in sorted(set(before) | set(after), key=_order)
+               if before.get(rel) != after.get(rel)]
+    done: list[str] = []
+    try:
+        for rel in changed:
+            if rel in after:
+                _write_into(folder, rel, current / "proposal" / rel)
+            else:
+                (folder / rel).unlink()
+            done.append(rel)
+    except OSError:
+        for rel in done:
+            if rel in before:
+                _write_into(folder, rel, current / "base" / rel)
+            else:
+                (folder / rel).unlink(missing_ok=True)
+        _prune_empty(folder)
+        raise
+    _prune_empty(folder)
+    entry_id, record = install_index(config).get(os.path.realpath(folder), ("", {}))
+    if entry_id:
+        _sync_draft(config, entry_id, current / "proposal", before, after)
+        write_json(draft_dir(config, entry_id) / "installed.json",
+                   {**record, "files": after, "edited_at": _now()})
+    history = edit_root(config, project, folder.name) / "history"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    history.mkdir(parents=True, exist_ok=True)
+    os.replace(current, history / stamp)
+    write_json(history / stamp / "applied.json", {"at": _now(), "changed": changed})
+    for old in sorted(history.iterdir())[:-HISTORY_KEPT]:
+        shutil.rmtree(old, ignore_errors=True)
+    return {"changed": changed, "synced_draft": entry_id}
+
+
+def discard_edit(config: Config, project: str | Path, folder_name: str) -> None:
+    """Drop a proposed edit. Only Skill++'s own copy goes; the skill is untouched."""
+    shutil.rmtree(edit_dir(config, project, folder_name), ignore_errors=True)

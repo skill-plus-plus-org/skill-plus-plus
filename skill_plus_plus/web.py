@@ -16,6 +16,7 @@ Dependency-free on purpose: `http.server` and one self-contained page.
 
 from __future__ import annotations
 
+import functools
 import io
 import json
 import math
@@ -62,6 +63,24 @@ _BOOT = f"{time.time():.6f}-{id(_jobs)}"
 _jobs_lock = threading.RLock()
 
 
+def _locked(action):
+    """Run *action* holding `_jobs_lock`: changes to a project's skills, and
+    the jobs that make them, happen one at a time."""
+    @functools.wraps(action)
+    def run(*args, **kwargs):
+        with _jobs_lock:
+            return action(*args, **kwargs)
+    return run
+
+
+def _job_fresh(status: dict) -> tuple[bool, bool]:
+    """(fresh, orphaned) for a background job's status: still running as far as
+    anyone can tell, or started by a server that is no longer the one serving."""
+    orphaned = status.get("boot") not in (None, _BOOT)
+    fresh = time.time() - status.get("started", 0) < DRAFT_STALE_SECONDS and not orphaned
+    return fresh, orphaned
+
+
 def _run(config: Config, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(CLI), "--root", str(config.root),
                            *args], capture_output=True, text=True,
@@ -106,9 +125,7 @@ def row_state(config: Config, entry) -> dict:
     if entry.skill_path and Path(entry.skill_path).expanduser().exists():
         return {"state": "installed", "path": entry.skill_path}
     status = _read_status(config, entry.id)
-    orphaned = status.get("boot") not in (None, _BOOT)
-    fresh = (time.time() - status.get("started", 0) < DRAFT_STALE_SECONDS
-             and not orphaned)
+    fresh, orphaned = _job_fresh(status)
     drafted = sorted(p for p in skills.draft_dir(config, entry.id).rglob("SKILL.md")
                      if ".revisions" not in p.parts)
     if status.get("state") == "running":
@@ -478,8 +495,16 @@ def collect_state(config: Config) -> dict:
             "rows": rows, "drafts": drafts, "projects": projects,
             "capture": capture_status([p["path"] for p in projects]),
             "memory": memory_waiting(config),
-            "skills": [skills.list_project(config, p["path"], installs=installs, usage=usage)
-                       for p in projects if p["path"]]}
+            "skills": [_with_edits(config, skills.list_project(
+                config, p["path"], installs=installs, usage=usage))
+                for p in projects if p["path"]]}
+
+
+def _with_edits(config: Config, gallery: dict) -> dict:
+    """Each card's edit, if one is running, waiting or failed."""
+    for card in gallery["skills"]:
+        card["edit"] = edit_state(config, gallery["project"], card["name"])
+    return gallery
 
 
 def memory_waiting(config: Config) -> dict:
@@ -773,6 +798,7 @@ def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
     return f"{name}.zip", buffer.getvalue()
 
 
+@_locked
 def install_skill(config: Config, entry_id: str, target: str,
                   personal_dir: Path | None = None) -> dict:
     """Copy a finished draft into a skills folder and mark it installed.
@@ -803,6 +829,8 @@ def install_skill(config: Config, entry_id: str, target: str,
     dest = base / _skill_name(entry, skill_md)
 
     previous = skills.install_record(config, entry.id)
+    if previous and _edit_waiting(config, previous):
+        return {"ok": False, "error": EDIT_WAITING}
     if previous and Path(previous["path"]) != dest:
         return {"ok": False, "error": f"already installed in {previous['path']}; uninstall it first"}
     if dest.exists() and not previous:
@@ -849,6 +877,7 @@ def _remove_installed(record: dict) -> None:
             pass                   # not empty: someone else's files are in it
 
 
+@_locked
 def uninstall_skill(config: Config, entry_id: str) -> dict:
     """Take out what `install_skill` put in, if nobody has changed it since."""
     entry = Ledger(config).get(entry_id)
@@ -857,6 +886,8 @@ def uninstall_skill(config: Config, entry_id: str) -> dict:
     record = skills.install_record(config, entry.id)
     if not record:
         return {"ok": False, "error": "it was not installed from this page"}
+    if _edit_waiting(config, record):
+        return {"ok": False, "error": EDIT_WAITING}
     changed = skills.changed_since_install(record)
     if changed:
         return {"ok": False, "error": f"{changed[0]} was changed after it was installed; "
@@ -1074,6 +1105,7 @@ def read_project_skill(config: Config, project: str, name: str) -> dict:
             **skills.read_skill(folder)}
 
 
+@_locked
 def turn_project_skill(config: Config, project: str, name: str, off: bool) -> dict:
     """Turn Off or Turn on, for this user only: the project's local settings."""
     project, folder = _project_skill(config, project, name)
@@ -1081,11 +1113,10 @@ def turn_project_skill(config: Config, project: str, name: str, off: bool) -> di
         return {"ok": False, "error": folder}
     front, _ = skills.frontmatter(folder)
     key = skills.override_key(folder, front)
-    with _jobs_lock:
-        try:
-            done = skills.set_override(config, project, key, "off" if off else None)
-        except (RuntimeError, OSError) as exc:
-            return {"ok": False, "error": str(exc)}
+    try:
+        done = skills.set_override(config, project, key, "off" if off else None)
+    except (RuntimeError, OSError) as exc:
+        return {"ok": False, "error": str(exc)}
     now = skills.visibility(key, skills.read_overrides(project))
     note = ""
     if not off and now["state"] != "on":
@@ -1094,29 +1125,178 @@ def turn_project_skill(config: Config, project: str, name: str, off: bool) -> di
     return {"ok": True, **done, "visibility": now, "note": note}
 
 
+@_locked
 def archive_project_skill(config: Config, project: str, name: str) -> dict:
     project, folder = _project_skill(config, project, name)
     if project is None:
         return {"ok": False, "error": folder}
-    with _jobs_lock:
-        try:
-            done = skills.archive(config, project, folder)
-        except (RuntimeError, OSError) as exc:
-            return {"ok": False, "error": str(exc)}
+    edit = edit_state(config, project, folder.name).get("state")
+    if edit in ("editing", "edit-ready"):
+        return {"ok": False, "error": "an edit of this skill is running or waiting; apply "
+                                      "or discard it first"}
+    try:
+        done = skills.archive(config, project, folder)
+    except (RuntimeError, OSError) as exc:
+        return {"ok": False, "error": str(exc)}
+    skills.discard_edit(config, project, folder.name)   # a failed edit's leftovers
     return {"ok": True, **done}
 
 
+@_locked
 def restore_project_skill(config: Config, project: str, archive_id: str) -> dict:
     if project not in known_projects(config):
         return {"ok": False, "error": "unknown project"}
-    with _jobs_lock:
-        try:
-            done = skills.restore(config, project, archive_id)
-        except (LookupError, RuntimeError, OSError) as exc:
-            return {"ok": False, "error": str(exc.args[0] if exc.args else exc)}
+    try:
+        done = skills.restore(config, project, archive_id)
+    except (LookupError, RuntimeError, OSError) as exc:
+        return {"ok": False, "error": str(exc.args[0] if exc.args else exc)}
     note = ("Open Claude Code sessions need /reload-skills: this project had no "
             ".claude/skills folder until now." if done["reload"] else "")
     return {"ok": True, **done, "note": note}
+
+
+EDIT_WAITING = ("an edit of the installed skill is waiting under Project skills; "
+                "apply or discard it first")
+
+
+def edit_state(config: Config, project: str, folder_name: str) -> dict:
+    """Where an edit of this skill stands, read from its status file only:
+    `{}` for none, else `editing`, `edit-ready` or `edit-failed`."""
+    current = skills.edit_dir(config, project, folder_name)
+    try:
+        status = json.loads((current / "status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    instruction = str(status.get("instruction") or "")
+    if status.get("state") == "editing":
+        fresh, orphaned = _job_fresh(status)
+        if fresh:
+            return {"state": "editing", "since": status.get("started"), "instruction": instruction}
+        return {"state": "edit-failed", "instruction": instruction,
+                "message": "the server restarted while the agent edited" if orphaned
+                           else "the edit did not finish"}
+    if status.get("state") == "ready":
+        if (current / "proposal").is_dir():
+            return {"state": "edit-ready", "instruction": instruction}
+        return {"state": "edit-failed", "instruction": instruction,
+                "message": "the proposal is missing"}
+    if status.get("state") == "failed":
+        return {"state": "edit-failed", "instruction": instruction,
+                "message": str(status.get("message") or "")}
+    return {}
+
+
+def _edit_waiting(config: Config, record: dict) -> bool:
+    """Whether the Project skills tab holds an edit of this installed copy."""
+    if record.get("target") != "project" or not record.get("path"):
+        return False
+    folder = Path(record["path"])
+    return edit_state(config, str(folder.parents[2]), folder.name).get("state") in (
+        "editing", "edit-ready")
+
+
+def _draft_newer(config: Config, folder: Path) -> bool:
+    """For a skill installed from a draft: whether the draft changed since."""
+    entry_id, record = skills.install_index(config).get(os.path.realpath(folder), ("", {}))
+    drafted = skills.drafted_skill(config, entry_id) if entry_id else None
+    return bool(drafted) and skills.install_stale(record, drafted)
+
+
+def _edit_job(config: Config, key: str, project: str, folder_name: str,
+              instruction: str) -> None:
+    status = skills.edit_dir(config, project, folder_name) / "status.json"
+    try:
+        proc = _run(config, "edit-skill", folder_name, f"--project={project}",
+                    f"--instruction={instruction}", "--apply")
+        if proc.returncode != 0:
+            skills.write_json(status, {"state": "failed", "instruction": instruction,
+                                       "message": _tail((proc.stderr or "") or (proc.stdout or ""), 2)})
+        else:
+            skills.write_json(status, {"state": "ready", "instruction": instruction})
+    except Exception as exc:  # noqa: BLE001 - the thread must record, not raise
+        skills.write_json(status, {"state": "failed", "instruction": instruction,
+                                   "message": f"{type(exc).__name__}: {exc}"})
+    finally:
+        with _jobs_lock:
+            _jobs.pop(key, None)
+
+
+@_locked
+def edit_project_skill(config: Config, project: str, name: str, instruction: str) -> dict:
+    """Have the agent edit a copy of an installed skill, in the background.
+    What it made waits as a proposal; nothing in the project changes until
+    Apply."""
+    instruction = (instruction or "").strip()
+    if not instruction:
+        return {"ok": False, "error": "say what to change"}
+    if len(instruction) > MAX_INSTRUCTION:
+        return {"ok": False, "error": f"at most {MAX_INSTRUCTION} characters"}
+    project, folder = _project_skill(config, project, name)
+    if project is None:
+        return {"ok": False, "error": folder}
+    key = f"edit:{skills.project_key(project)}/{folder.name}"
+    state = edit_state(config, project, folder.name).get("state")
+    if key in _jobs or state == "editing":
+        return {"ok": False, "error": "the agent is already editing this skill"}
+    if state == "edit-ready":
+        return {"ok": False, "error": "an edit is waiting: apply or discard it first"}
+    refused = skills.edit_refusal(folder)
+    if refused:
+        return {"ok": False, "error": f"it cannot be edited here: {refused}"}
+    if _draft_newer(config, folder):
+        return {"ok": False, "error": "its draft is newer than the installed copy: "
+                                      "Update it from Drafts first"}
+    skills.write_json(skills.edit_dir(config, project, folder.name) / "status.json",
+                      {"state": "editing", "started": time.time(), "boot": _BOOT,
+                       "instruction": instruction})
+    job = threading.Thread(target=_edit_job, daemon=True,
+                           args=(config, key, project, folder.name, instruction))
+    _jobs[key] = job
+    job.start()
+    return {"ok": True}
+
+
+def proposal_project_skill(config: Config, project: str, name: str) -> dict:
+    """The waiting edit of a skill, as a diff."""
+    project, folder = _project_skill(config, project, name)
+    if project is None:
+        return {"ok": False, "error": folder}
+    if edit_state(config, project, folder.name).get("state") != "edit-ready":
+        return {"ok": False, "error": "no edit is waiting for this skill"}
+    try:
+        return {"ok": True, **skills.diff_proposal(
+            skills.edit_dir(config, project, folder.name), folder)}
+    except (OSError, ValueError, KeyError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@_locked
+def apply_project_skill_edit(config: Config, project: str, name: str) -> dict:
+    project, folder = _project_skill(config, project, name)
+    if project is None:
+        return {"ok": False, "error": folder}
+    if edit_state(config, project, folder.name).get("state") != "edit-ready":
+        return {"ok": False, "error": "no edit is waiting for this skill"}
+    if _draft_newer(config, folder):
+        return {"ok": False, "error": "its draft changed since it was installed: Update it "
+                                      "from Drafts, then ask for the edit again"}
+    try:
+        done = skills.apply_edit(config, project, folder)
+    except (RuntimeError, OSError, ValueError, KeyError) as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, **done}
+
+
+@_locked
+def discard_project_skill_edit(config: Config, project: str, name: str) -> dict:
+    project, folder = _project_skill(config, project, name)
+    if project is None:
+        return {"ok": False, "error": folder}
+    key = f"edit:{skills.project_key(project)}/{folder.name}"
+    if key in _jobs or edit_state(config, project, folder.name).get("state") == "editing":
+        return {"ok": False, "error": "the agent is still editing; wait for it to finish"}
+    skills.discard_edit(config, project, folder.name)
+    return {"ok": True}
 
 
 def make_handler(config: Config, skills_dir: Path | None = None):
@@ -1146,6 +1326,15 @@ def make_handler(config: Config, skills_dir: Path | None = None):
             config, str(p.get("project", "")), str(p.get("name", ""))),
         "/api/skill/restore": lambda p: restore_project_skill(
             config, str(p.get("project", "")), str(p.get("archive", ""))),
+        "/api/skill/edit": lambda p: edit_project_skill(
+            config, str(p.get("project", "")), str(p.get("name", "")),
+            str(p.get("instruction") or "")),
+        "/api/skill/proposal": lambda p: proposal_project_skill(
+            config, str(p.get("project", "")), str(p.get("name", ""))),
+        "/api/skill/apply": lambda p: apply_project_skill_edit(
+            config, str(p.get("project", "")), str(p.get("name", ""))),
+        "/api/skill/discard": lambda p: discard_project_skill_edit(
+            config, str(p.get("project", "")), str(p.get("name", ""))),
     }
 
     class Handler(BaseHTTPRequestHandler):

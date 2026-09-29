@@ -7652,10 +7652,8 @@ class TestMemoryGuardAcrossProcesses(TempRoot):
         self.assertEqual(asked, ["gemma4:e4b", "gemma4:e4b"])
 
 
-class TestProjectSkills(TempRoot):
-    """The Project skills tab: every skill a project has in `.claude/skills/`,
-    whoever made it, and what the page does with one without an agent: show
-    it in full, turn it off or on for this user, archive it and restore it."""
+class ProjectSkillsCase(TempRoot):
+    """Scratch projects with skills in them, for the Project skills tests."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -7716,6 +7714,13 @@ class TestProjectSkills(TempRoot):
     def _tree(self, folder):
         return {p.relative_to(folder).as_posix(): p.read_bytes()
                 for p in sorted(folder.rglob("*")) if p.is_file()}
+
+
+
+class TestProjectSkills(ProjectSkillsCase):
+    """The Project skills tab: every skill a project has in `.claude/skills/`,
+    whoever made it, and what the page does with one without an agent: show
+    it in full, turn it off or on for this user, archive it and restore it."""
 
     def test_every_folder_with_a_skill_md_is_listed_whoever_made_it(self):
         self._skill("deploy", files={"scripts/run.sh": "#!/bin/sh\necho hi\n"})
@@ -7978,3 +7983,292 @@ class TestProjectSkills(TempRoot):
         with mock.patch.object(subprocess, "run", refuse), \
                 mock.patch.object(subprocess, "Popen", refuse):
             self.assertIn("deploy", self._cards())
+
+
+class TestEditSkillCommand(TempRoot):
+    """`skill-plus-plus edit-skill`: the agent edits a copy of a skill a project
+    has installed, and what it made is kept as a proposal. The project is never
+    written.
+
+    No agent is launched: `subprocess.run` is replaced by a function that edits
+    the copy, through SKILL_PLUS_PLUS_EDIT_DIR, the way an agent would.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        import argparse
+        self.argparse = argparse
+        self.repo = self.root / "repo"
+        self.skill = self.repo / ".claude" / "skills" / "deploy"
+        (self.skill / "scripts").mkdir(parents=True)
+        (self.skill / "SKILL.md").write_text(
+            "---\nname: deploy\ndescription: \"Use when shipping.\"\n---\n# Steps\n1. Build.\n")
+        (self.skill / "scripts" / "run.sh").write_text("#!/bin/sh\necho ship\n")
+        self.before = self._tree()
+
+    def _tree(self):
+        return {p.relative_to(self.skill).as_posix(): p.read_bytes()
+                for p in sorted(self.skill.rglob("*")) if p.is_file()}
+
+    def _args(self, **kw):
+        base = dict(root=self.config.root, folder="deploy", project=str(self.repo),
+                    instruction="add a step that runs the tests", apply=True, cwd=None,
+                    timeout=900)
+        base.update(kw)
+        return self.argparse.Namespace(**base)
+
+    def _agent(self, edit=None, exit_code=0, say=""):
+        import subprocess
+        seen = {}
+
+        def fake(argv, **kw):
+            seen["argv"], seen["kw"] = argv, kw
+            if edit:
+                edit(Path(kw["env"]["SKILL_PLUS_PLUS_EDIT_DIR"]))
+            return subprocess.CompletedProcess(argv, exit_code, stdout=say, stderr="")
+        patcher = mock.patch.object(subprocess, "run", fake)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return seen
+
+    def _current(self):
+        from skill_plus_plus.skills import edit_dir
+        return edit_dir(self.config, str(self.repo), "deploy")
+
+    @staticmethod
+    def _add_step(copy):
+        md = copy / "SKILL.md"
+        md.write_text(md.read_text() + "2. Run the tests.\n")
+
+    def test_a_dry_run_launches_nothing_and_copies_nothing(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        seen = self._agent()
+        self.assertEqual(cmd_edit_skill(self._args(apply=False)), 0)
+        self.assertNotIn("argv", seen)
+        self.assertFalse(self._current().exists())
+
+    def test_the_agent_edits_a_copy_and_the_skill_is_untouched_until_applied(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        seen = self._agent(edit=self._add_step)
+        self.assertEqual(cmd_edit_skill(self._args()), 0)
+        self.assertEqual(self._tree(), self.before, "the project is never written")
+        copy = Path(seen["kw"]["env"]["SKILL_PLUS_PLUS_EDIT_DIR"])
+        self.assertNotIn(str(self.repo), str(copy))
+        self.assertIn(str(copy), seen["argv"][2])
+        self.assertIn("add a step that runs the tests", seen["argv"][2])
+        self.assertIn("Leave `name: deploy` exactly as it is", seen["argv"][2])
+        self.assertIn("2. Run the tests.", (self._current() / "proposal" / "SKILL.md").read_text())
+        base = json.loads((self._current() / "base.json").read_text())
+        self.assertEqual(set(base["files"]), {"SKILL.md", "scripts/run.sh"})
+
+    def test_an_instruction_that_looks_like_an_option_still_arrives(self):
+        from skill_plus_plus.cli import main
+        seen = self._agent(edit=self._add_step)
+        self.assertEqual(main(["--root", str(self.config.root), "edit-skill", "deploy",
+                               f"--project={self.repo}", "--instruction=--shorter",
+                               "--apply"]), 0)
+        self.assertIn("--shorter", seen["argv"][2])
+
+    def test_no_change_is_not_a_proposal(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        self._agent(edit=None)
+        self.assertEqual(cmd_edit_skill(self._args()), 1)
+        self.assertFalse((self._current() / "proposal").exists())
+
+    def test_a_stated_decline_leaves_no_proposal(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        self._agent(edit=self._add_step, say="SKILL-PLUS-PLUS-DECLINE: needs the CI config\n")
+        self.assertEqual(cmd_edit_skill(self._args()), 1)
+        self.assertFalse((self._current() / "proposal").exists())
+
+    def test_a_proposal_that_renames_the_skill_is_refused(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+
+        def rename(copy):
+            md = copy / "SKILL.md"
+            md.write_text(md.read_text().replace("name: deploy", "name: ship"))
+        self._agent(edit=rename)
+        self.assertEqual(cmd_edit_skill(self._args()), 1)
+        self.assertFalse((self._current() / "proposal").exists())
+
+    def test_a_failed_run_leaves_no_proposal_and_keeps_what_the_agent_said(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        self._agent(edit=self._add_step, exit_code=2, say="not logged in\n")
+        self.assertEqual(cmd_edit_skill(self._args()), 2)
+        self.assertFalse((self._current() / "proposal").exists())
+        self.assertIn("not logged in", (self._current() / "agent.log").read_text())
+
+    def test_a_linked_skill_is_not_edited(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        shared = self.root / "shared" / "deploy"
+        shared.parent.mkdir()
+        self.skill.rename(shared)
+        self.skill.symlink_to(shared)
+        seen = self._agent(edit=self._add_step)
+        self.assertEqual(cmd_edit_skill(self._args()), 1)
+        self.assertNotIn("argv", seen)
+
+    def test_the_workspace_is_removed_after_the_run(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        seen = self._agent(edit=self._add_step)
+        cmd_edit_skill(self._args())
+        self.assertFalse(Path(seen["kw"]["env"]["SKILL_PLUS_PLUS_EDIT_DIR"]).parent.exists())
+
+    def test_an_agent_that_writes_into_the_project_is_reported(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+
+        def into_the_project(copy):
+            self._add_step(copy)
+            (self.skill / "SKILL.md").write_text("changed where it should not be\n")
+        self._agent(edit=into_the_project)
+        self.assertEqual(cmd_edit_skill(self._args()), 1)
+        self.assertFalse((self._current() / "proposal").exists())
+
+
+class TestProjectSkillEdits(ProjectSkillsCase):
+    """Edit on the Project skills tab, end to end: the page starts
+    `skill-plus-plus edit-skill` in the background, the agent (a stub script)
+    edits a copy, and the change waits as a diff until Apply or Discard."""
+
+    def _agent(self, body):
+        import shlex
+        script = self.root / "agent.py"
+        script.write_text("import os, pathlib, sys\n"
+                          "copy = pathlib.Path(os.environ['SKILL_PLUS_PLUS_EDIT_DIR'])\n" + body,
+                          encoding="utf-8")
+        agent = mock.patch.dict(os.environ, {"SKILL_PLUS_PLUS_AGENT": (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{PROMPT}}")})
+        agent.start()
+        self.addCleanup(agent.stop)
+
+    ADD_STEP = ("md = copy / 'SKILL.md'\n"
+                "md.write_text(md.read_text() + '2. Run the tests.\\n')\n")
+
+    def _edit(self, name="deploy", instruction="add a step that runs the tests"):
+        from skill_plus_plus import web
+        from skill_plus_plus.skills import project_key
+        done = web.edit_project_skill(self.config, str(self.repo), name, instruction)
+        job = web._jobs.get(f"edit:{project_key(str(self.repo))}/{name}")
+        if job:
+            job.join(timeout=60)
+        return done
+
+    def _card(self, name="deploy"):
+        return self._cards()[name]
+
+    def test_an_edit_is_proposed_in_the_background_and_shown_as_a_diff(self):
+        from skill_plus_plus.web import proposal_project_skill
+        root = self._skill("deploy")
+        before = self._tree(root)
+        self._agent(self.ADD_STEP)
+        self.assertTrue(self._edit()["ok"])
+        self.assertEqual(self._card()["edit"]["state"], "edit-ready")
+        self.assertEqual(self._tree(root), before, "nothing in the project changed")
+        shown = proposal_project_skill(self.config, str(self.repo), "deploy")
+        [changed] = shown["files"]
+        self.assertEqual((changed["path"], changed["change"], changed["added"]),
+                         ("SKILL.md", "changed", 1))
+        self.assertIn("+2. Run the tests.", changed["diff"])
+        self.assertFalse(shown["stale"])
+
+    def test_apply_writes_the_proposal_and_keeps_the_previous_version(self):
+        from skill_plus_plus.skills import edit_root
+        from skill_plus_plus.web import apply_project_skill_edit
+        root = self._skill("deploy", files={"old.md": "gone soon\n"})
+        self._agent(self.ADD_STEP + "(copy / 'old.md').unlink()\n"
+                    "(copy / 'new.md').write_text('added\\n')\n")
+        self._edit()
+        done = apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(sorted(done["changed"]), ["SKILL.md", "new.md", "old.md"])
+        self.assertIn("2. Run the tests.", (root / "SKILL.md").read_text())
+        self.assertEqual(sorted(self._tree(root)), ["SKILL.md", "new.md"])
+        self.assertEqual(self._card()["edit"], {})
+        [kept] = (edit_root(self.config, str(self.repo), "deploy") / "history").iterdir()
+        self.assertEqual((kept / "base" / "old.md").read_text(), "gone soon\n")
+
+    def test_apply_is_refused_when_the_skill_changed_after_the_copy(self):
+        from skill_plus_plus.web import apply_project_skill_edit, proposal_project_skill
+        root = self._skill("deploy")
+        self._agent(self.ADD_STEP)
+        self._edit()
+        (root / "SKILL.md").write_text("edited by hand meanwhile\n")
+        self.assertTrue(proposal_project_skill(self.config, str(self.repo), "deploy")["stale"])
+        done = apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        self.assertFalse(done["ok"])
+        self.assertIn("changed after the agent started", done["error"])
+        self.assertEqual((root / "SKILL.md").read_text(), "edited by hand meanwhile\n")
+
+    def test_discard_changes_nothing_in_the_repo(self):
+        from skill_plus_plus.web import discard_project_skill_edit
+        root = self._skill("deploy")
+        before = self._tree(root)
+        self._agent(self.ADD_STEP)
+        self._edit()
+        self.assertTrue(discard_project_skill_edit(self.config, str(self.repo), "deploy")["ok"])
+        self.assertEqual(self._tree(root), before)
+        self.assertEqual(self._card()["edit"], {})
+
+    def test_a_failed_edit_says_why_and_can_be_asked_again(self):
+        self._skill("deploy")
+        self._agent("print('not logged in'); sys.exit(1)\n")
+        self.assertTrue(self._edit()["ok"])
+        edit = self._card()["edit"]
+        self.assertEqual(edit["state"], "edit-failed")
+        self.assertIn("failed", edit["message"])
+        self._agent(self.ADD_STEP)
+        self.assertTrue(self._edit()["ok"])
+        self.assertEqual(self._card()["edit"]["state"], "edit-ready")
+
+    def test_one_edit_per_skill_at_a_time(self):
+        from skill_plus_plus import skills, web
+        self._skill("deploy")
+        status = skills.edit_dir(self.config, str(self.repo), "deploy") / "status.json"
+        skills.write_json(status, {"state": "editing", "started": time.time(), "boot": web._BOOT})
+        self.assertIn("already editing", self._edit()["error"])
+        for gone in ({"boot": "another server"}, {"boot": web._BOOT, "started": 0}):
+            skills.write_json(status, {"state": "editing", "started": time.time(), **gone})
+            self.assertEqual(self._card()["edit"]["state"], "edit-failed", gone)
+        self._agent(self.ADD_STEP)
+        self._edit()
+        self.assertIn("apply or discard it first", self._edit()["error"])
+
+    def test_applying_an_edit_to_a_skill_installed_from_its_draft_keeps_update_and_uninstall_working(self):
+        from skill_plus_plus.web import apply_project_skill_edit, uninstall_skill
+        folder = self._drafted_and_installed("x")
+        self._agent(self.ADD_STEP)
+        self.assertTrue(self._edit(folder.name)["ok"])
+        self.assertTrue(apply_project_skill_edit(self.config, str(self.repo), folder.name)["ok"])
+        self.assertIn("2. Run the tests.",
+                      (self.config.root / "drafts" / "x" / "SKILL.md").read_text(),
+                      "the draft has the same edit")
+        self.assertFalse(self._card(folder.name)["update"], "nothing for Update to pass on")
+        self.assertTrue(uninstall_skill(self.config, "x")["ok"],
+                        "the applied edit is not taken for a hand edit")
+
+    def test_an_edit_waits_while_the_draft_is_newer_than_the_installed_copy(self):
+        folder = self._drafted_and_installed("x")
+        draft = self.config.root / "drafts" / "x" / "SKILL.md"
+        draft.write_text(draft.read_text() + "## Traps\n")
+        self.assertIn("Update it from Drafts", self._edit(folder.name)["error"])
+
+    def test_update_uninstall_and_archive_wait_for_a_pending_edit(self):
+        from skill_plus_plus.web import archive_project_skill, install_skill, uninstall_skill
+        folder = self._drafted_and_installed("x")
+        self._agent(self.ADD_STEP)
+        self._edit(folder.name)
+        for done in (install_skill(self.config, "x", "project"), uninstall_skill(self.config, "x"),
+                     archive_project_skill(self.config, str(self.repo), folder.name)):
+            self.assertFalse(done["ok"])
+            self.assertIn("apply or discard it first", done["error"])
+
+    def test_the_diff_warns_about_a_long_description_and_keys_uploads_refuse(self):
+        from skill_plus_plus.web import proposal_project_skill
+        self._skill("deploy")
+        self._agent("md = copy / 'SKILL.md'\n"
+                    "md.write_text(md.read_text().replace('description: \"Use when testing.\"', "
+                    "'description: \"Use when ' + 'x' * 210 + '\"\\ndisable-model-invocation: true'))\n")
+        self._edit()
+        warnings = proposal_project_skill(self.config, str(self.repo), "deploy")["warnings"]
+        self.assertTrue(any("characters" in w for w in warnings), warnings)
+        self.assertTrue(any("disable-model-invocation" in w for w in warnings), warnings)
