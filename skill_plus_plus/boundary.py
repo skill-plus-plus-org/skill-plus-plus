@@ -20,9 +20,9 @@ Two things keep each call fast, and neither may be undone:
 
 * the one-word answer that `prompts/new_job.md` ends by asking for, because the
   length of what is generated, not of what is read, sets the time a call takes;
-* thinking off (`JUDGE_THINKS`): the default model, `gemma4:e4b`, can think,
-  and on a model that thinks the same one-word question takes minutes instead
-  of a second.
+* thinking off (`JUDGE_THINKS`): the default model, `gemma4:e4b-it-qat`, can
+  think, and on a model that thinks the same one-word question takes minutes
+  instead of a second.
 
 Why the question is asked here — the per-tool-call judge it replaced, the
 polarity test that settled it, the framings rejected since and what each cost —
@@ -125,13 +125,14 @@ NEXT_LABEL = "## What the assistant did after the new message"
 
 # Whether the question says so when the earlier task's work ended in a completion
 # marker (`segment.COMPLETION_MARKERS`: a commit, a push, a pull request) and
-# nothing changed after it. Off, so the question renders as measured. The
-# command is already among the last actions, but as one line of a heredoc, and
-# `gemma4:e4b-it-qat` reads past it: on C-same it answers "no" right after the
-# `git commit`. A marker no longer cuts on its own, a verdict does
-# (docs/research/benchmarks.md), so this is a fact the judge weighs rather than a
-# rule. Measured with `tests/benchmarks/judge_replay.py --completion`.
-SHOW_COMPLETION = False
+# nothing changed after it. On. The command is already among the last actions,
+# but as one line of a heredoc, and `gemma4:e4b-it-qat` reads past it: on C-same
+# it answers "no" right after the `git commit`, and "yes" with the line, which
+# moved no other verdict on the recorded sessions (docs/research/benchmarks.md,
+# "A finished commit, said in one line"). A marker no longer cuts on its own, a
+# verdict does, so this is a fact the judge weighs rather than a rule.
+# `tests/benchmarks/judge_replay.py --no-completion` measures without it.
+SHOW_COMPLETION = True
 
 
 def render_step(step: dict) -> str:

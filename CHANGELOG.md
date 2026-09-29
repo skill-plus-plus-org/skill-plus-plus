@@ -8,6 +8,15 @@ All notable changes to Skill++. The format follows
 
 ### Changed
 
+- The local model is `gemma4:e4b-it-qat`, a build of `gemma4:e4b` trained to
+  run at 4 bits: about 6 GB to download instead of 10, and cutting a session
+  needs about 7 GB of free memory instead of 12. On every recorded session it
+  cuts exactly where `gemma4:e4b` did. `skill-plus-plus install --apply`
+  downloads it; `SKILL_PLUS_PLUS_LOCAL_MODEL=gemma4:e4b` keeps the old one, and
+  `ollama rm gemma4:e4b` gives back its disk space.
+- The question that cuts a session into tasks says when the work before your
+  message ended in a commit, a push or a pull request. With it, the smaller
+  model sees a new task of the same kind that starts right after a commit.
 - `install --apply` ends by saying what to do next: start a new Claude Code
   session (the ones already open are not captured), open `skill-plus-plus
   web`, and when a candidate appears, with a link to the docs.

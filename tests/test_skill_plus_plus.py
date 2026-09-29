@@ -147,7 +147,7 @@ def setUpModule() -> None:
     _REAL_NAME = capture._name_from_model
     capture._name_from_model = lambda config, entry: None
     # And for `install`, which lists the Ollama models and pulls missing ones on
-    # --apply. A test must never start a 10 GB download, nor depend on what the
+    # --apply. A test must never start a 6 GB download, nor depend on what the
     # machine running it has pulled: every model is present unless a test says
     # otherwise, and a pull that is not stubbed fails the test.
     global _REAL_MODELS, _REAL_PULL

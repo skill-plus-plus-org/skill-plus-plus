@@ -1672,17 +1672,24 @@ private sessions with a commit end on it.
 | V7 | 29/30 · 12/13 · 0/100 | 20/21 · 1/2 · 0/43 |
 | V7 + the line | **30/30 · 13/13 · 0/100** | 20/21 · 1/2 · 0/43 |
 
-With the line, the smaller model matches `gemma4:e4b` on every recorded session.
+With the line, the smaller model gives the same verdict as `gemma4:e4b` at all
+158 gaps. Since 29 Sep 2026 both are the defaults: the line is on
+(`judge_replay.py --no-completion` measures without it), and
+`gemma4:e4b-it-qat` is the local model. On an 18 GB Mac a fold needs about
+7.0 GB of free memory with it, against 12.2 GB with `gemma4:e4b`, and the
+lowest free memory while folding the eight demo recordings was 7.2 GB, at
+normal pressure.
 
 What this does not show:
 
 - **A follow-up right after a commit.** No recording has one: every message
   after a commit in the public set starts a new task. "Commit it." followed by
   "Push it." or "CI fails, fix it." is where the line could cause a false cut,
-  and it needs a recording before the line goes on by default.
+  and the line went on before that was recorded.
 - **`gemma4:e4b` with the line.** It already catches all five flagged switches.
-- Off by default, so the prompts pinned in `expected.json` render unchanged;
-  `judge_replay.py --completion` turns it on.
+- **Naming and summaries on `gemma4:e4b-it-qat`.** The local model also names
+  candidates and writes the review page's summaries; only its cuts were
+  compared.
 
 ## Same procedure, decided by embedding
 
