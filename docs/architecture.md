@@ -52,7 +52,7 @@ is **held**, not guessed at, and banked by the next `SessionStart`.
 | `cli` | Every command, including `draft`/`revise` and the agent they start. |
 | `install` | Wiring hooks into a settings file and removing them, and copying the slash commands. |
 | `lifecycle` | Tiers (hot, cold, archived) and staleness for installed skills. |
-| `skills` | The skills a project has: the Skills tab's cards, reading a `SKILL.md`, turning one off, and the agent's edits as proposals to apply. |
+| `skills` | The skills a project has: the Skills tab's cards, reading a `SKILL.md`, turning one off, and the agent's edits as proposals to apply, and to undo right after. |
 | `normalize` | Parameterising paths and ids, and the shape of a step used for comparison. |
 | `sanitize` | Scrubbing secrets and addresses from every captured string. |
 | `decisions` | The append-only record of what you promoted and dismissed. |

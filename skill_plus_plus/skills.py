@@ -15,7 +15,6 @@ import os
 import re
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import Config
@@ -330,10 +329,6 @@ def write_json(path: Path, data) -> None:
     os.replace(tmp, path)
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
 # -- the gallery ---------------------------------------------------------------
 
 def _card(folder: Path, found: dict) -> dict:
@@ -389,8 +384,6 @@ EDIT_BYTES_CAP = 1024 * 1024
 DIFF_FILE_CAP = 256 * 1024
 DIFF_OUT_CAP = 100 * 1024
 DIFF_TOTAL_CAP = 400 * 1024
-# Applied edits kept per skill, each with the version it replaced.
-HISTORY_KEPT = 10
 # The frontmatter keys claude.ai uploads and the Skills API accept. Claude Code
 # reads more, but a skill carrying any other key can no longer be uploaded.
 UPLOAD_KEYS = ("name", "description", "license", "compatibility", "metadata", "allowed-tools")
@@ -404,6 +397,12 @@ def edit_dir(config: Config, place: Place, folder_name: str) -> Path:
     """The one edit of this skill in progress or waiting: `status.json`,
     `base.json`, `base/`, `proposal/` and `agent.log`."""
     return edit_root(config, place, folder_name) / "current"
+
+
+def undo_dir(config: Config, place: Place, folder_name: str) -> Path:
+    """The last applied edit, while it can be undone: the same folder,
+    moved here by Apply. `base/` is the skill as it was."""
+    return edit_root(config, place, folder_name) / "undo"
 
 
 def edit_refusal(folder: Path) -> str:
@@ -576,8 +575,8 @@ def apply_edit(config: Config, place: Place, folder: Path) -> dict:
 
     Refused when the skill changed after the agent's copy was taken: the
     proposal was made against files that are no longer there. On a failed
-    write, what was written is put back from the copy. The replaced version
-    goes to `history/`, with the last HISTORY_KEPT edits kept.
+    write, what was written is put back from the copy. The edit then moves to
+    `undo_dir`, for `undo_edit`, until `forget_undo`.
     """
     current = edit_dir(config, place, folder.name)
     base = json.loads((current / "base.json").read_text(encoding="utf-8"))
@@ -588,40 +587,79 @@ def apply_edit(config: Config, place: Place, folder: Path) -> dict:
     why = check_proposal(current / "proposal", base)
     if why:
         raise RuntimeError(why)
-    after = snapshot(current / "proposal")
+    changed = _replace_files(folder, current / "proposal", before,
+                             snapshot(current / "proposal"), current / "base")
+    forget_undo(config, place, folder.name)
+    os.replace(current, undo_dir(config, place, folder.name))
+    return {"changed": changed}
+
+
+def undo_edit(config: Config, place: Place, folder: Path) -> list[str]:
+    """Put the skill back as it was before its last Apply, from the copy the
+    edit was made on. Refused once anything changed the skill since: undoing
+    it then would throw that change away."""
+    kept = undo_dir(config, place, folder.name)
+    if not (kept / "base").is_dir():
+        raise RuntimeError("there is nothing to undo")
+    now, then = snapshot(kept / "proposal"), snapshot(kept / "base")
+    if not folder.is_dir() or folder.is_symlink() or snapshot(folder) != now:
+        raise RuntimeError("the skill changed after the edit was applied, so it can't be undone")
+    changed = _replace_files(folder, kept / "base", now, then, kept / "proposal")
+    forget_undo(config, place, folder.name)
+    return changed
+
+
+def forget_undo(config: Config, place: Place, folder_name: str) -> None:
+    """Drop what Undo would put back."""
+    shutil.rmtree(undo_dir(config, place, folder_name), ignore_errors=True)
+    try:
+        edit_root(config, place, folder_name).rmdir()
+    except OSError:
+        pass                              # an edit of it is waiting
+
+
+def forget_every_undo(config: Config) -> None:
+    """Drop every copy Undo kept: nothing can ask for one once the page that
+    applied the edit is gone, which a new server means."""
+    for kept in (config.root / "edits").glob("*/*/undo"):
+        shutil.rmtree(kept, ignore_errors=True)
+        try:
+            kept.parent.rmdir()
+        except OSError:
+            pass
+
+
+def _replace_files(folder: Path, source: Path, before: dict, after: dict, backup: Path) -> list[str]:
+    """Make the skill hold *source*'s files: the changed ones written whole,
+    the ones *source* has not removed. *before* and *after* are the two sides'
+    `snapshot`s. On a failed write, what was written is put back from
+    *backup*, a copy of the skill as it was."""
     changed = [rel for rel in sorted(set(before) | set(after), key=_order)
                if before.get(rel) != after.get(rel)]
     done: list[str] = []
     try:
         for rel in changed:
             if rel in after:
-                _write_into(folder, rel, current / "proposal" / rel)
+                _write_into(folder, rel, source / rel)
             else:
                 (folder / rel).unlink()
             done.append(rel)
     except OSError:
         for rel in done:
             if rel in before:
-                _write_into(folder, rel, current / "base" / rel)
+                _write_into(folder, rel, backup / rel)
             else:
                 (folder / rel).unlink(missing_ok=True)
         _prune_empty(folder)
         raise
     _prune_empty(folder)
-    history = edit_root(config, place, folder.name) / "history"
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    history.mkdir(parents=True, exist_ok=True)
-    os.replace(current, history / stamp)
-    write_json(history / stamp / "applied.json", {"at": _now(), "changed": changed})
-    for old in sorted(history.iterdir())[:-HISTORY_KEPT]:
-        shutil.rmtree(old, ignore_errors=True)
-    return {"changed": changed}
+    return changed
 
 
 def discard_edit(config: Config, place: Place, folder_name: str) -> None:
     """Drop a proposed edit. Only Skill++'s own copy goes; the skill is untouched."""
     shutil.rmtree(edit_dir(config, place, folder_name), ignore_errors=True)
-    try:                                  # left empty unless edits were applied before
+    try:                                  # kept while the last Apply can be undone
         edit_root(config, place, folder_name).rmdir()
     except OSError:
         pass

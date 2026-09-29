@@ -168,9 +168,10 @@ Click a card to open the skill: its `SKILL.md`, and what you can do with it.
 - **Edit** asks your agent for a change: say what should change, and it edits
   a copy in a temporary folder. The change comes back as a diff. Nothing in the
   project changes until you press **Apply**; **Discard** drops it. Apply is
-  refused if the skill changed after the agent took its copy, and the version
-  it replaces is kept in
-  `~/.claude/skill-plus-plus/edits/<project>/<name>/history/` (the last ten).
+  refused if the skill changed after the agent took its copy. Right after
+  Apply, **Undo** puts the skill back as it was. It lasts until your next
+  action or a reload of the page, and is refused if anything changed the skill
+  since.
   The draft a skill was installed from stays as it was. A linked skill folder,
   and one over 100 files or 1 MB, are not edited from here.
 - **Turn off** switches the skill off for you only, as Claude Code's own

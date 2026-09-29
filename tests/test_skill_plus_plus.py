@@ -7631,6 +7631,9 @@ class ProjectSkillsCase(TempRoot):
         home = mock.patch("pathlib.Path.home", return_value=self.home)
         home.start()
         self.addCleanup(home.stop)
+        from skill_plus_plus import web
+        web._undo.clear()                         # one per server, and each test is one
+        self.addCleanup(web._undo.clear)
         self.repo = self._project("repo")
 
     def _project(self, name, eid=None):
@@ -8056,10 +8059,11 @@ class TestProjectSkillEdits(ProjectSkillsCase):
         self.assertIn("+2. Run the tests.", changed["diff"])
         self.assertFalse(shown["stale"])
 
-    def test_apply_writes_the_proposal_and_keeps_the_previous_version(self):
+    def test_apply_writes_the_proposal_and_undo_puts_the_skill_back(self):
         from skill_plus_plus.skills import edit_root, project_place
-        from skill_plus_plus.web import apply_project_skill_edit
+        from skill_plus_plus.web import apply_project_skill_edit, undo_project_skill_edit
         root = self._skill("deploy", files={"old.md": "gone soon\n"})
+        before = self._tree(root)
         self._agent(self.ADD_STEP + "(copy / 'old.md').unlink()\n"
                     "(copy / 'new.md').write_text('added\\n')\n")
         self._edit()
@@ -8069,8 +8073,80 @@ class TestProjectSkillEdits(ProjectSkillsCase):
         self.assertIn("2. Run the tests.", (root / "SKILL.md").read_text())
         self.assertEqual(sorted(self._tree(root)), ["SKILL.md", "new.md"])
         self.assertEqual(self._card()["edit"], {})
-        [kept] = (edit_root(self.config, project_place(str(self.repo)), "deploy") / "history").iterdir()
-        self.assertEqual((kept / "base" / "old.md").read_text(), "gone soon\n")
+        undone = undo_project_skill_edit(self.config, str(self.repo), "deploy", done["undo"])
+        self.assertTrue(undone["ok"], undone)
+        self.assertEqual(self._tree(root), before)
+        again = undo_project_skill_edit(self.config, str(self.repo), "deploy", done["undo"])
+        self.assertIn("can't be undone any more", again["error"])
+        self.assertFalse(edit_root(self.config, project_place(str(self.repo)), "deploy").exists(),
+                         "nothing of the edit is kept once it is undone")
+
+    def test_only_the_last_apply_can_be_undone_and_only_with_its_token(self):
+        from skill_plus_plus import web
+        from skill_plus_plus.skills import project_place, undo_dir
+        self._skill("deploy")
+        self._skill("notes")
+        self._agent(self.ADD_STEP)
+        self._edit("deploy")
+        first = web.apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        self._edit("notes")
+        second = web.apply_project_skill_edit(self.config, str(self.repo), "notes")
+        self.assertFalse(web.undo_project_skill_edit(self.config, str(self.repo), "deploy",
+                                                     first["undo"])["ok"], "another Apply came after it")
+        self.assertFalse(undo_dir(self.config, project_place(str(self.repo)), "deploy").exists(),
+                         "and what it kept is gone")
+        for token in ("", "guess", first["undo"]):
+            self.assertFalse(web.undo_project_skill_edit(self.config, str(self.repo), "notes",
+                                                         token)["ok"], token)
+        self.assertTrue(web.undo_project_skill_edit(self.config, str(self.repo), "notes",
+                                                    second["undo"])["ok"])
+
+    def test_undo_is_refused_once_the_skill_changed_after_apply(self):
+        from skill_plus_plus.web import apply_project_skill_edit, undo_project_skill_edit
+        root = self._skill("deploy")
+        self._agent(self.ADD_STEP)
+        self._edit()
+        done = apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        (root / "SKILL.md").write_text("changed by hand after the edit\n")
+        refused = undo_project_skill_edit(self.config, str(self.repo), "deploy", done["undo"])
+        self.assertIn("changed after the edit was applied", refused["error"])
+        self.assertEqual((root / "SKILL.md").read_text(), "changed by hand after the edit\n")
+
+    def test_a_new_server_forgets_what_undo_kept(self):
+        from skill_plus_plus import web
+        from skill_plus_plus.skills import project_place, undo_dir
+        self._skill("deploy")
+        self._agent(self.ADD_STEP)
+        self._edit()
+        done = web.apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        kept = undo_dir(self.config, project_place(str(self.repo)), "deploy")
+        self.assertTrue(kept.is_dir())
+        web._undo.clear()                         # the server that applied it stopped
+        web.serve(self.config, port=0, open_browser=False).server_close()
+        self.assertFalse(kept.exists())
+        self.assertFalse(web.undo_project_skill_edit(self.config, str(self.repo), "deploy",
+                                                     done["undo"])["ok"])
+
+    def test_a_failed_apply_leaves_the_skill_as_it_was_and_the_edit_waiting(self):
+        from skill_plus_plus import skills
+        from skill_plus_plus.web import apply_project_skill_edit
+        root = self._skill("deploy", files={"b.md": "b\n"})
+        before = self._tree(root)
+        self._agent(self.ADD_STEP + "(copy / 'b.md').write_text('changed\\n')\n")
+        self._edit()
+        real, calls = skills._write_into, []
+
+        def flaky(folder, rel, source):
+            calls.append(rel)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            real(folder, rel, source)
+        with mock.patch.object(skills, "_write_into", flaky):
+            done = apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        self.assertFalse(done["ok"])
+        self.assertNotIn("undo", done)
+        self.assertEqual(self._tree(root), before)
+        self.assertEqual(self._card()["edit"]["state"], "edit-ready", "to try again")
 
     def test_apply_is_refused_when_the_skill_changed_after_the_copy(self):
         from skill_plus_plus.web import apply_project_skill_edit, proposal_project_skill
@@ -8288,6 +8364,30 @@ class TestProjectSkillsPage(PageScriptCase):
         self.assertIn("Last edit failed: not logged in", failed["edit"])
         self.assertIn("data-edit-dismiss", failed["edit"], "a failure can be cleared")
         self.assertIn("data-vedit", failed["head"], "and the edit asked again")
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_undo_shows_right_after_apply_and_goes_with_the_next_action(self):
+        from skill_plus_plus.web import PAGE
+        script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
+        state = {"skills": [self._gallery("/w/app", [self.CARD])]}
+        opened = {"project": "/w/app", "name": "deploy", "editing": False, "proposal": None}
+        none, shown, other, after_read, after_action = self._run_async(script, f"""
+ALL = {json.dumps(state)};
+globalThis.fetch = async () => ({{json: async () => ({{ok: true}})}});
+const v = {json.dumps(opened)};
+const none = editHTML(v);
+justApplied = {{project: "/w/app", name: "deploy", token: "t"}};
+const shown = editHTML(v), other = editHTML({{...v, name: "notes"}});
+await send("/api/skill/read", {{}});
+const afterRead = justApplied !== null;
+await post("/api/skill/off", {{}});
+return [none, shown, other, afterRead, justApplied];""")
+        self.assertEqual(none, "")
+        self.assertIn("The edit is applied.", shown)
+        self.assertIn("data-edit-undo", shown)
+        self.assertEqual(other, "", "only on the skill it changed")
+        self.assertTrue(after_read, "opening or reading a skill is no action")
+        self.assertIsNone(after_action, "any action ends it")
 
     @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
     def test_a_proposal_diff_is_escaped(self):

@@ -35,7 +35,9 @@ Useful context for judging whether something is a vulnerability:
   same agent as drafting, on a copy of the skill in a temporary folder, and
   writes the result into the skill only on **Apply**, after checking that the
   skill did not change meanwhile. A change to the project's copy while the
-  agent runs is detected, and then nothing is proposed.
+  agent runs is detected, and then nothing is proposed. **Undo** writes back
+  the copy the edit was made on: only for the last Apply, with the token that
+  Apply gave the page, and only while the skill holds exactly what it wrote.
 - **The drafting agent** (`skill-plus-plus draft`, **Draft Skill**) is whatever
   `SKILL_PLUS_PLUS_AGENT` names, by default `claude -p` allowed `Read`, `Write`, `Edit`
   and `python3 bin/skill-plus-plus`. It runs in a temporary folder and reads one

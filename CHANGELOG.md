@@ -29,7 +29,8 @@ All notable changes to Skill++. The format follows
   `skill-plus-plus edit-skill` does the same from the terminal. **Turn off**
   writes `skillOverrides` into the project's `.claude/settings.local.json`, for
   you only, as Claude Code's `/skills` menu does; a skill that is off is struck
-  through on its card.
+  through on its card. Right after **Apply**, **Undo** puts the skill back as
+  it was, until your next action or a reload of the page.
 
 ### Changed
 

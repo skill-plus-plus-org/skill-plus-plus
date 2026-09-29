@@ -20,6 +20,7 @@ import functools
 import json
 import math
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -1105,18 +1106,52 @@ def proposal_project_skill(config: Config, project: str, name: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+# The last Apply, while it can be undone: its skill, and a token that only the
+# page which applied it holds. That page forgets the token at its next action
+# and on a reload; the next Apply here replaces it. One at a time, in memory:
+# a new server can undo nothing.
+_undo: dict = {}
+
+
+def _forget_undo(config: Config) -> None:
+    if _undo:
+        skills.forget_undo(config, skills.project_place(_undo["project"]), _undo["folder"])
+        _undo.clear()
+
+
 @_locked
 def apply_project_skill_edit(config: Config, project: str, name: str) -> dict:
+    """Apply the waiting edit. The answer carries the token Undo needs."""
     place, folder = _project_skill(config, project, name)
     if place is None:
         return {"ok": False, "error": folder}
     if edit_state(config, place, folder.name).get("state") != "edit-ready":
         return {"ok": False, "error": "no edit is waiting for this skill"}
+    _forget_undo(config)                      # only the last Apply can be undone
     try:
         done = skills.apply_edit(config, place, folder)
     except (RuntimeError, OSError, ValueError, KeyError) as exc:
         return {"ok": False, "error": str(exc)}
-    return {"ok": True, **done}
+    _undo.update(token=secrets.token_urlsafe(16), project=place.key, folder=folder.name)
+    return {"ok": True, **done, "undo": _undo["token"]}
+
+
+@_locked
+def undo_project_skill_edit(config: Config, project: str, name: str, token: str) -> dict:
+    """Put the skill back as it was before the last Apply: with that Apply's
+    token only, and while the skill holds exactly what it wrote."""
+    place, folder = _project_skill(config, project, name)
+    if place is None:
+        return {"ok": False, "error": folder}
+    if not (_undo and token and secrets.compare_digest(token, _undo["token"])
+            and (place.key, folder.name) == (_undo["project"], _undo["folder"])):
+        return {"ok": False, "error": "it can't be undone any more"}
+    try:
+        changed = skills.undo_edit(config, place, folder)
+    except (RuntimeError, OSError) as exc:
+        return {"ok": False, "error": str(exc)}
+    _undo.clear()
+    return {"ok": True, "changed": changed}
 
 
 @_locked
@@ -1159,6 +1194,8 @@ def make_handler(config: Config):
             config, str(p.get("project", "")), str(p.get("name", ""))),
         "/api/skill/apply": lambda p: apply_project_skill_edit(
             config, str(p.get("project", "")), str(p.get("name", ""))),
+        "/api/skill/undo": lambda p: undo_project_skill_edit(
+            config, str(p.get("project", "")), str(p.get("name", "")), str(p.get("token") or "")),
         "/api/skill/discard": lambda p: discard_project_skill_edit(
             config, str(p.get("project", "")), str(p.get("name", ""))),
     }
@@ -1241,6 +1278,7 @@ def make_handler(config: Config):
 def serve(config: Config, port: int = 8765,
           open_browser: bool = True) -> ThreadingHTTPServer:
     """Serve on loopback only. Never bind anywhere else: there is no auth."""
+    skills.forget_every_undo(config)          # left by a server that stopped
     httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(config))
     if open_browser:
         threading.Thread(target=webbrowser.open, daemon=True,
@@ -1523,6 +1561,8 @@ PAGE = r"""<!doctype html>
  .edit .bar{display:flex;gap:8px;align-items:center}
  .edit .failed{justify-content:space-between;margin:0 0 10px}
  .edit .failed .err{margin:0}
+ .edit .applied{justify-content:space-between;margin:0 0 10px}
+ .edit .applied .ok{margin:0;font:12px var(--mono);color:var(--ok)}
  .edit .warns{margin:0 0 10px;padding:8px 12px 8px 28px;border:1px solid rgba(251,191,36,.35);
    background:rgba(251,191,36,.06);border-radius:6px;font-size:12.5px;color:var(--fg)}
  .diff{margin:8px 0 12px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
@@ -1603,8 +1643,10 @@ let noting = new Set(), notes = {};
 let openRuns = new Set(), convos = {}, convoError = {}, openReqs = new Set();
 // Every POST says it is JSON: the server refuses anything else, because a
 // body without that header is one another site could send cross-site.
-const post = (path, body) => fetch(path, {method: "POST",
+const send = (path, body) => fetch(path, {method: "POST",
   headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+// An action. Whatever it is, the last Apply can't be undone after it.
+const post = (path, body) => { justApplied = null; return send(path, body); };
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -1914,6 +1956,9 @@ function reviseBlock(d){
 // where Claude Code's /skills menu writes too. Edit has the agent change a
 // copy, shown as a diff that changes nothing until Apply.
 let viewer = null, viewerBound = false, editText = {};
+// The skill whose edit was just applied, and the token its Undo needs; null
+// once anything else is done, and after a reload.
+let justApplied = null;
 const skillKey = (p, n) => p + "\n" + n;
 function findGallery(p){ return ((ALL || S).skills || []).find(g => g.project === p) || null; }
 function findCard(p, n){
@@ -2079,7 +2124,10 @@ function editHTML(v){
   if(e.state === "edit-ready") return proposalHTML(v.proposal);
   const failed = e.state === "edit-failed" ? `<div class="bar failed"><p class="err">Last edit failed: ${esc(e.message || "no reason given")}</p>
     <button data-edit-dismiss title="Clear it; the skill is as it was">Dismiss</button></div>` : "";
-  if(!v.editing) return failed ? `<div class="edit">${failed}</div>` : "";
+  const undo = justApplied && justApplied.project === v.project && justApplied.name === v.name
+    ? `<div class="bar applied"><p class="ok">The edit is applied.</p>
+      <button data-edit-undo title="Put the skill back as it was. Only until your next action.">Undo</button></div>` : "";
+  if(!v.editing) return failed || undo ? `<div class="edit">${failed}${undo}</div>` : "";
   return `<div class="edit">${failed}<label for="edit-box">What should change?</label>
     <p class="hint">Your agent edits a copy. You see the change here and apply it or not; the skill stays as it is until then.</p>
     <textarea id="edit-box" data-edit-project="${esc(v.project)}" data-edit-name="${esc(v.name)}" placeholder="e.g. also check the milestone's due date before building the deck">${esc(editText[skillKey(v.project, v.name)] || "")}</textarea>
@@ -2127,7 +2175,7 @@ function paintViewerParts(){
   box.innerHTML = editHTML(viewer);
 }
 async function loadProposal(v){
-  const r = await (await post("/api/skill/proposal", {project: v.project, name: v.name})).json();
+  const r = await (await send("/api/skill/proposal", {project: v.project, name: v.name})).json();
   if(viewer !== v) return;
   v.proposal = r.ok ? r : {error: r.error || "no change is waiting"};
   paintViewerParts();
@@ -2138,7 +2186,7 @@ async function openViewer(project, name){
   const v = viewer = {project, name, data: null, proposal: null, editing: false};
   paintViewer();
   if(!dlg.open) dlg.showModal();
-  const r = await (await post("/api/skill/read", {project, name})).json();
+  const r = await (await send("/api/skill/read", {project, name})).json();
   if(viewer !== v) return;
   v.data = r.ok ? r : {text: null, error: r.error || "it can't be read"};
   paintViewer();
@@ -2150,10 +2198,11 @@ async function viewerAct(b, path, body){
   if(!r.ok){ tell(r.error || "failed"); b.disabled = false; return; }
   if(r.note) tell(r.note);
   if(path === "/api/skill/edit"){ delete editText[skillKey(v.project, v.name)]; v.editing = false; }
+  if(r.undo) justApplied = {project: v.project, name: v.name, token: r.undo};
   v.proposal = null;
   await load();
-  // Apply changes SKILL.md: read it again.
-  if(path === "/api/skill/apply" && viewer === v) openViewer(v.project, v.name);
+  // Apply and Undo change SKILL.md: read it again.
+  if((path === "/api/skill/apply" || path === "/api/skill/undo") && viewer === v) openViewer(v.project, v.name);
 }
 function bindViewer(dlg){
   if(viewerBound) return;
@@ -2183,6 +2232,8 @@ function bindViewer(dlg){
       return;
     }
     if("editApply" in ds) return viewerAct(b, "/api/skill/apply");
+    if("editUndo" in ds)
+      return viewerAct(b, "/api/skill/undo", {project: v.project, name: v.name, token: (justApplied || {}).token});
     if("editDismiss" in ds) return viewerAct(b, "/api/skill/discard");
     if("editDiscard" in ds)
       return ask("Discard the proposed change?\n\nThe skill stays as it is.", "Discard")
@@ -2274,7 +2325,7 @@ function renderConvo(c){
 async function fetchConvo(session){
   if(convos[session] || convoError[session]) return;
   try {
-    const res = await (await post("/api/transcript", {session})).json();
+    const res = await (await send("/api/transcript", {session})).json();
     if(res.ok){ convos[session] = res; } else { convoError[session] = res.error || "failed"; }
   } catch(e){ convoError[session] = String(e); }
   if(view === "candidates") render();
@@ -2285,7 +2336,7 @@ async function fetchSummary(id){
   if(!r || r.summary || summarising.has(id) || summaryError[id]) return;
   summarising.add(id);
   try {
-    const res = await (await post("/api/summary", {id})).json();
+    const res = await (await send("/api/summary", {id})).json();
     const row = S.rows.find(x => x.id === id);
     if(res.ok){ if(row) row.summary = res.summary; } else { summaryError[id] = res.error || "failed"; }
   } catch(e){ summaryError[id] = String(e); }
