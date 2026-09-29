@@ -1112,10 +1112,16 @@ class TestDictation(TempRoot):
     EXAMPLE = ("I give you information, you search online about the facts "
                "-> give me in this format")
 
-    def dictate(self, text, title=""):
+    def dictate(self, text, title="", cwd="/w/app"):
         from skill_plus_plus.capture import fold_dictation
-        result = fold_dictation(self.config, text, title)
+        result = fold_dictation(self.config, text, title, cwd=cwd)
         return Ledger(self.config).get(result["id"]), result
+
+    def test_a_dictated_candidate_belongs_to_the_project_it_was_typed_in(self):
+        entry, _ = self.dictate(self.EXAMPLE)
+        self.assertEqual(entry.projects, ["/w/app"])
+        _, elsewhere = self.dictate(self.EXAMPLE, cwd="/w/site")
+        self.assertEqual(elsewhere["status"], "created", "another project, another candidate")
 
     def test_parses_into_ordered_steps(self):
         entry, _ = self.dictate(self.EXAMPLE)
@@ -3995,6 +4001,7 @@ class TestWeb(TempRoot):
         self.ledger = Ledger(self.config)
 
     def _save(self, eid, occurrences=3, **kw):
+        kw.setdefault("projects", [str(self.root / "repo")])
         entry = Entry(id=eid, title=f"work {eid}", occurrences=occurrences,
                       sessions=[f"s{n}" for n in range(occurrences)],
                       steps=[{"tool": "Bash", "input": {"command": "npm test"}}],
@@ -4299,7 +4306,8 @@ process.stdout.write(JSON.stringify(out));"""
         self.assertEqual(self._rows()["i"]["state"], "installed")
 
     def test_the_page_lists_each_project_with_its_counts(self):
-        """The switcher's menu: every project on the page, "No project" last."""
+        """The switcher's menu: every project on the page. An entry recorded
+        without a folder belongs to none, and is not on the page at all."""
         from skill_plus_plus.web import collect_state
         a, b = self.root / "repo-a", self.root / "repo-b"
         for repo in (a, b):
@@ -4307,13 +4315,13 @@ process.stdout.write(JSON.stringify(out));"""
         self._save("x", projects=[str(a)])
         self._save("y", projects=[str(a / "web")])          # a subfolder: still repo-a
         self._save("z", projects=[str(b)])
-        self._save("w")                                     # recorded without a folder
+        self._save("w", projects=[])                        # recorded without a folder
         state = collect_state(self.config)
         self.assertEqual([(p["name"], p["candidates"]) for p in state["projects"]],
-                         [("repo-a", 2), ("repo-b", 1), ("No project", 1)])
+                         [("repo-a", 2), ("repo-b", 1)])
         rows = {r["id"]: r["projects"] for r in state["rows"]}
         self.assertEqual(rows["y"], [str(a)])
-        self.assertEqual(rows["w"], [""])
+        self.assertNotIn("w", rows)
 
     def test_a_draft_carries_its_project(self):
         from skill_plus_plus.web import collect_state
@@ -4438,10 +4446,13 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
         self.assertIn("skill-plus-plus edit-skill add-eval-case", said.getvalue())
         self.assertEqual(draft.read_text(), before)
 
-    def test_without_a_project_folder_there_is_nowhere_to_install(self):
+    def test_a_draft_without_a_project_is_not_on_the_page_and_not_installed(self):
         from skill_plus_plus.web import collect_state, install_skill
         self._drafted("x")
-        self.assertEqual(collect_state(self.config)["drafts"][0]["project_name"], "")
+        entry = self.ledger.get("x")
+        entry.projects = []
+        self.ledger.save(entry)
+        self.assertEqual(collect_state(self.config)["drafts"], [])
         self.assertFalse(install_skill(self.config, "x")["ok"])
 
     def test_an_install_request_cannot_choose_the_folder(self):
@@ -8192,11 +8203,10 @@ class TestProjectSkillsPage(PageScriptCase):
         galleries = [self._gallery("/w/app", [self.CARD, {**self.CARD, "name": "notes"}]),
                      self._gallery("/w/site", [self.CARD])]
         drafts = [{**self.DRAFT, "id": "a", "name": "waiting-draft"},
-                  {**self.DRAFT, "id": "b", "name": "installed-one", "installed": "/w/app/.claude/skills/x"},
-                  {**self.DRAFT, "id": "c", "name": "loose-draft", "projects": [""], "project_name": ""}]
+                  {**self.DRAFT, "id": "b", "name": "installed-one", "installed": "/w/app/.claude/skills/x"}]
         html = self._run(f"(S = {{rows: [], drafts: {json.dumps(drafts)}, skills: {json.dumps(galleries)}}}, "
                          f"skillsTabHTML())")
-        app, site, loose = html.split('<section class="project">')[1:]
+        app, site = html.split('<section class="project">')[1:]
         self.assertIn("<h2>app</h2>", app)
         self.assertLess(app.index("To review"), app.index("waiting-draft"))
         self.assertLess(app.index("waiting-draft"), app.index('class="gallery"'))
@@ -8204,12 +8214,9 @@ class TestProjectSkillsPage(PageScriptCase):
         self.assertEqual(app.count("data-open-skill"), 2)
         self.assertNotIn("installed-one", html, "an installed draft is its skill's card")
         self.assertIn('data-ignore="a"', app, "a draft to review can be ignored")
-        self.assertIn('data-ignore="c"', loose, "one that can't be installed too")
         self.assertIn("<h2>site</h2>", site)
         self.assertNotIn("To review", site)
         self.assertEqual(site.count("data-open-skill"), 1)
-        self.assertIn("<h2>No project</h2>", loose)
-        self.assertIn("No project to install into", loose)
 
     @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
     def test_a_card_is_the_skill_alone_and_opens_when_clicked(self):

@@ -76,8 +76,9 @@ with what it has seen before. Two thresholds decide what you see:
 
 A candidate belongs to one project: the git repo the work was done in (the
 folder itself outside a repo). The same procedure in two repos is two
-candidates, since the skill made from it belongs in that repo. When the page
-holds more than one project, a menu beside the tabs shows one at a time.
+candidates, since the skill made from it belongs in that repo. Nothing is
+recorded without a project. When the page holds more than one project, a menu
+beside the tabs shows one at a time.
 
 ```bash
 skill-plus-plus web            # the review page, http://127.0.0.1:8765
@@ -98,8 +99,8 @@ ignored too, after a confirmation; an installed skill's folder is removed from
 
 - **`/skill-plus-plus-new`**, or `skill-plus-plus dictate`, describes a procedure instead of
   performing it: the agent asks what the description leaves out, and the
-  candidate skips the three-times rule. *Work in progress: how it works may
-  change.*
+  candidate skips the three-times rule. It belongs to the project you run it
+  in, like captured work. *Work in progress: how it works may change.*
 - **`SKILL_PLUS_PLUS_RECURRENCE=1`** makes every candidate ready at once.
 
 ## From a candidate to a skill

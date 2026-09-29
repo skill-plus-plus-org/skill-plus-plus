@@ -1258,12 +1258,15 @@ def parse_dictation(text: str) -> list[str]:
     return steps or bullets
 
 
-def fold_dictation(config: Config, text: str, title: str = "") -> dict:
-    """Create a ledger candidate from a description the developer typed.
+def fold_dictation(config: Config, text: str, title: str = "", *, cwd: str) -> dict:
+    """Create a ledger candidate from a description the developer typed, in
+    the project of *cwd*, the folder it was typed in: like captured work, it
+    belongs to one.
 
     Dictated candidates bypass the recurrence threshold: it exists to filter
     noise, and an explicit request is not noise.
     """
+    here = project_of(cwd)
     cleaned = scrub(text.strip())
     steps = parse_dictation(cleaned)
     if not steps:
@@ -1273,15 +1276,16 @@ def fold_dictation(config: Config, text: str, title: str = "") -> dict:
     intents = [cleaned[: config.max_field_chars]]
 
     ledger = Ledger(config)
-    # Only against other dictated entries: a description and a captured run are
-    # different evidence, and folding one into the other would count a plan as
-    # a recurrence. No model means no comparison — the description is still
-    # banked, marked unmatched, because typing it was an explicit request.
+    # Only against other dictated entries of this project: a description and a
+    # captured run are different evidence, and folding one into the other would
+    # count a plan as a recurrence. No model means no comparison — the
+    # description is still banked, marked unmatched, because typing it was an
+    # explicit request.
     from .matching import find_same
     unmatched = False
     try:
-        hit = find_same(stated,
-                        [e for e in ledger.all() if e.source == "dictated"], config)
+        hit = find_same(stated, [e for e in ledger.all()
+                                 if e.source == "dictated" and here in projects_of(e)], config)
     except LocalModelUnavailable:
         hit, unmatched = None, True
     existing = hit[0] if hit else None
@@ -1298,6 +1302,7 @@ def fold_dictation(config: Config, text: str, title: str = "") -> dict:
         title=(title or cleaned.replace("\n", " "))[:70],
         status=STATUS_CANDIDATE,
         occurrences=1,
+        projects=[cwd],
         source="dictated",
         intents=intents,
         steps=stated,

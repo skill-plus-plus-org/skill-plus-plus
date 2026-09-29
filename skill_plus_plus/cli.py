@@ -1203,7 +1203,9 @@ def cmd_dictate(args: argparse.Namespace) -> int:
     config = Config(args.root)
     config.ensure_dirs()
     text = args.text if args.text else sys.stdin.read()
-    result = fold_dictation(config, text, args.title or "")
+    # The folder it runs in is the project: `/skill-plus-plus-new` runs it in
+    # the session's own.
+    result = fold_dictation(config, text, args.title or "", cwd=os.getcwd())
     if result["status"] == "empty":
         print("Nothing to work with — describe the workflow in a sentence or two.",
               file=sys.stderr)

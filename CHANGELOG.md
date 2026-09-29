@@ -32,6 +32,11 @@ All notable changes to Skill++. The format follows
 
 ### Changed
 
+- Nothing is recorded without a project. A dictated candidate
+  (`/skill-plus-plus-new`) belongs to the project it was run in, and is
+  compared only with that project's; before, it belonged to none. The review
+  page shows only candidates that belong to a project, so its project menu has
+  no "No project" any more, nor the Skills tab a block for one.
 - The local model is `gemma4:e4b-it-qat`, a build of `gemma4:e4b` trained to
   run at 4 bits: about 6 GB to download instead of 10, and cutting a session
   needs about 7 GB of free memory instead of 12. On every recorded session it

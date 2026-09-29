@@ -426,12 +426,16 @@ PAGE_STATUSES = (STATUS_CANDIDATE, STATUS_PROMOTED, STATUS_DISMISSED)
 
 
 def _page_entries(config: Config):
-    return (entry for entry in Ledger(config).all() if entry.status in PAGE_STATUSES)
+    """What the page is made of: the candidates that belong to a project. One
+    recorded without a folder, as dictation did before it took the folder it
+    runs in, belongs to none, and no skill made from it could be installed."""
+    return (entry for entry in Ledger(config).all()
+            if entry.status in PAGE_STATUSES and any(_projects(entry)))
 
 
 def known_projects(config: Config) -> set[str]:
     """The projects the page lists, and the only ones a request may name."""
-    return {key for entry in _page_entries(config) for key in _projects(entry) if key}
+    return {key for entry in _page_entries(config) for key in _projects(entry)}
 
 
 def _projects(entry) -> list[str]:
@@ -443,16 +447,15 @@ def _projects(entry) -> list[str]:
 
 def project_list(rows: list[dict], drafts: list[dict]) -> list[dict]:
     """Every project on the page, for the switcher: its folder name, its path,
-    and how many candidates and drafts it holds. "No project" last."""
+    and how many candidates and drafts it holds."""
     counts: dict[str, dict] = {}
     for kind, items in (("candidates", rows), ("drafts", drafts)):
         for item in items:
             for key in item["projects"]:
                 cell = counts.setdefault(key, {"candidates": 0, "drafts": 0})
                 cell[kind] += 1
-    return [{"key": key, "name": Path(key).name if key else "No project", "path": key, **cell}
-            for key, cell in sorted(counts.items(),
-                                    key=lambda kv: (kv[0] == "", Path(kv[0]).name.lower(), kv[0]))]
+    return [{"key": key, "name": Path(key).name, "path": key, **cell}
+            for key, cell in sorted(counts.items(), key=lambda kv: (Path(kv[0]).name.lower(), kv[0]))]
 
 
 def collect_state(config: Config) -> dict:
@@ -488,7 +491,7 @@ def collect_state(config: Config) -> dict:
                              (r["title"] or "").lower()))
     drafts = list_drafts(config)
     projects = project_list(rows, drafts)
-    places = [skills.project_place(p["path"]) for p in projects if p["path"]]
+    places = [skills.project_place(p["path"]) for p in projects]
     return {"threshold": threshold, "ttl": config.candidate_ttl_days,
             "rows": rows, "drafts": drafts, "projects": projects,
             "capture": capture_status([p["path"] for p in projects]),
@@ -693,7 +696,7 @@ def list_drafts(config: Config) -> list[dict]:
     """Every finished draft, with the SKILL.md text to review."""
     from datetime import datetime, timezone
     drafts = []
-    for entry in Ledger(config).all():
+    for entry in _page_entries(config):
         state = row_state(config, entry)
         if state["state"] not in ("drafted", "revising", "installed"):
             continue
@@ -1725,7 +1728,7 @@ async function startDraft(id){
 const PROJECT_KEY = "skill_plus_plus.project";
 let ALL = null, project = null;
 try { const v = localStorage.getItem(PROJECT_KEY); if (v !== null) project = JSON.parse(v); } catch (e) {}
-const inProject = x => project === null || (x.projects || [""]).includes(project);
+const inProject = x => project === null || x.projects.includes(project);
 function applyProject(){
   S = {...ALL, rows: ALL.rows.filter(inProject), drafts: ALL.drafts.filter(inProject),
        skills: (ALL.skills || []).filter(g => project === null || g.project === project)};
@@ -1739,7 +1742,7 @@ function renderProjects(){
   // than offered as "All projects", which would show the same.
   sel.hidden = !list.length;
   sel.innerHTML = (list.length > 1 ? `<option value="*">All projects</option>` : "") + list.map(p =>
-    `<option value="${esc(p.key)}" title="${esc(p.path || "sessions recorded without a folder")}">${esc(p.name)}</option>`).join("");
+    `<option value="${esc(p.key)}" title="${esc(p.path)}">${esc(p.name)}</option>`).join("");
   sel.value = project !== null ? project : list.length === 1 ? list[0].key : "*";
   sel.onchange = () => {
     project = sel.value === "*" ? null : sel.value;
@@ -1937,9 +1940,7 @@ function findCard(p, n){
 function draftCard(d){
   const install = d.questions.length
     ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
-    : d.project_name
-      ? `<button class="create" data-install="${esc(d.id)}" title="Into ${esc(d.project_name)}'s .claude/skills/. Commit it to share it with everyone in the repo.">Install in ${esc(d.project_name)}</button>`
-      : `<span class="blocked" title="The candidate was recorded without a project folder">No project to install into</span>`;
+    : `<button class="create" data-install="${esc(d.id)}" title="Into ${esc(d.project_name)}'s .claude/skills/. Commit it to share it with everyone in the repo.">Install in ${esc(d.project_name)}</button>`;
   // A draft can be ignored like its candidate; one being revised waits.
   const ignore = d.revising ? "" : ignoreButton(d, true);
   return `<div class="draft review ${open.has(d.id) || d.revising ? "open" : ""} ${d.revising ? "busy" : ""} ${isNew(d)?"fresh":""}">
@@ -1985,11 +1986,8 @@ function projectHTML(g, drafts){
 }
 function skillsTabHTML(){
   const galleries = S.skills || [], waiting = S.drafts.filter(d => !d.installed);
-  const blocks = galleries.map(g => projectHTML(g, waiting.filter(d => (d.projects || []).includes(g.project))));
-  const loose = waiting.filter(d => !(d.projects || []).some(k => galleries.some(g => g.project === k)));
-  if(loose.length) blocks.push(`<section class="project"><div class="project-head"><h2>No project</h2>
-    <span>Drafts from sessions recorded without a project folder</span></div>${loose.map(draftCard).join("")}</section>`);
-  return blocks.join("") || `<div class="empty"><p><strong>Nothing here yet.</strong></p>
+  return galleries.map(g => projectHTML(g, waiting.filter(d => d.projects.includes(g.project)))).join("")
+    || `<div class="empty"><p><strong>Nothing here yet.</strong></p>
     <p>Promote a candidate and press Draft Skill: the draft shows up here, under its project, to review and install.</p></div>`;
 }
 function bindSkillsTab(list){
