@@ -77,8 +77,9 @@ with what it has seen before. Two thresholds decide what you see:
 A candidate belongs to one project: the git repo the work was done in (the
 folder itself outside a repo). The same procedure in two repos is two
 candidates, since the skill made from it belongs in that repo. Nothing is
-recorded without a project. When the page holds more than one project, a menu
-beside the tabs shows one at a time.
+recorded without a project. The page shows one project at a time, picked in the
+menu beside the tabs. It opens on the project you chose last, or on the one
+`skill-plus-plus web` was started in.
 
 ```bash
 skill-plus-plus web            # the review page, http://127.0.0.1:8765
@@ -157,11 +158,10 @@ writes a Claude Code plugin folder instead.
 
 ## Skills in your projects
 
-The **Skills** tab shows each project on its own: its drafts to review first,
-then every skill it has in `.claude/skills/`, three to a row, whoever put it
-there: Skill++, you or a teammate. The menu beside the tabs narrows it to one
-project. A card is the skill's name and what it is for, with a label while an
-edit is running or waiting.
+The **Skills** tab shows the project's drafts to review first, then every skill
+it has in `.claude/skills/`, three to a row, whoever put it there: Skill++, you
+or a teammate. A card is the skill's name and what it is for, with a label
+while an edit is running or waiting.
 
 Click a card to open the skill: its `SKILL.md`, and what you can do with it.
 

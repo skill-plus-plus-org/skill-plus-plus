@@ -4337,26 +4337,26 @@ process.stdout.write(JSON.stringify(out));"""
 
     @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
     def test_the_page_filters_by_the_chosen_project(self):
-        """All projects, one project, and the entries with none."""
+        """One project at a time; an entry seen in several is in each."""
         import json, subprocess
         from skill_plus_plus.web import PAGE
         script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
         state = {"rows": [{"id": "a", "projects": ["/r/a"]}, {"id": "b", "projects": ["/r/b"]},
-                          {"id": "n", "projects": [""]}, {"id": "old", "projects": ["/r/a", "/r/b"]}],
+                          {"id": "old", "projects": ["/r/a", "/r/b"]}],
                  "drafts": [{"id": "a", "projects": ["/r/a"]}], "projects": []}
         program = script + f"""
 ALL = {json.dumps(state)};
-const shown = p => {{ project = p; applyProject(); return S.rows.map(r => r.id).join(","); }};
-process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.drafts.length]));"""
+const shown = p => {{ project = p; applyProject(); return [S.rows.map(r => r.id).join(","), S.drafts.length]; }};
+process.stdout.write(JSON.stringify([shown("/r/a"), shown("/r/b"), shown(null)]));"""
         out = json.loads(subprocess.run(["node", "-e", program], capture_output=True,
                                         text=True, check=True).stdout)
-        self.assertEqual(out, ["a,b,n,old", "a,old", "n", 0])
+        self.assertEqual(out, [["a,old", 1], ["b,old", 0], ["", 0]])
 
     @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
-    def test_the_project_menu_shows_even_with_one_project(self):
+    def test_the_project_menu_lists_each_project_and_never_all_of_them(self):
         """Candidates and skills belong to one project each, and the menu is
-        where the page says which. Hidden with a single project, the page gave
-        no sign that it was scoped at all."""
+        where the page says which: one is always chosen, even when it is the
+        only one. There is no page for all projects at once."""
         import json, subprocess
         from skill_plus_plus.web import PAGE
         script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
@@ -4365,14 +4365,32 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         program = script + f"""
 const sel = {{hidden: true, innerHTML: "", value: ""}};
 globalThis.document = {{getElementById: () => sel}};
-const menu = list => {{ ALL = {{rows: [], drafts: [], projects: list}}; project = null; renderProjects();
-  return [sel.hidden, (sel.innerHTML.match(/<option/g) || []).length, sel.value]; }};
-process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(two)}), menu([])]));"""
+const menu = (list, chosen = null, here = "") => {{
+  ALL = {{rows: [], drafts: [], projects: list, here}}; project = chosen;
+  pickProject(); renderProjects();
+  return [sel.hidden, (sel.innerHTML.match(/<option/g) || []).length, sel.value, sel.innerHTML]; }};
+process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(two)}),
+  menu({json.dumps(two)}, "/r/app"), menu({json.dumps(two)}, "/r/gone", "/r/app"),
+  menu({json.dumps(two)}, null, "/r/elsewhere"), menu([])]));"""
         out = json.loads(subprocess.run(["node", "-e", program], capture_output=True,
                                         text=True, check=True).stdout)
-        self.assertEqual(out[0], [False, 1, "/r/decks"], "one project: shown, by its name")
-        self.assertEqual(out[1], [False, 3, "*"], "several: all of them, and each")
-        self.assertTrue(out[2][0], "no project at all: nothing to show")
+        self.assertEqual(out[0][:3], [False, 1, "/r/decks"], "one project: shown, and chosen")
+        self.assertEqual(out[1][:3], [False, 2, "/r/decks"], "several: each, the first chosen")
+        self.assertNotIn("All projects", out[1][3])
+        self.assertEqual(out[2][2], "/r/app", "the one chosen last")
+        self.assertEqual(out[3][2], "/r/app", "one gone since: the one the page was started in")
+        self.assertEqual(out[4][2], "/r/decks", "started outside every project: the first")
+        self.assertTrue(out[5][0], "no project at all: nothing to show")
+
+    def test_the_page_opens_on_the_project_the_server_was_started_in(self):
+        from skill_plus_plus.web import _started_in
+        repo = self.root / "app"
+        (repo / ".git").mkdir(parents=True)
+        (repo / "src").mkdir()
+        cwd = os.getcwd()
+        os.chdir(repo / "src")
+        self.addCleanup(os.chdir, cwd)
+        self.assertEqual(os.path.realpath(_started_in()), os.path.realpath(repo))
 
     def _in_repo(self, eid, name="add-eval-case", extra=None):
         """A finished draft whose candidate belongs to a scratch repo."""

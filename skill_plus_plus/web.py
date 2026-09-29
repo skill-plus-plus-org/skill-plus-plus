@@ -1149,7 +1149,18 @@ def discard_project_skill_edit(config: Config, project: str, name: str) -> dict:
     return {"ok": True}
 
 
+def _started_in() -> str:
+    """The project of the folder the server was started in, or "": where the
+    page opens when no project was chosen yet."""
+    from .capture import project_of
+    try:
+        return project_of(str(Path.cwd()))
+    except OSError:                           # a folder deleted since
+        return ""
+
+
 def make_handler(config: Config):
+    here = _started_in()
     actions = {
         "/api/install": lambda p: install_skill(config, str(p.get("id", ""))),
         "/api/accept": lambda p: accept(config, str(p.get("id", ""))),
@@ -1233,7 +1244,7 @@ def make_handler(config: Config):
             if url.path in ("/", "/index.html"):
                 return self._send(200, PAGE, "text/html; charset=utf-8")
             if url.path == "/api/state":
-                return self._send(200, json.dumps(collect_state(config)))
+                return self._send(200, json.dumps({**collect_state(config), "here": here}))
             self._send(404, json.dumps({"error": "not found"}))
 
         def do_POST(self):
@@ -1728,24 +1739,29 @@ async function startDraft(id){
 const PROJECT_KEY = "skill_plus_plus.project";
 let ALL = null, project = null;
 try { const v = localStorage.getItem(PROJECT_KEY); if (v !== null) project = JSON.parse(v); } catch (e) {}
-const inProject = x => project === null || x.projects.includes(project);
+const inProject = x => x.projects.includes(project);
+// One project at a time, always: the one chosen last, or else the one the
+// page was started in, or else the first. A candidate and its skill belong to
+// one project, and nothing on the page is about several.
+function pickProject(){
+  const keys = (ALL.projects || []).map(p => p.key);
+  if (!keys.includes(project)) project = keys.includes(ALL.here) ? ALL.here : keys[0] ?? null;
+}
 function applyProject(){
   S = {...ALL, rows: ALL.rows.filter(inProject), drafts: ALL.drafts.filter(inProject),
-       skills: (ALL.skills || []).filter(g => project === null || g.project === project)};
+       skills: (ALL.skills || []).filter(g => g.project === project)};
 }
 function renderProjects(){
   const sel = document.getElementById("project");
   const list = ALL.projects || [];
-  if (project !== null && !list.some(p => p.key === project)) project = null;   // gone since
-  // Shown whenever there is a project: candidates and skills each belong to
-  // one, and this is where the page says which. With one, it is named rather
-  // than offered as "All projects", which would show the same.
+  // Shown whenever there is a project, one or more: this is where the page
+  // says which project it shows.
   sel.hidden = !list.length;
-  sel.innerHTML = (list.length > 1 ? `<option value="*">All projects</option>` : "") + list.map(p =>
+  sel.innerHTML = list.map(p =>
     `<option value="${esc(p.key)}" title="${esc(p.path)}">${esc(p.name)}</option>`).join("");
-  sel.value = project !== null ? project : list.length === 1 ? list[0].key : "*";
+  sel.value = project ?? "";
   sel.onchange = () => {
-    project = sel.value === "*" ? null : sel.value;
+    project = sel.value;
     try { localStorage.setItem(PROJECT_KEY, JSON.stringify(project)); } catch (e) {}
     applyProject(); render();
   };
@@ -2393,6 +2409,7 @@ async function act(what, id){
 
 async function load(){
   ALL = await (await fetch("/api/state")).json();
+  pickProject();
   applyProject();
   renderProjects();
   render();

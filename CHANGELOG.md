@@ -22,8 +22,8 @@ All notable changes to Skill++. The format follows
   `SKILL_PLUS_PLUS_MEMORY_GUARD`, `SKILL_PLUS_PLUS_MEMORY_RESERVE_GB`,
   `SKILL_PLUS_PLUS_IDLE_MINUTES` and `SKILL_PLUS_PLUS_NOTIFY` configure it.
 - The skills a project has, on the review page. The **Drafts** tab is now
-  **Skills** and shows each project on its own: its drafts to review first,
-  then every skill in its `.claude/skills/`, whoever made it, three to a row.
+  **Skills** and shows the project's drafts to review first, then every skill
+  in its `.claude/skills/`, whoever made it, three to a row.
   Click a skill to read its `SKILL.md`. **Edit** has your agent change a copy
   and shows the change as a diff to **Apply** or **Discard**;
   `skill-plus-plus edit-skill` does the same from the terminal. Right after
@@ -37,6 +37,9 @@ All notable changes to Skill++. The format follows
   compared only with that project's; before, it belonged to none. The review
   page shows only candidates that belong to a project, so its project menu has
   no "No project" any more, nor the Skills tab a block for one.
+- The review page shows one project at a time, always: its project menu has no
+  **All projects** any more. It opens on the project chosen last, or on the one
+  `skill-plus-plus web` was started in.
 - The local model is `gemma4:e4b-it-qat`, a build of `gemma4:e4b` trained to
   run at 4 bits: about 6 GB to download instead of 10, and cutting a session
   needs about 7 GB of free memory instead of 12. On every recorded session it
