@@ -826,3 +826,7 @@ def apply_edit(config: Config, project: str | Path, folder: Path) -> dict:
 def discard_edit(config: Config, project: str | Path, folder_name: str) -> None:
     """Drop a proposed edit. Only Skill++'s own copy goes; the skill is untouched."""
     shutil.rmtree(edit_dir(config, project, folder_name), ignore_errors=True)
+    try:                                  # left empty unless edits were applied before
+        edit_root(config, project, folder_name).rmdir()
+    except OSError:
+        pass

@@ -4790,7 +4790,8 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
         button, because both states were called "declined"."""
         from skill_plus_plus.web import PAGE
         for state in ("collecting", "undecided", "accepted", "creating", "drafted", "revising",
-                      "installed", "failed", "declined", "dismissed"):
+                      "installed", "failed", "declined", "dismissed",
+                      "editing", "edit-ready", "edit-failed"):
             self.assertIn(f'"{state}"', PAGE)
 
     def test_the_page_carries_no_external_references(self):
@@ -8272,3 +8273,97 @@ class TestProjectSkillEdits(ProjectSkillsCase):
         warnings = proposal_project_skill(self.config, str(self.repo), "deploy")["warnings"]
         self.assertTrue(any("characters" in w for w in warnings), warnings)
         self.assertTrue(any("disable-model-invocation" in w for w in warnings), warnings)
+
+
+class TestProjectSkillsPage(unittest.TestCase):
+    """The Project skills tab's page code, run in node on made-up state."""
+
+    CARD = {"name": "deploy", "skill_name": "deploy", "name_mismatch": False,
+            "description": "Use when shipping.", "path": "/w/app/.claude/skills/deploy",
+            "link": "", "files": ["SKILL.md"], "file_count": 1, "bytes": 120, "made_by": "",
+            "entry": "", "update": False, "edit_block": "", "uses": 0, "last_used": "",
+            "visibility": {"state": "on", "source": ""}, "edit": {}}
+
+    def _gallery(self, project, cards, **kw):
+        return {"project": project, "name": project.rsplit("/", 1)[-1], "exists": True,
+                "linked": "", "settings_error": "", "skills": cards, "archived": [], **kw}
+
+    def _run(self, expression):
+        import subprocess
+        from skill_plus_plus.web import PAGE
+        script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
+        return json.loads(subprocess.run(
+            ["node", "-e", script + f"\nprocess.stdout.write(JSON.stringify({expression}))"],
+            capture_output=True, text=True, check=True).stdout)
+
+    def _cards(self, cards, gallery=None):
+        return self._run(f"{json.dumps(cards)}.map(c => skillCard("
+                         f"{json.dumps(gallery or self._gallery('/w/app', []))}, c))")
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_the_skills_tab_shows_one_gallery_per_project_three_cards_to_a_row(self):
+        from skill_plus_plus.web import PAGE
+        self.assertIn(".gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))", PAGE)
+        galleries = [self._gallery("/w/app", [self.CARD, {**self.CARD, "name": "notes"}]),
+                     self._gallery("/w/site", [self.CARD])]
+        html = self._run(f"skillsHTML({json.dumps(galleries)})")
+        self.assertEqual(html.count('class="gallery"'), 2)
+        self.assertEqual(html.count('<div class="skill'), 3)
+        self.assertIn("<h2>app</h2>", html)
+        self.assertIn("2 skills in /w/app/.claude/skills/", html)
+        self.assertIn("No project skills to show", self._run("skillsHTML([])"))
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_a_skill_card_offers_turn_on_only_for_what_you_turned_off(self):
+        on, mine, team = self._cards([
+            self.CARD, {**self.CARD, "visibility": {"state": "off", "source": "local"}},
+            {**self.CARD, "visibility": {"state": "off", "source": "team"}}])
+        self.assertIn("data-skill-off", on)
+        self.assertNotIn("data-skill-on", on)
+        self.assertIn("data-skill-on", mine)
+        self.assertIn("Off for you", mine)
+        self.assertIn("Off for the team", team)
+        self.assertNotIn("data-skill-on", team)
+        self.assertRegex(team, r'<button disabled title="[^"]*committed[^"]*">Turn on</button>')
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_a_card_says_why_it_cannot_be_edited_or_archived(self):
+        linked, newer, ready = self._cards([
+            {**self.CARD, "edit_block": "the skill folder is a link; edit it where it lives"},
+            {**self.CARD, "update": True, "made_by": "draft", "entry": "x"},
+            {**self.CARD, "edit": {"state": "edit-ready"}}])
+        self.assertRegex(linked, r"data-skill-edit [^>]*disabled")
+        self.assertIn("It can't be edited from here: the skill folder is a link", linked)
+        self.assertRegex(newer, r'data-skill-edit [^>]*disabled title="Its draft is newer')
+        self.assertIn("Update available", newer)
+        self.assertIn("Edit ready", ready)
+        self.assertRegex(ready, r'data-skill-archive [^>]*disabled title="Apply or discard the edit first"')
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_a_proposal_diff_is_escaped(self):
+        change = {"path": "SKILL.md", "change": "changed", "added": 1, "removed": 0,
+                  "binary": False, "truncated": False,
+                  "diff": "--- a/SKILL.md\n+++ b/SKILL.md\n@@ -1 +1,2 @@\n <b>x</b>\n"
+                          "+<script>alert(1)</script>\n"}
+        html = self._run(f"diffHTML({json.dumps(change)})")
+        self.assertNotIn("<script>", html)
+        self.assertNotIn("<b>x</b>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+        self.assertIn('class="l add"', html)
+        self.assertIn('class="l hunk"', html)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_the_viewer_renders_skill_md_as_markdown_and_other_files_as_text(self):
+        files = [{"path": "SKILL.md", "kind": "text", "size": 30, "truncated": False,
+                  "text": "---\nname: deploy\n---\n# Deploy\n"},
+                 {"path": "notes.md", "kind": "text", "size": 20, "truncated": False,
+                  "text": "# Not rendered <i>\n"},
+                 {"path": "logo.png", "kind": "binary", "size": 2048, "truncated": False, "text": None},
+                 {"path": "secret", "kind": "link", "target": "/etc/hosts", "size": 0,
+                  "truncated": False, "text": None}]
+        skill, notes, logo, link = self._run(f"{json.dumps(files)}.map(f => fileHTML(f, false))")
+        self.assertIn("<h1>Deploy</h1>", skill)
+        self.assertIn('class="fm"', skill, "the frontmatter as a table")
+        self.assertIn('<pre class="src"># Not rendered &lt;i&gt;', notes)
+        self.assertIn("binary file (2 KB)", logo)
+        self.assertIn("never followed", link)

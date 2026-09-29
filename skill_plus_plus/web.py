@@ -1551,10 +1551,10 @@ PAGE = r"""<!doctype html>
  .clock.soon{color:#fbbf24}
  .clock.gone{color:var(--no)}
  .count{font:600 13px var(--mono);min-width:34px;text-align:right;flex-shrink:0;order:99}
- .section{display:flex;align-items:baseline;gap:10px;margin:22px 0 10px}
+ .section{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin:22px 0 10px}
  .section:first-child{margin-top:0}
- .section h2{margin:0;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--fg)}
- .section span{font-size:12px;color:var(--muted)}
+ .section h2{margin:0;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--fg);white-space:nowrap}
+ .section span{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
  .cand>.row{margin:0;border:0;background:none;cursor:pointer}
  .cand.open .chev{transform:rotate(90deg)}
  .cand .body{display:none;border-top:1px solid var(--line);padding:12px 16px 14px 44px}
@@ -1591,7 +1591,7 @@ PAGE = r"""<!doctype html>
  .runs{list-style:none;margin:0;padding:0;font-size:13px}
  .runs li{margin:2px 0}
  .run{background:none;border:0;padding:0;font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-   color:var(--accent);cursor:pointer;text-decoration:underline dotted}
+   color:var(--go);cursor:pointer;text-decoration:underline dotted}
  .run:hover{text-decoration:underline}
  .when{color:var(--muted);margin-left:10px}
  .convo{margin:6px 0 12px;padding:8px 12px;border-left:2px solid var(--line);max-height:340px;overflow:auto}
@@ -1672,14 +1672,84 @@ PAGE = r"""<!doctype html>
    border:1px solid var(--line);white-space:nowrap;cursor:not-allowed}
  a.download{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;text-decoration:none;
    color:var(--dim);border:1px solid var(--line);white-space:nowrap}
- @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
+ /* Project skills: every skill a project has in .claude/skills/, three to a row. */
+ .gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 10px}
+ .skill{display:flex;flex-direction:column;gap:8px;min-width:0;padding:14px 14px 12px;
+   background:var(--panel);border:1px solid var(--line);border-radius:8px}
+ .skill.off{border-style:dashed}
+ .skill.off .name,.skill.off .desc{opacity:.6}
+ .skill .name{font:600 13px var(--mono);color:var(--fg);background:none;border:0;padding:0;
+   text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .skill .name:hover{text-decoration:underline}
+ .skill .desc{margin:0;font-size:12.5px;color:var(--dim);display:-webkit-box;-webkit-line-clamp:3;
+   -webkit-box-orient:vertical;overflow:hidden;min-height:calc(3 * 1.45em)}
+ .skill .badges{display:flex;flex-wrap:wrap;gap:6px}
+ .skill .meta{font:11.5px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .skill .acts{margin-top:auto;flex-wrap:wrap;gap:6px}
+ .skill .acts button{padding:5px 9px}
+ button.badge{cursor:pointer}
+ .badge.off{color:var(--dim);border-color:var(--line);background:var(--surface)}
+ .badge.mine{color:var(--go);border-color:var(--goline);background:var(--gobg)}
+ .badge.heed{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.1)}
+ button.danger:hover{color:var(--no);border-color:var(--noline);background:var(--nobg)}
+ .archived{margin:4px 0 22px;font-size:12.5px;color:var(--dim)}
+ .archived summary{cursor:pointer;font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+ .archived ul{list-style:none;margin:8px 0 0;padding:0}
+ .archived li{display:flex;align-items:center;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
+ .archived .n{font:12.5px var(--mono);color:var(--fg)}
+ .archived .d{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .archived .ago{color:var(--muted);font-size:12px;white-space:nowrap}
+ /* The viewer: one skill in full, and its edit. */
+ dialog#viewer{width:min(1100px,94vw);height:min(86vh,900px);max-width:none;max-height:none;padding:0;
+   border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg)}
+ dialog#viewer::backdrop{background:rgba(0,0,0,.6)}
+ /* minmax(0,1fr): a long path in the head must not widen the dialog past its edge. */
+ .viewer{display:grid;grid-template-rows:auto minmax(0,1fr);grid-template-columns:minmax(0,1fr);height:100%}
+ .vhead{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)}
+ .vname{font:600 14px var(--mono)}
+ .vpath{flex:1;min-width:0;font:11.5px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .vbody{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:0}
+ .vfiles{border-right:1px solid var(--line);overflow:auto;padding:8px}
+ .vfiles button{display:block;width:100%;text-align:left;border:0;background:none;padding:5px 8px;
+   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .vfiles button[aria-selected=true]{background:var(--surface);color:var(--fg)}
+ .vpane{overflow:auto;padding:16px 20px}
+ pre.src{margin:0;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;
+   font:12px/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:#cbd2e1}
+ .vnote{font:12px var(--mono);color:var(--muted);margin:6px 0}
+ .edit{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line)}
+ .edit h4{margin:0 0 4px;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.04em;color:var(--fg)}
+ .edit label{display:block;margin:0 0 2px;font-size:13px;color:var(--fg)}
+ .edit .hint{margin:0 0 8px;font-size:12px;color:var(--dim)}
+ .edit textarea{width:100%;min-height:80px;resize:vertical;font:13px/1.5 var(--sans);color:var(--fg);
+   background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;margin:0 0 8px}
+ .edit .bar{display:flex;gap:8px;align-items:center}
+ .edit .err{font:12px var(--mono);color:var(--no);margin:0 0 8px}
+ .edit .warns{margin:0 0 10px;padding:8px 12px 8px 28px;border:1px solid rgba(251,191,36,.35);
+   background:rgba(251,191,36,.06);border-radius:6px;font-size:12.5px;color:var(--fg)}
+ .diff{margin:8px 0 12px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+ .diff summary,.diff .dh{padding:6px 10px;font:12px var(--mono);background:var(--surface);cursor:pointer}
+ .diff pre{margin:0;padding:8px 0;font:12px/1.5 var(--mono);overflow:auto;background:var(--bg)}
+ .diff .l{display:block;padding:0 10px;white-space:pre}
+ .diff .add{color:var(--ok);background:var(--okbg)} .diff .del{color:var(--no);background:var(--nobg)}
+ .diff .hunk{color:var(--go)} .diff .meta{color:var(--muted)}
+ @media(max-width:880px){.gallery{grid-template-columns:repeat(2,minmax(0,1fr))}}
+ @media(max-width:560px){.gallery{grid-template-columns:minmax(0,1fr)}
+   dialog#viewer{width:100vw;height:100dvh;border-radius:0}
+   .vbody{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+   .vfiles{border-right:0;border-bottom:1px solid var(--line);max-height:26vh}}
+ /* Three tabs and the project switcher don't fit a phone's width on one line. */
+ @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}
+   header{flex-wrap:wrap;padding:10px 16px}nav{flex-wrap:wrap}nav button{white-space:nowrap}
+   header select{max-width:100%}}
  /* A draft's row holds the most buttons (install, just for me, download,
     ignore), so it breaks onto two lines sooner than a candidate's. */
  @media(max-width:880px){.draft .row{flex-wrap:wrap}.draft .title{flex-basis:calc(100% - 40px)}}
 </style></head><body>
-<header><span style="display:flex;align-items:center;gap:18px"><b>Skill++</b>
+<header><span style="display:flex;align-items:center;gap:6px 18px;flex-wrap:wrap"><b>Skill++</b>
 <nav id="nav"></nav></span><select id="project" aria-label="Project" hidden></select></header>
 <main id="list"></main>
+<dialog id="viewer" aria-labelledby="viewer-title"></dialog>
 <script>
 let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
 // A candidate with a draft is reviewed in the Drafts tab, not listed here.
@@ -1809,7 +1879,8 @@ let ALL = null, project = null;
 try { const v = localStorage.getItem(PROJECT_KEY); if (v !== null) project = JSON.parse(v); } catch (e) {}
 const inProject = x => project === null || (x.projects || [""]).includes(project);
 function applyProject(){
-  S = {...ALL, rows: ALL.rows.filter(inProject), drafts: ALL.drafts.filter(inProject)};
+  S = {...ALL, rows: ALL.rows.filter(inProject), drafts: ALL.drafts.filter(inProject),
+       skills: (ALL.skills || []).filter(g => project === null || g.project === project)};
 }
 function renderProjects(){
   const sel = document.getElementById("project");
@@ -1857,7 +1928,8 @@ function markCardSeen(id){
 
 function renderNav(){
   const nav = document.getElementById("nav");
-  nav.innerHTML = [["candidates","Candidates",S.rows.filter(r => !inDrafts(r)).length],["drafts","Drafts",S.drafts.length]]
+  nav.innerHTML = [["candidates","Candidates",S.rows.filter(r => !inDrafts(r)).length],["drafts","Drafts",S.drafts.length],
+                   ["skills","Project skills",(S.skills || []).reduce((n, g) => n + g.skills.length, 0)]]
     .map(([k,l,n]) => {
       const fresh = k === "drafts" ? newSinceTab() : 0;
       return `<button data-view="${k}" aria-selected="${view===k}">${l} (${n})${fresh
@@ -1990,6 +2062,11 @@ function questionsBlock(d){
 }
 
 function reviseBlock(d){
+  // An installed skill is changed where it is installed, under Project skills,
+  // which keeps its draft in step. One installed just for you is uninstalled first.
+  if(d.installed) return d.installed_target === "project"
+    ? `<div class="revise"><button class="create" data-goto-skill="${esc(d.installed)}">Edit under Project skills</button></div>`
+    : `<div class="revise"><p class="files">Installed just for you: uninstall it to revise the draft.</p></div>`;
   const id = esc(d.id);
   const err = d.message ? `<p class="err">Last revision: ${esc(d.message)}</p>` : "";
   if(d.revising) return "";   // the notice at the top of the card says it
@@ -2005,7 +2082,9 @@ function renderDrafts(list){
   // .claude/skills/, where committing it shares it. Download stays for
   // anywhere else.
   const installActs = d => d.installed
-    ? `<span class="where" title="${esc(d.installed)}">${d.installed_target === "project" ? "in " + esc(d.project_name) : "for you"}</span>`
+    ? (d.installed_target === "project"
+        ? `<a class="where" data-goto-skill="${esc(d.installed)}" title="Open it under Project skills: ${esc(d.installed)}">in ${esc(d.project_name)}</a>`
+        : `<span class="where" title="${esc(d.installed)}">for you</span>`)
       + (d.install_stale ? `<button class="create" data-install="${esc(d.id)}" data-target="${esc(d.installed_target)}" title="The draft changed since it was installed">Update</button>` : "")
       + `<button data-uninstall="${esc(d.id)}" data-where="${esc(d.installed)}">Uninstall</button>`
     : (d.project_name ? `<button class="create" data-install="${esc(d.id)}" data-target="project" title="Into the repo's .claude/skills/. Commit it to share it with everyone in the repo.">Install in ${esc(d.project_name)}</button>` : "")
@@ -2043,7 +2122,7 @@ function renderDrafts(list){
     ${items.length ? items.map(card).join("") : `<p class="empty">${none}</p>`}`;
   list.innerHTML = S.drafts.length
     ? part("To review", "Drafts not installed or downloaded yet.", toReview, "Nothing waiting.")
-      + part("Installed", "In a skills folder, where your agent loads them. A revision can be passed on with Update.", installed, "Nothing installed yet.")
+      + part("Installed", "In a skills folder, where your agent loads them. A newer draft is passed on with Update; to change one, edit it under Project skills.", installed, "Nothing installed yet.")
       + (downloaded.length ? part("Downloaded", "Downloaded but not installed from here.", downloaded, "") : "")
     : `<p class="empty">No drafts yet. Promote a candidate, then Draft Skill.</p>`;
   list.querySelectorAll("[data-install]").forEach(b => b.onclick = async () => {
@@ -2060,6 +2139,11 @@ function renderDrafts(list){
     await load();
   });
   list.querySelectorAll("a.download").forEach(a => a.addEventListener("click", () => setTimeout(load, 1000)));
+  list.querySelectorAll("[data-goto-skill]").forEach(a => a.onclick = () => {
+    const at = a.dataset.gotoSkill.match(/^(.*)\/\.claude\/skills\/([^/]+)\/?$/);
+    if(!at) return;
+    view = "skills"; render(); openViewer(at[1], at[2]);
+  });
   bindIgnore(list);
   list.querySelectorAll("[data-revise-open]").forEach(b => b.onclick = () => {
     writing.add(b.dataset.reviseOpen); render();
@@ -2112,6 +2196,247 @@ function renderDrafts(list){
     markCardSeen(id);
     h.parentElement.classList.remove("fresh");
     h.querySelector(".new")?.remove();
+  });
+}
+
+// Project skills: every skill a project has in .claude/skills/, whoever made
+// it. Turn off is this user's own switch, in the project's settings.local.json,
+// where Claude Code's /skills menu writes too. Archive moves the folder out of
+// the repo into Skill++'s folder. Edit has the agent change a copy, shown as a
+// diff that changes nothing until Apply.
+let viewer = null, viewerBound = false, editText = {}, openArchived = new Set();
+const skillKey = (p, n) => p + "\n" + n;
+function findCard(p, n){
+  const g = ((ALL || S).skills || []).find(x => x.project === p);
+  return g ? g.skills.find(c => c.name === n) || null : null;
+}
+const size = n => n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+const OFF_BY = {
+  local: ["Off for you", "Turned off in this project's .claude/settings.local.json, for you only: Claude doesn't see it and /name is hidden. Teammates keep it."],
+  team: ["Off for the team", "Turned off in the project's committed .claude/settings.json, for everyone. Change it there."],
+  user: ["Off in your settings", "Turned off in your ~/.claude/settings.json, in every project. Change it there."]};
+const SHOWN_AS = {"name-only": "Name only", "user-invocable-only": "Only by /name"};
+function visibilityBadge(v){
+  if(v.state === "on") return "";
+  if(v.state === "off"){
+    const [label, why] = OFF_BY[v.source] || OFF_BY.local;
+    return `<span class="badge off" title="${esc(why)}">${label}</span>`;
+  }
+  return `<span class="badge off" title="skillOverrides in your ${esc(v.source)} settings">${esc(SHOWN_AS[v.state] || v.state)}</span>`;
+}
+function skillCard(g, c){
+  const e = c.edit || {}, at = `data-project="${esc(g.project)}" data-name="${esc(c.name)}"`;
+  const off = c.visibility.state !== "on", pending = e.state === "editing" || e.state === "edit-ready";
+  const badges = [
+    visibilityBadge(c.visibility),
+    c.made_by === "draft" ? `<button class="badge mine" data-goto-draft="${esc(c.entry)}" title="Installed from a draft: open it in Drafts">From a draft</button>`
+      : c.made_by === "skill-plus-plus" ? `<span class="badge mine" title="Written with Skill++">Skill++</span>` : "",
+    c.update ? `<button class="badge heed" data-goto-draft="${esc(c.entry)}" title="The draft changed since it was installed: pass it on with Update in Drafts">Update available</button>` : "",
+    e.state === "editing" ? `<span class="badge mine"><span class="spin"></span>Editing…</span>` : "",
+    e.state === "edit-ready" ? `<span class="badge heed" title="The agent's change is waiting: open the skill to apply or discard it">Edit ready</span>` : "",
+    e.state === "edit-failed" ? `<span class="badge declined" title="${esc(e.message)}">Edit failed</span>` : "",
+    c.link ? `<span class="badge off" title="A link to ${esc(c.link)}">Linked</span>` : "",
+    c.name_mismatch ? `<span class="badge heed" title="Claude Code knows it as ${esc(c.skill_name)}, the name in its frontmatter">Named ${esc(c.skill_name)}</span>` : "",
+  ].filter(Boolean).join("");
+  const used = c.uses ? `used ${c.uses}× · last ${ago(c.last_used)}` : "not used yet";
+  const noEdit = e.state === "editing" ? "The agent is editing it"
+    : c.edit_block ? `It can't be edited from here: ${c.edit_block}`
+    : c.update ? "Its draft is newer: Update it from Drafts first" : "";
+  const turn = !off
+    ? `<button data-skill-off ${at}${g.settings_error ? ` disabled title="${esc(g.settings_error)}"` : ` title="Claude stops seeing it, for you only; teammates keep it"`}>Turn off</button>`
+    : c.visibility.source === "local"
+      ? `<button data-skill-on ${at}${g.settings_error ? ` disabled title="${esc(g.settings_error)}"` : ""}>Turn on</button>`
+      : `<button disabled title="${esc((OFF_BY[c.visibility.source] || ["", "Set outside this project's local settings"])[1])}">Turn on</button>`;
+  return `<div class="skill${off ? " off" : ""}${e.state === "editing" ? " busy" : ""}">
+    <button class="name" data-skill-view ${at} title="${esc(c.path)}">${esc(c.name)}</button>
+    <p class="desc" title="${esc(c.description)}">${esc(c.description) || "No description."}</p>
+    ${badges ? `<div class="badges">${badges}</div>` : ""}
+    <div class="meta" title="Usage is counted by skill name, across every project">${plural(c.file_count, "file")} · ${size(c.bytes)} · ${used}</div>
+    <div class="acts"><button data-skill-view ${at}>View</button>
+      <button class="create" data-skill-edit ${at}${noEdit ? ` disabled title="${esc(noEdit)}"` : ""}>Edit</button>
+      ${turn}
+      <button class="danger" data-skill-archive ${at}${pending ? ` disabled title="Apply or discard the edit first"` : ` title="Move it out of the project into Skill++'s archive; restore it any time"`}>Archive</button></div>
+  </div>`;
+}
+function archivedHTML(g){
+  if(!g.archived.length) return "";
+  const items = g.archived.map(a => `<li><span class="n">${esc(a.name || a.folder)}</span>
+      <span class="d" title="${esc(a.description)}">${esc(a.description)}</span>
+      <span class="ago" title="${esc(when(a.archived_at))}">archived ${ago(a.archived_at)}</span>
+      <button data-restore="${esc(a.id)}" data-project="${esc(g.project)}"${g.exists ? "" : ` disabled title="The project folder is gone"`}>Restore</button></li>`).join("");
+  return `<details class="archived" data-archived="${esc(g.project)}"${openArchived.has(g.project) ? " open" : ""}>
+    <summary>Archived (${g.archived.length})</summary><ul>${items}</ul></details>`;
+}
+function skillsHTML(galleries){
+  if(!galleries.length) return `<div class="empty"><p><strong>No project skills to show.</strong></p>
+    <p>Each project Skill++ has seen you work in shows its skills here: everything in its <code>.claude/skills/</code>.</p></div>`;
+  return galleries.map(g => {
+    const head = `<div class="section"><h2>${esc(g.name)}</h2><span title="${esc(g.project)}">${plural(g.skills.length, "skill")} in ${esc(g.project)}/.claude/skills/${g.linked ? ` · a link to ${esc(g.linked)}` : ""}</span></div>`;
+    const warn = !g.exists ? `<div class="warn"><strong>Folder not found.</strong> ${esc(g.project)} is gone, so nothing here can be restored until it is back.</div>`
+      : g.settings_error ? `<div class="warn"><strong>Skills can't be turned off or on here.</strong> ${esc(g.settings_error)}. Skill++ never writes over a settings file it can't read.</div>` : "";
+    const cards = g.skills.length ? `<div class="gallery">${g.skills.map(c => skillCard(g, c)).join("")}</div>`
+      : g.exists ? `<p class="empty">No skills here yet. Install one from Drafts, or add a folder with a SKILL.md to <code>.claude/skills/</code>.</p>` : "";
+    return head + warn + cards + archivedHTML(g);
+  }).join("");
+}
+function archiveWarning(name, project){
+  return `Archive "${name}"?\n\nIt moves out of ${project}/.claude/skills/ into Skill++'s own folder, so Claude Code stops loading it. Nothing is deleted: restore it any time from Archived.`
+    + `\n\nUntil you commit or restore it, git shows the folder as deleted.`;
+}
+async function skillAct(what, b, extra){
+  b.disabled = true;
+  const body = {project: b.dataset.project, name: b.dataset.name, ...(extra || {})};
+  const r = await (await post("/api/skill/" + what, body)).json();
+  if(!r.ok){ alert(r.error || `${what} failed`); b.disabled = false; return; }
+  if(r.note) alert(r.note);
+  await load();
+}
+function renderSkills(list){
+  list.innerHTML = skillsHTML(S.skills || []);
+  const at = b => [b.dataset.project, b.dataset.name];
+  list.querySelectorAll("[data-skill-view]").forEach(b => b.onclick = () => openViewer(...at(b)));
+  list.querySelectorAll("[data-skill-edit]").forEach(b => b.onclick = () => openViewer(...at(b), true));
+  list.querySelectorAll("[data-skill-off]").forEach(b => b.onclick = () => skillAct("off", b));
+  list.querySelectorAll("[data-skill-on]").forEach(b => b.onclick = () => skillAct("on", b));
+  list.querySelectorAll("[data-skill-archive]").forEach(b => b.onclick = () => {
+    if(confirm(archiveWarning(b.dataset.name, b.dataset.project))) skillAct("archive", b);
+  });
+  list.querySelectorAll("[data-restore]").forEach(b => b.onclick = () => skillAct("restore", b, {archive: b.dataset.restore}));
+  list.querySelectorAll("[data-goto-draft]").forEach(b => b.onclick = () => {
+    view = "drafts"; open.add(b.dataset.gotoDraft); render();
+  });
+  list.querySelectorAll("details[data-archived]").forEach(d => d.ontoggle = () => {
+    d.open ? openArchived.add(d.dataset.archived) : openArchived.delete(d.dataset.archived);
+  });
+}
+
+function fileHTML(f, source){
+  if(!f) return `<p class="vnote">No files.</p>`;
+  if(f.kind === "link") return `<p class="vnote">${esc(f.path)} is a link to ${esc(f.target)}. Links are named here, never followed.</p>`;
+  if(f.kind === "binary") return `<p class="vnote">${esc(f.path)} is a binary file (${size(f.size)}), not shown.</p>`;
+  if(f.kind === "unreadable") return `<p class="vnote">${esc(f.path)} can't be read: ${esc(f.error)}</p>`;
+  if(f.text === null) return `<p class="vnote">${esc(f.path)} is too large to show here (${size(f.size)}).</p>`;
+  const cut = f.truncated ? `<p class="vnote">Only the start is shown: the file is ${size(f.size)}.</p>` : "";
+  return (f.path === "SKILL.md" && !source ? `<div class="md">${md(f.text)}</div>` : `<pre class="src">${esc(f.text)}</pre>`) + cut;
+}
+function diffHTML(f){
+  const head = `${esc(f.path)} <span class="vnote">${esc(f.change)}${f.binary ? ", binary" : ` · +${f.added} −${f.removed}`}</span>`;
+  if(f.binary) return `<div class="diff"><div class="dh">${head}</div></div>`;
+  const lines = f.diff.split("\n").filter((l, i, all) => l || i < all.length - 1).map(l => {
+    const kind = l.startsWith("@@") ? "hunk" : l.startsWith("+++") || l.startsWith("---") ? "meta"
+      : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "";
+    return `<span class="l ${kind}">${esc(l) || " "}</span>`;
+  }).join("");
+  return `<details class="diff" open><summary>${head}</summary><pre>${lines}</pre>${f.truncated
+    ? `<p class="vnote">Cut short here; Apply writes the whole change.</p>` : ""}</details>`;
+}
+function proposalHTML(p){
+  if(!p || p.loading) return `<div class="edit"><p class="vnote">Loading the proposed change…</p></div>`;
+  if(p.error) return `<div class="edit"><p class="err">${esc(p.error)}</p></div>`;
+  const warns = p.warnings.length ? `<ul class="warns">${p.warnings.map(w => `<li>${mdInline(w)}</li>`).join("")}</ul>` : "";
+  const stale = p.stale ? `<p class="err">The skill changed after the agent took its copy, so this can't be applied. Discard it and ask again.</p>` : "";
+  return `<div class="edit"><h4>Proposed change</h4><p class="hint">You asked: ${esc(p.instruction)}</p>${warns}${stale}
+    ${p.files.map(diffHTML).join("")}
+    <div class="bar"><button class="create" data-edit-apply${p.stale ? " disabled" : ""}>Apply</button>
+    <button class="danger" data-edit-discard>Discard</button></div></div>`;
+}
+function editHTML(v){
+  const c = findCard(v.project, v.name);
+  if(!c) return "";
+  const e = c.edit || {};
+  if(e.state === "editing") return working("The agent is editing a copy",
+    `The skill stays as it is until you apply the change. You asked: ${esc(e.instruction)}`, e.since);
+  if(e.state === "edit-ready") return proposalHTML(v.proposal);
+  const block = c.edit_block ? `It can't be edited from here: ${c.edit_block}.`
+    : c.update ? "Its draft is newer than this copy. Pass the draft on with Update in Drafts first." : "";
+  if(block) return `<div class="edit"><p class="vnote">${esc(block)}</p></div>`;
+  const err = e.state === "edit-failed" ? `<p class="err">Last edit: ${esc(e.message || "it failed")}</p>` : "";
+  return `<div class="edit">${err}<label for="edit-box">What should change?</label>
+    <p class="hint">Your agent edits a copy. The change shows here as a diff, and the skill stays as it is until you apply it.</p>
+    <textarea id="edit-box" data-edit-project="${esc(v.project)}" data-edit-name="${esc(v.name)}" placeholder="e.g. also check the milestone's due date before building the deck">${esc(editText[skillKey(v.project, v.name)] || "")}</textarea>
+    <div class="bar"><button class="create" data-edit-send>Send to agent</button></div></div>`;
+}
+function viewerHTML(v){
+  const d = v.data, files = d ? d.files : [];
+  const f = files.find(x => x.path === v.file) || files[0];
+  const list = files.map(x => `<button data-vfile="${esc(x.path)}" aria-selected="${!!f && x.path === f.path}" title="${esc(x.path)}">${esc(x.path)}</button>`).join("")
+    + (d && d.hidden ? `<p class="vnote">${d.hidden} more not shown</p>` : "");
+  const body = !d ? `<p class="vnote">Loading…</p>` : d.error ? `<p class="err">${esc(d.error)}</p>` : fileHTML(f, v.source);
+  return `<div class="viewer"><div class="vhead"><span class="vname" id="viewer-title">${esc(v.name)}</span>
+      <span class="vpath" title="${esc((d && d.path) || "")}">${esc((d && d.path) || "")}</span>
+      ${f && f.path === "SKILL.md" && f.text !== null ? `<button data-vsource>${v.source ? "Rendered" : "Source"}</button>` : ""}
+      <button data-vclose>Close</button></div>
+    <div class="vbody"><div class="vfiles">${list}</div>
+      <div class="vpane"><div id="vfile">${body}</div><div id="vedit"></div></div></div></div>`;
+}
+function paintViewer(){
+  const dlg = document.getElementById("viewer");
+  if(!viewer || !dlg) return;
+  dlg.innerHTML = viewerHTML(viewer);
+  paintViewerEdit();
+}
+// Repainted on every poll without touching the file being read: only the edit.
+function paintViewerEdit(){
+  const box = viewer && document.getElementById("vedit");
+  if(!box) return;
+  const c = findCard(viewer.project, viewer.name), state = c && c.edit && c.edit.state;
+  if(state !== "edit-ready") viewer.proposal = null;
+  else if(!viewer.proposal){ viewer.proposal = {loading: true}; loadProposal(viewer); }
+  box.innerHTML = editHTML(viewer);
+}
+async function loadProposal(v){
+  const r = await (await post("/api/skill/proposal", {project: v.project, name: v.name})).json();
+  if(viewer !== v) return;
+  v.proposal = r.ok ? r : {error: r.error || "no change is waiting"};
+  paintViewerEdit();
+}
+async function openViewer(project, name, toEdit){
+  const dlg = document.getElementById("viewer");
+  bindViewer(dlg);
+  const v = viewer = {project, name, file: "SKILL.md", source: false, data: null, proposal: null};
+  paintViewer();
+  if(!dlg.open) dlg.showModal();
+  const r = await (await post("/api/skill/read", {project, name})).json();
+  if(viewer !== v) return;
+  v.data = r.ok ? r : {files: [], hidden: 0, error: r.error || "it can't be read"};
+  paintViewer();
+  if(toEdit){ const box = document.getElementById("edit-box"); if(box) box.focus(); }
+}
+async function viewerAct(b, what){
+  const v = viewer;
+  b.disabled = true;
+  const body = {project: v.project, name: v.name};
+  if(what === "edit") body.instruction = (editText[skillKey(v.project, v.name)] || "").trim();
+  const r = await (await post("/api/skill/" + what, body)).json();
+  if(!r.ok){ alert(r.error || `${what} failed`); b.disabled = false; return; }
+  if(what === "edit") delete editText[skillKey(v.project, v.name)];
+  v.proposal = null;
+  await load();
+  if(what === "apply" && viewer === v) openViewer(v.project, v.name);
+}
+function bindViewer(dlg){
+  if(viewerBound) return;
+  viewerBound = true;
+  dlg.addEventListener("close", () => { viewer = null; dlg.innerHTML = ""; });
+  dlg.addEventListener("input", ev => {
+    const t = ev.target.closest("[data-edit-name]");
+    if(t) editText[skillKey(t.dataset.editProject, t.dataset.editName)] = t.value;
+  });
+  dlg.addEventListener("click", ev => {
+    if(ev.target === dlg) return dlg.close();          // the backdrop
+    const b = ev.target.closest("button");
+    if(!b || b.disabled || !viewer) return;
+    const v = viewer;
+    if("vclose" in b.dataset) return dlg.close();
+    if("vfile" in b.dataset){ v.file = b.dataset.vfile; v.source = false; return paintViewer(); }
+    if("vsource" in b.dataset){ v.source = !v.source; return paintViewer(); }
+    if("editSend" in b.dataset){
+      if((editText[skillKey(v.project, v.name)] || "").trim()) viewerAct(b, "edit");
+      return;
+    }
+    if("editApply" in b.dataset) return viewerAct(b, "apply");
+    if("editDiscard" in b.dataset && confirm("Discard the proposed change? The skill stays as it is."))
+      return viewerAct(b, "discard");
   });
 }
 
@@ -2237,6 +2562,7 @@ function paint(){
   renderNav();
   const list = document.getElementById("list");
   if(view === "drafts") return renderDrafts(list);
+  if(view === "skills"){ renderSkills(list); return paintViewerEdit(); }
   const highlight = r => r.state === "dismissed" ? "declined"
     : ["drafted", "revising", "installed"].includes(r.state) ? "drafted"
     : ["undecided", "collecting"].includes(r.state) ? (r.ready ? "ready" : "")
@@ -2314,8 +2640,10 @@ async function load(){
   renderProjects();
   render();
   clearTimeout(timer);
-  // Every project's rows: a draft running in another project still finishes.
-  if(ALL.rows.some(r => r.state === "creating" || r.state === "revising")) timer = setTimeout(load, 5000);
+  // Every project's rows and skills: a draft or an edit running in another
+  // project still finishes.
+  const editing = (ALL.skills || []).some(g => g.skills.some(c => c.edit && c.edit.state === "editing"));
+  if(editing || ALL.rows.some(r => r.state === "creating" || r.state === "revising")) timer = setTimeout(load, 5000);
 }
 load();
 </script>
