@@ -19,6 +19,8 @@ https://github.com/user-attachments/assets/e18baeb6-2ec4-4b33-be42-d77eb7d6af0a
 <img src="https://img.shields.io/badge/token_cost-0-brightgreen?style=flat-square" alt="Token cost: 0">
 <img src="https://img.shields.io/badge/for-Claude_Code-8A2BE2?style=flat-square" alt="For Claude Code">
 
+An open-source project by **[Concept Reply](https://www.conceptreply.de/)**.
+
 🆓 **Free and private.** It runs on your laptop; nothing leaves it until you ask for a skill.
 
 📏 **Tested on 30 real sessions anyone can replay: it never mixed up two different jobs.** **[→ Under the hood](#-under-the-hood)**
