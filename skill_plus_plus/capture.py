@@ -548,22 +548,47 @@ def handle_session_end(config: Config, payload: dict) -> dict:
     # keep path already attaches before judging.
     _attach_reply(session, payload.get("transcript_path") or session.get("transcript"))
 
-    if config.judge_boundaries and "folded" not in session:
-        try:
-            from .boundary import judge_session
-            judge_session(config, session)
-        except Exception as exc:  # noqa: BLE001 - a hook never raises at a dev
-            log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
+    # The memory guard (`skill_plus_plus.memory`) around everything that loads
+    # a model. The models load only if they fit and still leave the reserve
+    # free; otherwise the session is held and folded later, which costs
+    # nothing. A watchdog stops the fold and unloads them if memory runs short
+    # while it runs, and they are unloaded when it ends.
+    from . import memory
+    with memory.guarded(config) as guard:
+        short = guard.admit(memory.fold_models(config))
+        if short:
+            return _hold_for_memory(config, session, short)
 
-    # The last task's own completion report, said after its final tool call.
-    # Attached before folding so the episode carries it.
-    trailing = _trailing_narration(payload)
-    if trailing:
-        work = [s for s in session.get("steps", []) if not is_prompt(s)]
-        if work:
-            work[-1].setdefault("closing_note", trailing)
-            _save_session(config, session)
-    result = fold_session(config, session, persist=True)
+        if config.judge_boundaries and "folded" not in session:
+            try:
+                from .boundary import judge_session
+                judge_session(config, session)
+            except Exception as exc:  # noqa: BLE001 - a hook never raises at a dev
+                log_error(config, f"boundary judge failed: {type(exc).__name__}: {exc}")
+            if guard.tripped:
+                # Stopped halfway through judging. The gaps judged so far carry
+                # verdicts and the rest carry `judge_session`'s up-front
+                # `False`, which reads as "no boundary here": banked, the
+                # session would merge tasks the judge never got to. Nothing is
+                # banked yet, so every verdict goes and the retry judges it all.
+                for step in session.get("steps", []):
+                    step.pop("end", None)
+                return _hold_for_memory(config, session, guard.tripped, notify=False)
+
+        # The last task's own completion report, said after its final tool call.
+        # Attached before folding so the episode carries it.
+        trailing = _trailing_narration(payload)
+        if trailing:
+            work = [s for s in session.get("steps", []) if not is_prompt(s)]
+            if work:
+                work[-1].setdefault("closing_note", trailing)
+                _save_session(config, session)
+        result = fold_session(config, session, persist=True)
+        if guard.tripped and result.get("status") == "offline":
+            # Stopped between episodes: `folded` keeps the ones banked, and the
+            # retry resumes after them, as it does when Ollama goes away.
+            result["reason"] = f"memory: {guard.tripped}"
+            result["memory"] = True
     # Offline: the session was never folded, so this file is the only copy of
     # the work. Losing the step is the one thing capture exists to prevent —
     # being offline costs the candidate, never the record.
@@ -576,6 +601,8 @@ def handle_session_end(config: Config, payload: dict) -> dict:
             "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "reason": result.get("reason", ""),
         }
+        if result.get("memory"):
+            session["held"]["memory"] = True
         _save_session(config, session)
     else:
         try:
@@ -583,6 +610,29 @@ def handle_session_end(config: Config, payload: dict) -> dict:
         except OSError:
             pass
     return result
+
+
+def _hold_for_memory(config: Config, session: dict, reason: str, *,
+                     notify: bool = True) -> dict:
+    """Keep the session to fold later: the models do not fit in memory now.
+
+    Held like a session no model answered, so `fold_pending` retries it and
+    `stats` counts it, with `memory` set so the retry waits for memory rather
+    than for Ollama. *notify* is off when the watchdog stopped the fold, which
+    has already said so.
+    """
+    session["held"] = {
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "reason": f"memory: {reason}",
+        "memory": True,
+    }
+    _save_session(config, session)
+    if notify:
+        from .notify import waiting
+        waiting(config, reason)
+    return {"status": "offline", "steps": len(session.get("steps", [])),
+            "episodes": [], "flagged": 0, "reason": session["held"]["reason"],
+            "memory": True}
 
 
 
@@ -648,6 +698,19 @@ _FOLD_GRACE_SECONDS = 120.0
 # A ceiling on one session's fold. Bounds the damage a recycled pid can do:
 # past this the lock is stale whatever `os.kill` says.
 _FOLD_LOCK_SECONDS = 1800
+# How often the sweep retries a session held for memory (see `_is_pending`).
+MEMORY_RETRY_SECONDS = 600.0
+
+
+def _age_seconds(stamp) -> float:
+    """Seconds since an ISO stamp. An unreadable one counts as long ago."""
+    try:
+        at = datetime.fromisoformat(str(stamp))
+    except ValueError:
+        return float("inf")
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - at).total_seconds()
 
 
 def _lock_file(config: Config, session_id: str) -> Path:
@@ -751,7 +814,8 @@ def _find_transcript(session_id: str) -> str | None:
 
 
 def fold_pending(config: Config, *, exclude: str | None = None,
-                 idle_hours: float = PENDING_IDLE_HOURS) -> list[dict]:
+                 idle_hours: float = PENDING_IDLE_HOURS,
+                 now: bool = False) -> list[dict]:
     """Bank the sessions that ended without being banked.
 
     `SessionEnd` stamps `ending` and spawns a worker, so this sweep is the
@@ -762,48 +826,115 @@ def fold_pending(config: Config, *, exclude: str | None = None,
     per-session lock and the held stamp are the ones a normal end uses, and
     `folded` keeps a partial retry from counting an episode twice. *exclude* is
     the session that is starting, which is live by definition.
+
+    One memory guard covers the sweep, so the models load once for every
+    session in it and are unloaded at the end. The first session held for
+    memory ends the sweep: what did not fit for it will not fit for the next.
+    *now* skips the pause between memory retries, for the idle waiter and
+    "Fold now", which have just checked that the models fit.
     """
+    from . import memory
+
     results = []
     with _locked(config.root / "fold-pending.lock", _PENDING_LOCK_SECONDS,
                  "fold-pending") as got:
         if not got:
             return [{"status": "locked"}]
-        for path in sorted(config.sessions_dir.glob("*.json")):
-            sid = path.stem
-            if sid == exclude:
-                continue
-            try:
-                session = json.loads(path.read_text(encoding="utf-8"))
-                idle = (time.time() - path.stat().st_mtime) / 3600
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not _is_pending(session, idle, idle_hours):
-                results.append({"session": sid, "status": "live"})
-                continue
-            # Checked before folding only so the outcome can say "folding"
-            # rather than "locked"; `fold_session_now` takes the lock itself,
-            # so nothing rests on this being race-free.
-            if _lock_alive(_lock_file(config, sid), _FOLD_LOCK_SECONDS):
-                results.append({"session": sid, "status": "folding"})
-                continue
-            results.append({"session": sid, **fold_session_now(config, sid)})
+        with memory.guarded(config):
+            for path in sorted(config.sessions_dir.glob("*.json")):
+                sid = path.stem
+                if sid == exclude:
+                    continue
+                try:
+                    session = json.loads(path.read_text(encoding="utf-8"))
+                    idle = (time.time() - path.stat().st_mtime) / 3600
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not _is_pending(session, idle, idle_hours, now=now):
+                    results.append({"session": sid, "status": "live"})
+                    continue
+                # Checked before folding only so the outcome can say "folding"
+                # rather than "locked"; `fold_session_now` takes the lock itself,
+                # so nothing rests on this being race-free.
+                if _lock_alive(_lock_file(config, sid), _FOLD_LOCK_SECONDS):
+                    results.append({"session": sid, "status": "folding"})
+                    continue
+                result = fold_session_now(config, sid)
+                results.append({"session": sid, **result})
+                if result.get("memory"):
+                    break
         _sweep_orphan_locks(config)
     return results
 
 
-def _is_pending(session: dict, idle: float, idle_hours: float) -> bool:
+# How long a worker that held a session for memory waits for a better moment,
+# and how often it looks. Past this, the next session start takes over.
+MEMORY_WAIT_SECONDS = 12 * 3600
+MEMORY_POLL_SECONDS = 60.0
+
+
+def _held_for_memory(config: Config) -> bool:
+    for path in config.sessions_dir.glob("*.json"):
+        try:
+            if (json.loads(path.read_text(encoding="utf-8")).get("held") or {}).get("memory"):
+                return True
+        except (OSError, json.JSONDecodeError, AttributeError):
+            continue
+    return False
+
+
+def wait_for_memory(config: Config, *, sleep=time.sleep, clock=time.time) -> list[dict]:
+    """Fold the sessions held for memory once the computer is idle and they fit.
+
+    Run by the worker that held a session, after its own lock is released:
+    nobody waits on it, and it costs a sleeping process. One waiter at a time;
+    another worker that finds the lock taken leaves it to the one waiting.
+    Idle means nobody at the keyboard for `config.idle_minutes`, so the model
+    never competes with someone working. Where idle time cannot be read, the
+    waiter waits for memory alone.
+    """
+    from . import memory
+
+    with _locked(config.root / "memory-wait.lock", MEMORY_WAIT_SECONDS + 600,
+                 "memory-wait") as got:
+        if not got:
+            return []
+        deadline = clock() + MEMORY_WAIT_SECONDS
+        while clock() < deadline:
+            sleep(MEMORY_POLL_SECONDS)
+            if not _held_for_memory(config):
+                return []
+            idle = memory.idle_seconds()
+            if idle is not None and idle < config.idle_minutes * 60:
+                continue
+            if memory.shortfall(config):
+                continue
+            results = fold_pending(config, now=True)
+            if not _held_for_memory(config):
+                return results
+    return []
+
+
+def _is_pending(session: dict, idle: float, idle_hours: float, *,
+                now: bool = False) -> bool:
     """Has this session ended without being banked?
 
     Three rules, covering three different failures, none of them redundant:
 
-    * ``held`` — a fold that ran and could not reach a model.
+    * ``held`` — a fold that ran and could not reach a model, or was held for
+      memory. Those are retried at most every `MEMORY_RETRY_SECONDS`, unless
+      *now*: a retry that passes the check and trips the watchdog again would
+      load and unload the models at every session start.
     * ``ending`` past the grace — a fold that was launched and died with it.
       Without the stamp it would look like a live session and wait out the idle
       rule.
     * idle — the only rule that catches a session where `SessionEnd` never
       fired at all: a window closed, a laptop shut down.
     """
-    if session.get("held"):
+    held = session.get("held")
+    if held:
+        if isinstance(held, dict) and held.get("memory") and not now:
+            return _age_seconds(held.get("at")) >= MEMORY_RETRY_SECONDS
         return True
     ending = session.get("ending")
     if ending:

@@ -134,6 +134,28 @@ class Config:
         # A boundary that would close an episode smaller than this is ignored:
         # one step is not a workflow.
         self.min_episode_steps = _int_env("SKILL_PLUS_PLUS_MIN_EPISODE_STEPS", 2)
+        # The memory guard (`skill_plus_plus.memory`). The local model is not
+        # small: on an 18 GB Mac, loading gemma4:e4b and the embedder took 12.8
+        # GB of available memory (gemma4:e4b-it-qat, the default after it, about
+        # 7), and a fold with other apps open ran at 92 % used with 4.7 GB
+        # swapped out in 100 s. So a fold starts only when the
+        # models fit with this much memory still free, and stops, unloading
+        # them, the moment less than this is left. An absolute figure, not a
+        # share of RAM: what keeps a machine out of swap is headroom in
+        # gigabytes. 2 GB is where that Mac turned: 2.0 GB available while
+        # loading, pressure normal and nothing swapped; 1.4-1.6 GB while
+        # folding, pressure warning and swapping. `SKILL_PLUS_PLUS_MEMORY_GUARD=0`
+        # turns the guard off.
+        self.memory_guard = _bool_env("SKILL_PLUS_PLUS_MEMORY_GUARD", True)
+        self.memory_reserve_gb = _float_env("SKILL_PLUS_PLUS_MEMORY_RESERVE_GB", 2.0)
+        # A session held for memory is folded once the computer has been idle
+        # this long and the models fit, so the model never competes with
+        # someone at the keyboard. Folding later costs nothing.
+        self.idle_minutes = _float_env("SKILL_PLUS_PLUS_IDLE_MINUTES", 5.0)
+        # Desktop notifications when the guard holds or stops a fold. The fold
+        # runs after the chat has ended, so the operating system is the one
+        # place the person will see it. `SKILL_PLUS_PLUS_NOTIFY=0` turns them off.
+        self.notify = _bool_env("SKILL_PLUS_PLUS_NOTIFY", True)
 
     @property
     def decisions_file(self) -> Path:
@@ -167,6 +189,11 @@ class Config:
     @property
     def log_file(self) -> Path:
         return self.root / "skill-plus-plus.log"
+
+    @property
+    def memory_file(self) -> Path:
+        """What the models took on this computer, and when a notice was last sent."""
+        return self.root / "memory.json"
 
     def ensure_dirs(self) -> None:
         for d in (self.ledger_dir, self.sessions_dir, self.cold_dir, self.archive_dir):

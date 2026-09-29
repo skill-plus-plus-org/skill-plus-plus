@@ -43,6 +43,31 @@ class LocalModelUnavailable(RuntimeError):
     """Ollama is not reachable, or the model is not installed."""
 
 
+class MemoryShort(LocalModelUnavailable):
+    """The memory guard kept a model from loading, or stopped the fold.
+
+    A subclass, so every caller that already treats an unreachable model as
+    "no opinion" and holds the session does the same here, with no new path.
+    """
+
+
+def _guard(model: str, payload: dict) -> None:
+    """Ask the open memory guard, if any, before *model* is called.
+
+    Raises `MemoryShort` when the guard refuses. A model the guard loaded is
+    asked to leave memory soon after its last call (`memory.KEEP_ALIVE`), so a
+    fold that dies before its guard is released cannot hold it for Ollama's
+    five minutes. A model someone else loaded keeps its own `keep_alive`.
+    """
+    from .memory import KEEP_ALIVE, active
+    guard = active()
+    if guard is None:
+        return
+    guard.before_call(model)
+    if guard.owns(model):
+        payload["keep_alive"] = KEEP_ALIVE
+
+
 def _num_ctx(prompt: str, reserve: int = 512) -> int:
     want = (len(prompt) // _CHARS_PER_TOKEN) + reserve
     return max(_CTX_FLOOR, min(_CTX_CEILING, want))
@@ -74,6 +99,7 @@ def ask(model: str, prompt: str, *, host: str = DEFAULT_HOST,
     }
     if think is not None:
         payload["think"] = think
+    _guard(model, payload)
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         f"{host.rstrip('/')}/api/generate", data=body,
@@ -146,8 +172,9 @@ def embed(text: str, *, model: str = DEFAULT_EMBED_MODEL,
     reached, so the caller can say so instead of matching on a fragment
     silently.
     """
-    body = json.dumps({"model": model, "input": text,
-                       "truncate": True}).encode("utf-8")
+    payload = {"model": model, "input": text, "truncate": True}
+    _guard(model, payload)
+    body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         f"{host.rstrip('/')}/api/embed", data=body,
         headers={"Content-Type": "application/json"})

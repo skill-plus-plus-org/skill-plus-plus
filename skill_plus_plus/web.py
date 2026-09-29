@@ -381,8 +381,13 @@ def summarise(config: Config, entry_id: str) -> dict:
     before capture named them — then cached per entry and keyed on step count,
     so the page never waits on a model twice and a candidate that grows is
     described again.
+
+    Under the memory guard, like a fold: the model loads only if it fits. It is
+    left loaded for `memory.KEEP_ALIVE` rather than unloaded, because opening
+    one row is usually followed by opening the next.
     """
-    from .local import LocalModelUnavailable
+    from .local import LocalModelUnavailable, MemoryShort
+    from .memory import BUSY, guarded
     from .summary import name_and_sentence, store_summary
 
     entry = Ledger(config).get(entry_id)
@@ -393,7 +398,11 @@ def summarise(config: Config, entry_id: str) -> dict:
         return {"ok": True, "summary": cached}
 
     try:
-        _, text = name_and_sentence(config, entry)
+        with guarded(config, wait=False, unload_on_release=False):
+            _, text = name_and_sentence(config, entry)
+    except MemoryShort as exc:
+        return {"ok": False, "error": f"Skill++ {exc}" if str(exc) == BUSY
+                else f"not enough free memory: Skill++ {exc}"}
     except LocalModelUnavailable as exc:
         return {"ok": False, "error": f"no local model: {exc}"}
     if not text:
@@ -427,6 +436,10 @@ def project_list(rows: list[dict], drafts: list[dict]) -> list[dict]:
 def collect_state(config: Config) -> dict:
     """The rows the page lists. Reads files only: no model, no agent.
 
+    One exception, only while sessions are held for memory: the banner reads
+    the free memory, and the models' sizes from Ollama if what they take here
+    was never measured. Neither loads a model.
+
     Every candidate, promoted and dismissed entry, most-seen first. `ready`
     splits the page: recognized often enough to decide on, or still collecting.
     """
@@ -457,7 +470,46 @@ def collect_state(config: Config) -> dict:
     projects = project_list(rows, drafts)
     return {"threshold": threshold, "ttl": config.candidate_ttl_days,
             "rows": rows, "drafts": drafts, "projects": projects,
-            "capture": capture_status([p["path"] for p in projects])}
+            "capture": capture_status([p["path"] for p in projects]),
+            "memory": memory_waiting(config)}
+
+
+def memory_waiting(config: Config) -> dict:
+    """How many sessions the memory guard is holding, for the page's banner.
+
+    Counted from the session files. Only when some are waiting does it also
+    say from what free memory a fold starts, and how much is free now.
+    """
+    waiting = 0
+    for path in config.sessions_dir.glob("*.json"):
+        try:
+            held = json.loads(path.read_text(encoding="utf-8")).get("held")
+        except (OSError, json.JSONDecodeError):
+            continue
+        waiting += bool(isinstance(held, dict) and held.get("memory"))
+    if not waiting:
+        return {"waiting": 0}
+    from .memory import gb, status
+    s = status(config)
+    return {"waiting": waiting, "start_at_gb": gb(s["start_at"]),
+            "free_gb": gb(s["available"])}
+
+
+def fold_now(config: Config) -> dict:
+    """"Fold now" on the banner: `skill-plus-plus fold-pending --now`, if it fits.
+
+    The memory rule still holds: when the models do not fit, nothing loads and
+    the page says how much memory is missing.
+    """
+    from .memory import shortfall
+    short = shortfall(config)
+    if short:
+        return {"ok": False,
+                "error": f"Not yet: Skill++ {short}. Close a few apps and try again."}
+    proc = _run(config, "fold-pending", "--now")
+    if proc.returncode != 0:
+        return {"ok": False, "error": _tail(proc.stderr or proc.stdout)}
+    return {"ok": True}
 
 
 def capture_status(project_paths: list[str], home: Path | None = None) -> dict:
@@ -1035,6 +1087,7 @@ def make_handler(config: Config, skills_dir: Path | None = None):
                                         str(p.get("instruction", ""))),
         "/api/answer": lambda p: answer_questions(config, str(p.get("id", "")),
                                                   p.get("answers") or []),
+        "/api/fold-now": lambda p: fold_now(config),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -1211,6 +1264,9 @@ PAGE = r"""<!doctype html>
  .warn{margin:0 0 20px;padding:12px 16px;border:1px solid var(--noline);background:var(--nobg);
    border-radius:8px;color:var(--fg);font-size:13px;line-height:1.6}
  .warn strong{color:var(--no)}
+ .warn.wait{border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.07)}
+ .warn.wait strong{color:#fbbf24}
+ .warn button.fold-now{margin-left:8px;color:#0c0d10;border-color:#fbbf24;background:#fbbf24;font-weight:600}
  .cand{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
  .cand.ready{border-left:3px solid #fbbf24;background:linear-gradient(90deg,rgba(251,191,36,.07),var(--panel) 40%)}
  .cand.accepted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
@@ -1393,6 +1449,17 @@ function captureWarning(){
   return `<div class="warn"><strong>Skill++ isn't capturing.</strong> ${why}
     Run <code>skill-plus-plus install --user --apply</code>, then start a new Claude Code session;
     <code>skill-plus-plus doctor</code> checks it. <a href="${DOCS}#installing" target="_blank" rel="noopener">Installing →</a></div>`;
+}
+// Sessions the memory guard is holding: kept, not lost, and folded once the
+// computer is idle and the models fit, or now if memory allows.
+function memoryWarning(){
+  const m = S.memory || {waiting: 0};
+  if(!m.waiting) return "";
+  const n = m.waiting === 1 ? "1 session is" : `${m.waiting} sessions are`;
+  return `<div class="warn wait"><strong>${n} waiting for free memory.</strong>
+    Skill++ folds only when ${esc(m.start_at_gb)} GB are free, so your computer never runs short (${esc(m.free_gb)} GB free now).
+    They fold on their own once your computer is idle.
+    <button class="fold-now" data-act="fold-now" data-id="memory"${busy.has("memory") ? " disabled" : ""}>${busy.has("memory") ? "Folding…" : "Fold now"}</button></div>`;
 }
 function emptyCandidates(){
   const watching = (S.capture || {}).state === "wired"
@@ -1941,7 +2008,7 @@ function paint(){
   const promoted = S.rows.filter(r => !["undecided", "collecting", "dismissed"].includes(r.state) && !inDrafts(r));
   const open_ = S.rows.filter(r => ["undecided", "collecting"].includes(r.state));
   const ready = open_.filter(r => r.ready), collecting = open_.filter(r => !r.ready);
-  list.innerHTML = `${captureWarning()}
+  list.innerHTML = `${captureWarning()}${memoryWarning()}
     ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>Candidates you promoted. Draft a skill from them; the draft appears in the Drafts tab.</span></div>
     ${promoted.map(card).join("")}` : ""}
     <div class="section"><h2>Still collecting</h2><span>Work Skill++ saw you repeat. Once something is seen ${S.threshold}×, you can promote or ignore it.</span></div>

@@ -178,6 +178,43 @@ edits settings or spends a model call is a dry run until you add `--apply`.
 | Skills you have | `lifecycle`, `tier`, `check`, `reconcile`, `bundle`, `expire`, `accuracy` |
 | Internal (run by the hooks) | `hook`, `fold-session`, `fold-pending` |
 
+## Memory
+
+The local model is the one large thing Skill++ runs. On an 18 GB Mac, a fold
+with `gemma4:e4b-it-qat` and `nomic-embed-text` takes about **7 GB** of free
+memory, whatever the session: a one-word question costs as much as a whole
+session. `gemma4:e4b`, the default before it, took 12.8 GB, and with other
+apps open a fold ran at 92 % memory used while macOS swapped out 4.7 GB in
+100 seconds. So Skill++ guards its memory use:
+
+- **It starts only if the models fit.** A fold loads the models only when
+  what they take still leaves 2 GB free: with the default models, from about
+  9 GB free. What they take is measured on your computer: estimated from
+  their size at first, which asks for about 10 GB free, then the largest
+  amount a fold has actually used here.
+- **It stops when memory runs short.** If free memory falls below 2 GB while a
+  fold runs, or macOS reports critical memory pressure, Skill++ stops and
+  unloads the models at once.
+- **It lets go right away.** When a fold ends, the models are unloaded, rather
+  than staying in memory for Ollama's usual five minutes.
+- **It never unloads what it didn't load.** A model you had loaded yourself
+  stays loaded.
+
+A session that doesn't fit isn't lost. It waits, and is folded:
+
+- **when your computer is idle,** five minutes without keyboard or mouse input,
+  once the models fit;
+- **at the next session start,** retried at most every ten minutes;
+- **when you ask:** **Fold now** on the review page's banner, or
+  `skill-plus-plus fold-pending --now`. The models still load only if they fit.
+
+When a fold waits or is stopped, a desktop notification says so: Notification
+Center on macOS, `notify-send` on Linux. On a Mac the first one may ask you to
+allow notifications for Script Editor, which is what shows them.
+`skill-plus-plus doctor` shows what the models take on your computer and from
+what free memory a fold starts; `skill-plus-plus stats` counts the sessions
+waiting.
+
 ## Configuration
 
 All settings are environment variables.
@@ -198,6 +235,10 @@ All settings are environment variables.
 | `SKILL_PLUS_PLUS_MATCH` | `1` | `0` banks every task without comparing it (for measuring detection) |
 | `SKILL_PLUS_PLUS_DESCRIBE` | `0` | `1` asks the model to describe every tool call, inside the hook (slow) |
 | `SKILL_PLUS_PLUS_MAX_STEPS` / `SKILL_PLUS_PLUS_MAX_FIELD` | `500` / `2000` | caps per session and per captured field |
+| `SKILL_PLUS_PLUS_MEMORY_GUARD` | `1` | `0` turns the [memory guard](#memory) off: folds load the models whatever is free |
+| `SKILL_PLUS_PLUS_MEMORY_RESERVE_GB` | `2` | free memory a fold always leaves; it starts only if the models fit with this much to spare, and stops below it |
+| `SKILL_PLUS_PLUS_IDLE_MINUTES` | `5` | how long nobody must use the keyboard or mouse before a session waiting for memory is folded |
+| `SKILL_PLUS_PLUS_NOTIFY` | `1` | `0` turns off the desktop notices when a fold waits for memory or is stopped |
 | `SKILL_PLUS_PLUS_INTERNAL` | unset | set to anything to make the hooks do nothing, e.g. for one session |
 
 ## Troubleshooting
@@ -224,6 +265,12 @@ running. Stop it with Ctrl-C in its terminal, or use `skill-plus-plus web --port
 
 **Tool calls feel slow.** Check that `SKILL_PLUS_PLUS_DESCRIBE` is not set to `1`; it asks
 the local model about every tool call inside the hook.
+
+**Sessions keep waiting for memory.** `skill-plus-plus doctor` says from what
+free memory a fold starts. Close a few apps and press **Fold now** on the
+review page, or leave the computer idle for a few minutes. If `doctor` says the
+models take more than the machine has, sessions never fold while the guard is
+on; `SKILL_PLUS_PLUS_MEMORY_GUARD=0` folds them anyway, at the risk of swapping.
 
 **Leave one session out.** Start it as `SKILL_PLUS_PLUS_INTERNAL=1 claude`, and the hooks
 do nothing for it.
