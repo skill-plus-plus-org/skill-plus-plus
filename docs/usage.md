@@ -27,11 +27,17 @@ worker after the session, not while you work.
 ## Installing
 
 ```bash
-pipx install skill-plus-plus
+pipx install skill-plus-plus                               # or: uv tool install skill-plus-plus
 ```
 
 The latest `main`, before it is released:
-`pipx install git+https://github.com/skill-plus-plus-org/skill-plus-plus`.
+`pipx install git+https://github.com/skill-plus-plus-org/skill-plus-plus`, or the
+same URL with `uv tool install`. Upgrade later with `pipx upgrade skill-plus-plus`
+or `uv tool upgrade skill-plus-plus`.
+
+With uv, install it as a tool, not with `uvx`. `uvx` runs a temporary copy from
+uv's cache, which `uv cache clean` deletes; hooks written from it would stop
+running with nothing said, so `install` refuses to write them from there.
 
 Then choose where the hooks go. Every form is a dry run that prints the exact
 change until you add `--apply`, and an existing settings file is backed up
@@ -62,7 +68,7 @@ skill-plus-plus doctor
 whether Ollama answers and has both models, how many sessions are waiting to be
 banked, and what the ledger holds.
 
-From a clone instead of `pipx`, `pip install -e .` puts `skill-plus-plus` on your PATH
+From a clone instead of `pipx` or uv, `pip install -e .` puts `skill-plus-plus` on your PATH
 the same way; `python3 bin/skill-plus-plus` works without installing anything.
 
 ## Daily use
@@ -318,7 +324,7 @@ do nothing for it.
 ```bash
 skill-plus-plus install --project ~/code/my-repo --remove --apply   # or --user
 rm -rf ~/.claude/skill-plus-plus/                                   # the ledger, sessions and drafts
-pipx uninstall skill-plus-plus
+pipx uninstall skill-plus-plus                                      # or: uv tool uninstall skill-plus-plus
 ```
 
 `--remove` takes out only Skill++'s own hook entries and the slash commands it

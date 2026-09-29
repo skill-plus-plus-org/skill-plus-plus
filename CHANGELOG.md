@@ -29,6 +29,9 @@ All notable changes to Skill++. The format follows
   `skill-plus-plus edit-skill` does the same from the terminal. Right after
   **Apply**, **Undo** puts the skill back as it was, until your next action or
   a reload of the page.
+- Installing with uv: `uv tool install skill-plus-plus`, documented next to
+  pipx. `install` refuses to write hooks from `uvx`, whose temporary copy uv
+  deletes when it cleans its cache.
 
 ### Changed
 

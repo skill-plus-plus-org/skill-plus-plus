@@ -135,11 +135,12 @@ it.
 ## ⚡ Quick Start
 
 You need macOS or Linux (Windows isn't supported yet; WSL may work but is
-untested), Python 3.10+, [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-logged in, and [Ollama](https://ollama.com) running (`brew install ollama` on a Mac).
+untested), Python 3.10+ (or [uv](https://docs.astral.sh/uv/), which brings its
+own), [Claude Code](https://docs.anthropic.com/en/docs/claude-code) logged in,
+and [Ollama](https://ollama.com) running (`brew install ollama` on a Mac).
 
 ```bash
-pipx install skill-plus-plus
+pipx install skill-plus-plus                               # or: uv tool install skill-plus-plus
 skill-plus-plus install --project ~/code/my-repo --apply   # hooks, slash commands and the two local models
 skill-plus-plus doctor                                     # everything green?
 ```
@@ -162,7 +163,11 @@ new Code session in the desktop app) and work as usual.
 - `skill-plus-plus install --project ~/code/my-repo --remove --apply` takes the hooks
   and slash commands out again.
 - The latest `main`, before it is released:
-  `pipx install git+https://github.com/skill-plus-plus-org/skill-plus-plus`.
+  `pipx install git+https://github.com/skill-plus-plus-org/skill-plus-plus`,
+  or the same URL with `uv tool install`.
+- With uv, install it as a tool (`uv tool install`), not with `uvx`: `uvx`
+  runs a temporary copy that uv deletes when it cleans its cache, and the
+  hooks would go with it, so `install` refuses to run from there.
 - From a clone: `pip install -e .`, or run `python3 bin/skill-plus-plus` without
   installing anything.
 

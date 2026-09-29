@@ -1517,6 +1517,20 @@ class TestInstall(unittest.TestCase):
         self.assertIn('PYTHONPATH="/repo"', cmd)
         self.assertNotIn("--root", cmd)
 
+    def test_a_hook_into_uvxs_cache_is_refused_and_a_lasting_one_is_not(self):
+        """uvx runs from uv's cache, which `uv cache clean` deletes; `uv tool
+        install` and pipx put the command where it lasts."""
+        from skill_plus_plus.install import hook_command, temporary_environment
+        cache = "/Users/dev/.cache/uv/archive-v0/QKhUDXGOV2kEM9Bb"
+        uvx = hook_command(package_root=Path(f"{cache}/lib/python3.12/site-packages"),
+                           script=f"{cache}/bin/skill-plus-plus")
+        self.assertIn("uv tool install", temporary_environment(uvx))
+        self.assertIn("uv tool install", temporary_environment(
+            f'PYTHONPATH="{cache}/lib/python3.12/site-packages" python3 -m skill_plus_plus hook'))
+        for lasting in ("/Users/dev/.local/bin/skill-plus-plus hook",
+                        'PYTHONPATH="/Users/dev/code/skill-plus-plus" python3 -m skill_plus_plus hook'):
+            self.assertEqual(temporary_environment(lasting), "", lasting)
+
     def test_plan_preserves_existing_hooks(self):
         from skill_plus_plus.install import plan_settings
         with tempfile.TemporaryDirectory() as tmp:
