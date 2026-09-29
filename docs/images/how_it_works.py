@@ -38,7 +38,7 @@ STAGES = [
      "link": "session ends: /exit, /clear or quitting · missed ones are picked up at the next start"},
     {"key": "fold", "n": "2", "title": "Fold", "sub": "in the background, after the session",
      "chip": "local models via Ollama",
-     "steps": [("Cut", ["a new task at", "this prompt?"], "gemma4:e4b"),
+     "steps": [("Cut", ["a new task at", "this prompt?"], "gemma4:e4b-it-qat"),
                ("Segment", ["split into tasks;", "look-only work dropped"], None),
                ("Extract", ["steps, conversation", "and dependencies"], None),
                ("Match", ["same procedure as", "a candidate?"], "nomic-embed-text")],

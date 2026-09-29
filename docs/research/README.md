@@ -22,8 +22,14 @@ result, and the numbers on them will differ.
   misses cut one task in two at a review request. Only 2 of the 45 gaps were
   real boundaries, so a judge answering "no" everywhere also scores 19 of 21:
   the set cannot tell a better judge from a lucky one.
-- **The default judge is `gemma4:e4b` since 2026-09-22**, with thinking off;
+- **The default judge was `gemma4:e4b` from 2026-09-22**, with thinking off;
   the numbers above were measured on `gemma3n:e4b`, the previous default.
+- **Since 2026-09-29 the default judge is `gemma4:e4b-it-qat`**, a build of
+  `gemma4:e4b` trained to run at 4 bits: a fold needs about 7 GB of free memory
+  instead of 12. With one line added to the question when the work before a
+  message ended in a commit, it gives the same verdict as `gemma4:e4b` at all
+  158 gaps of the public and private sets (benchmarks.md, "A finished commit,
+  said in one line").
 - **On the public sessions** (22, `tests/fixtures/sessions/`, gemma4): 19 of 22
   right, 6 of 9 real task switches caught, 0 false cuts over 77 prompts. The
   three misses are switches between code tasks. Merging: 0 wrong merges; pairs
