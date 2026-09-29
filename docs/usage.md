@@ -91,7 +91,8 @@ under the requests they served; open a request to see every step in order.
 Promote what is worth a skill, ignore what is not. An ignored candidate is
 still recognised when you repeat it, so it is never proposed again; **Bring
 back** under **Ignored** undoes it. A promoted or drafted candidate can be
-ignored too, after a confirmation; an installed skill is uninstalled first.
+ignored too, after a confirmation; an installed skill's folder is removed from
+`.claude/skills/` first.
 
 ### Shortcuts
 
@@ -110,20 +111,19 @@ ignored too, after a confirmation; an installed skill is uninstalled first.
    and under `## Open questions` whatever it could not tell from the run. It may
    also decline, when the work is not a reusable procedure; the page then says
    why, and you can draft again with a note.
-3. In **Drafts**, answer the open questions. The answers go back to the agent,
-   which folds each into the skill. **Revise** sends any other instruction.
-4. **Install** once no question is left:
-   - **Install in `<project>`** writes it to the repo's `.claude/skills/<name>/`.
-     Commit that folder and everyone who works in the repo has the skill.
-   - **Just for me** writes it to `~/.claude/skills/<name>/` (or the folder
-     `skill-plus-plus web --skills-dir` names).
+3. On the **Skills** tab, the draft waits under its project, in **To review**.
+   Answer the open questions there. The answers go back to the agent, which
+   folds each into the skill. **Revise** sends any other instruction.
+4. **Install in `<project>`** once no question is left. It writes the skill to
+   the repo's `.claude/skills/<name>/`; commit that folder and everyone who
+   works in the repo has it. A skill belongs to the project it was made from,
+   so there is no install for every project. A folder of the same name that the
+   page did not install is never touched.
 
-   After a revision, **Update** replaces the installed copy. **Uninstall**
-   removes only the files the page installed, and leaves the skill alone once
-   you have edited it. A folder of the same name that the page did not install
-   is never touched. **Download** gives a zip for anywhere else; a skill you
-   unzip by hand is recorded with
-   `skill-plus-plus promote <id> --skill-path <folder>/SKILL.md`.
+   Installed, the draft becomes one of the project's skills (below). From then
+   on the folder is the skill, and **Edit** on its card changes it. To take a
+   skill out, delete its folder: nothing else is kept of the install, and its
+   draft comes back to review.
 
 The same from the terminal:
 
@@ -131,6 +131,9 @@ The same from the terminal:
 skill-plus-plus draft <id> --note "what to look out for" --apply
 skill-plus-plus revise <id> --instruction "what to change" --apply
 ```
+
+`revise` changes a draft until it is installed; after that it refuses, and
+`edit-skill` (below) changes the skill.
 
 The agent is whatever `SKILL_PLUS_PLUS_AGENT` names, `claude -p` by default. It runs in
 a temporary folder with only the draft instructions and a way to read the
@@ -153,26 +156,23 @@ writes a Claude Code plugin folder instead.
 
 ## Skills in your projects
 
-**Project skills**, the review page's third tab, shows every skill each project
-has in `.claude/skills/`, three to a row: the ones Skill++ installed and the
-ones you or anyone else put there. Under **All projects**, each project gets
-its own gallery. A card says what Claude Code knows the skill by, whether it is
-on, whether it came from a draft and whether that draft is newer, and how often
-it was used.
+The **Skills** tab shows each project on its own: its drafts to review first,
+then every skill it has in `.claude/skills/`, three to a row, whoever put it
+there: Skill++, you or a teammate. The menu beside the tabs narrows it to one
+project. A card is the skill's name and what it is for, with a label when it
+is off and when an edit is running or waiting. A skill that is off is struck
+through and hatched.
 
-- **View** shows the skill in full: `SKILL.md` rendered, with a **Source**
-  toggle, and every file beside it. Binary files and links are named, never
-  opened.
-- **Edit** sends your agent what should change. It edits a copy in a temporary
-  folder, and the change comes back as a diff in the viewer. Nothing in the
+Click a card to open the skill: its `SKILL.md`, and what you can do with it.
+
+- **Edit** asks your agent for a change: say what should change, and it edits
+  a copy in a temporary folder. The change comes back as a diff. Nothing in the
   project changes until you press **Apply**; **Discard** drops it. Apply is
   refused if the skill changed after the agent took its copy, and the version
   it replaces is kept in
   `~/.claude/skill-plus-plus/edits/<project>/<name>/history/` (the last ten).
-  A skill installed from a draft gets the same change in its draft, so
-  **Update** and **Uninstall** keep working. A linked skill folder, one over
-  100 files or 1 MB, and one whose draft is newer than the installed copy are
-  not edited from here.
+  The draft a skill was installed from stays as it was. A linked skill folder,
+  and one over 100 files or 1 MB, are not edited from here.
 - **Turn off** switches the skill off for you only, as Claude Code's own
   `/skills` menu does: it writes `"skillOverrides": {"<name>": "off"}` into the
   project's `.claude/settings.local.json` (the main checkout's, in a git
@@ -181,11 +181,6 @@ it was used.
   file, it adds it to the clone's `.git/info/exclude`, so it is not committed.
   A skill turned off in the committed `.claude/settings.json`, or in your
   `~/.claude/settings.json`, shows as off and is changed there.
-- **Archive** moves the skill's folder out of the repo, into
-  `~/.claude/skill-plus-plus/archive/<project>/`, where Claude Code does not
-  load it. Nothing is deleted: **Restore** in the gallery's **Archived** list
-  puts it back, and never over a skill of the same name. Until you commit or
-  restore, git shows the folder as deleted.
 
 The same edit from the terminal:
 
@@ -193,9 +188,9 @@ The same edit from the terminal:
 skill-plus-plus edit-skill <folder> --project ~/code/my-repo --instruction "what to change" --apply
 ```
 
-Open Claude Code sessions pick up a changed `SKILL.md` at once. After a restore
-creates a project's `.claude/skills/` folder, run `/reload-skills` there; a
-skill turned off or on may need a new session.
+Open Claude Code sessions pick up a changed `SKILL.md` at once. After the first
+install into a project creates its `.claude/skills/` folder, run
+`/reload-skills` there; a skill turned off or on may need a new session.
 
 ## Housekeeping
 
@@ -308,7 +303,7 @@ All settings are environment variables.
 
 **An edit failed.** Read
 `~/.claude/skill-plus-plus/edits/<project>/<name>/current/agent.log`; the causes
-are the same as for a draft. **Discard** clears it.
+are the same as for a draft. **Dismiss** clears it.
 
 **The page will not start: `Address already in use`.** Another `skill-plus-plus web` is
 running. Stop it with Ctrl-C in its terminal, or use `skill-plus-plus web --port 8766`.
@@ -329,11 +324,10 @@ do nothing for it.
 
 ```bash
 skill-plus-plus install --project ~/code/my-repo --remove --apply   # or --user
-rm -rf ~/.claude/skill-plus-plus/                                   # the ledger, sessions, drafts and archived skills
+rm -rf ~/.claude/skill-plus-plus/                                   # the ledger, sessions and drafts
 pipx uninstall skill-plus-plus
 ```
 
-Restore any archived skill you want to keep before deleting that folder.
 `--remove` takes out only Skill++'s own hook entries and the slash commands it
 copied, and keeps a command file you edited. Skills you installed keep working:
 they are ordinary `SKILL.md` files that do not depend on Skill++.

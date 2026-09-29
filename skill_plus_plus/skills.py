@@ -14,26 +14,25 @@ import json
 import os
 import re
 import shutil
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import Config
 from .install import read_settings, write_settings
-from .lifecycle import load_usage, parse_frontmatter
+from .lifecycle import parse_frontmatter
 
 # A folder name a skill may be installed under, or addressed by from the page.
 SAFE_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 # Bookkeeping beside a draft, never part of the skill. `agent.log` is the drafting
 # agent's transcript: it names local paths and it is not a file anyone who
-# installs the skill should receive.
+# installs the skill should receive. `downloaded.json` and `installed.json` are
+# no longer written, but drafts from 0.1 still hold them.
 NOT_SKILL_FILES = ("status.json", "downloaded.json", "installed.json", "agent.log")
 
-# What the viewer shows of a skill, at most. Past a cap a file is named, not
-# shown: a skill is a few pages of text, and anything bigger is not for reading
-# in a browser pane.
-READ_FILE_CAP = 256 * 1024
-READ_TOTAL_CAP = 2 * 1024 * 1024
-READ_FILES_CAP = 200
+# How much of a SKILL.md the page shows. A skill is a few pages of text;
+# anything bigger is not for reading in a browser.
+READ_CAP = 256 * 1024
 # The values `skillOverrides` takes (settings reference). An absent entry is "on".
 OVERRIDE_STATES = ("on", "name-only", "user-invocable-only", "off")
 # A YAML block scalar, `description: >`: the frontmatter reader only sees its marker.
@@ -64,49 +63,35 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def install_record(config: Config, entry_id: str) -> dict:
-    """What installing this draft wrote, and where: `{path, target, files, at}`,
-    or `{}` when it is not installed from the page."""
-    try:
-        return json.loads((draft_dir(config, entry_id) / "installed.json").read_text())
-    except (OSError, ValueError):
-        return {}
+def installed_skill(entry) -> Path | None:
+    """The SKILL.md a candidate's skill was installed as, while it is there.
 
-
-def install_stale(record: dict, skill_md: Path) -> bool:
-    """Whether the draft changed since it was installed: a revision that
-    Update would pass on."""
-    return bool(record) and record.get("files", {}).get("SKILL.md") not in (None, digest(skill_md))
-
-
-def changed_since_install(record: dict) -> list[str]:
-    """The installed files edited after the install, by hand or otherwise."""
-    dest = Path(record["path"])
-    return [rel for rel, want in record.get("files", {}).items()
-            if (dest / rel).exists() and digest(dest / rel) != want]
+    The ledger's `skill_path` is all that is kept of an install: from then on
+    the folder is the skill, changed on its own card. Deleting the folder is
+    the whole uninstall, and its draft is back to review.
+    """
+    if not entry.skill_path:
+        return None
+    path = Path(entry.skill_path).expanduser()
+    return path if path.exists() else None
 
 
 # -- the skills a project has ------------------------------------------------
 
-def skills_dir(project: str | Path) -> Path:
-    """Where Claude Code loads a project's skills from."""
-    return Path(project).expanduser() / ".claude" / "skills"
-
-
 def project_key(project: str | Path) -> str:
-    """A folder name for one project's archive and edits: readable, safe as a
-    path, and apart from another repo that happens to have the same name. It
-    hashes the path as the ledger records it, so it stays put across runs."""
+    """A folder name for one project's edits: readable, safe as a path, and
+    apart from another repo that happens to have the same name. It hashes the
+    path as the ledger records it, so it stays put across runs."""
     text = os.path.normpath(os.path.expanduser(str(project)))
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(text).name).lstrip(".-")[:40]
     return f"{slug or 'project'}-{hashlib.sha256(text.encode('utf-8')).hexdigest()[:10]}"
 
 
-def skill_folders(project: str | Path) -> list[Path]:
-    """The skills Claude Code loads from a project: each folder directly in
-    `.claude/skills/` that holds a SKILL.md. Dot folders are left out."""
+def skill_folders(place: "Place") -> list[Path]:
+    """The skills Claude Code loads from a place: each folder directly in its
+    skills folder that holds a SKILL.md. Dot folders are left out."""
     try:
-        children = list(skills_dir(project).iterdir())
+        children = list(place.skills.iterdir())
     except OSError:
         return []
     return sorted((p for p in children
@@ -162,20 +147,6 @@ def override_key(folder: Path, front: dict) -> str:
     return name.strip() if isinstance(name, str) and name.strip() else folder.name
 
 
-def install_index(config: Config) -> dict[str, tuple[str, dict]]:
-    """Where each draft installed from the page went: the installed folder's
-    real path, to the entry's id and its install record."""
-    index = {}
-    for path in sorted((config.root / "drafts").glob("*/installed.json")):
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if isinstance(record, dict) and record.get("path"):
-            index[os.path.realpath(record["path"])] = (path.parent.name, record)
-    return index
-
-
 # -- turned off, or not ------------------------------------------------------
 
 def _main_checkout(dot_git: Path) -> Path | None:
@@ -205,6 +176,31 @@ def local_settings_path(project: str | Path) -> Path:
     return root / ".claude" / "settings.local.json"
 
 
+# -- where a gallery's skills are ----------------------------------------------
+
+@dataclass(frozen=True)
+class Place:
+    """One project's skills: the folder they are in, the settings file Turn
+    off writes, the ones it only reads, and its folder under `edits/`."""
+    key: str                                # the project's path, as the ledger has it
+    name: str
+    skills: Path
+    settings: Path                          # the user's own, and the only one ever written
+    shared: tuple[tuple[str, Path], ...]    # (source, path): read for "off", never written
+    store: str
+
+
+def project_place(project: str, home: Path | None = None) -> Place:
+    """A project's skills: turned off in its local settings, and read as off
+    from its committed settings and from the user's own."""
+    root = Path(project).expanduser()
+    return Place(key=project, name=root.name or project, skills=root / ".claude" / "skills",
+                 settings=local_settings_path(project),
+                 shared=(("team", root / ".claude" / "settings.json"),
+                         ("user", (home or Path.home()) / ".claude" / "settings.json")),
+                 store=project_key(project))
+
+
 def _overrides(path: Path) -> dict:
     value = read_settings(path).get("skillOverrides", {})
     if not isinstance(value, dict):
@@ -212,22 +208,21 @@ def _overrides(path: Path) -> dict:
     return value
 
 
-def read_overrides(project: str | Path, home: Path | None = None) -> dict:
-    """The `skillOverrides` maps that apply in *project*: this user's local
-    file, the project's committed one and the user's own settings.
+def read_overrides(place: Place) -> dict:
+    """The `skillOverrides` maps that apply to a project's skills: the user's
+    own file, which Turn off writes ("local"), the project's committed settings
+    ("team") and the user's settings ("user").
 
-    Only the local file is ever written from here, so only its errors are
-    reported, and they keep Turn off and Turn on from writing over it. The other
-    two are read leniently: they are not ours to fix, and Claude Code says so.
+    Only the written file's errors are reported, and they keep Turn off and
+    Turn on from writing over it. The others are read leniently: they are not
+    ours to fix, and Claude Code says so.
     """
-    home = home or Path.home()
     found = {"local": {}, "team": {}, "user": {}, "local_error": ""}
     try:
-        found["local"] = _overrides(local_settings_path(project))
+        found["local"] = _overrides(place.settings)
     except RuntimeError as exc:
         found["local_error"] = str(exc)
-    for source, path in (("team", Path(project).expanduser() / ".claude" / "settings.json"),
-                         ("user", home / ".claude" / "settings.json")):
+    for source, path in place.shared:
         try:
             found[source] = _overrides(path)
         except RuntimeError:
@@ -293,7 +288,7 @@ def _exclude_local_settings(settings_path: Path) -> bool:
     return True
 
 
-def set_override(config: Config, project: str | Path, key: str, value: str | None) -> dict:
+def set_override(config: Config, place: Place, key: str, value: str | None) -> dict:
     """Turn the skill named *key* off for this user (*value* "off") or back
     on (None), in the project's local settings, the file Claude Code's own
     `/skills` menu writes.
@@ -304,7 +299,7 @@ def set_override(config: Config, project: str | Path, key: str, value: str | Non
     that cannot be parsed is never written over. Before a write, the file as
     it was is kept under `backups/`.
     """
-    path = local_settings_path(project)
+    path = place.settings
     existed = path.exists()
     settings = read_settings(path)
     overrides = settings.get("skillOverrides", {})
@@ -319,45 +314,12 @@ def set_override(config: Config, project: str | Path, key: str, value: str | Non
     else:
         settings["skillOverrides"] = {**overrides, key: value}
     if existed:
-        backup = config.root / "backups" / project_key(project) / path.name
+        backup = config.root / "backups" / place.store / path.name
         backup.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, backup)
     write_settings(path, settings)
     return {"changed": True, "created": not existed, "path": str(path),
             "excluded": not existed and _exclude_local_settings(path)}
-
-
-# -- archived ------------------------------------------------------------------
-
-def archive_root(config: Config, project: str | Path) -> Path:
-    """Where one project's archived skills go. Two levels below `archive/`, so
-    `lifecycle.scan`, which globs `archive/*/SKILL.md`, never lists them."""
-    return config.root / "archive" / project_key(project)
-
-
-def _archive_record(config: Config, project: str | Path) -> dict:
-    """The project's archive record. Missing is empty; unreadable raises, so a
-    write never replaces what it could not read."""
-    path = archive_root(config, project) / "archived.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {"project": str(project), "items": {}}
-    except (OSError, ValueError) as exc:
-        raise RuntimeError(f"cannot read {path}: {exc}") from exc
-    if not isinstance(data, dict) or not isinstance(data.get("items"), dict):
-        raise RuntimeError(f"cannot read {path}: not an archive record")
-    return data
-
-
-def archived(config: Config, project: str | Path) -> list[dict]:
-    """The skills archived from *project*, newest first."""
-    try:
-        items = _archive_record(config, project)["items"]
-    except RuntimeError:
-        return []
-    return sorted(({"id": key, **item} for key, item in items.items() if isinstance(item, dict)),
-                  key=lambda item: str(item.get("archived_at", "")), reverse=True)
 
 
 def write_json(path: Path, data) -> None:
@@ -368,149 +330,32 @@ def write_json(path: Path, data) -> None:
     os.replace(tmp, path)
 
 
-def _set_skill_path(config: Config, entry_id: str, skill_path: str) -> bool:
-    from .ledger import Ledger
-    ledger = Ledger(config)
-    if not ledger.path_for(entry_id).exists():   # `get` would take a prefix
-        return False
-    entry = ledger.get(entry_id)
-    entry.skill_path = skill_path
-    ledger.save(entry)
-    return True
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def archive(config: Config, project: str | Path, folder: Path) -> dict:
-    """Move a skill out of the project into Skill++'s archive, where Claude
-    Code no longer loads it. Nothing is deleted: a skill of the same name
-    archived before stays, and this one is kept beside it as `name.2`.
-
-    A skill installed from a draft takes its install record along, and the
-    draft counts as not installed until the skill is restored.
-    """
-    record = _archive_record(config, project)
-    root = archive_root(config, project)
-    archive_id, n = folder.name, 2
-    while archive_id in record["items"] or os.path.lexists(root / archive_id):
-        archive_id, n = f"{folder.name}.{n}", n + 1
-    front, _ = frontmatter(folder)
-    entry_id, installed = install_index(config).get(os.path.realpath(folder), ("", {}))
-    item = {"folder": folder.name, "name": override_key(folder, front),
-            "description": str(front.get("description") or ""),
-            "archived_at": _now(), "from": str(folder),
-            "link": os.readlink(folder) if folder.is_symlink() else "",
-            "entry": entry_id, "installed": installed}
-    dest = root / archive_id
-    root.mkdir(parents=True, exist_ok=True)
-    try:
-        shutil.move(str(folder), str(dest))
-    except OSError:
-        # A move across disks copies, then deletes. If the copy broke half
-        # way, the skill is still where it was; take the partial copy away.
-        if os.path.lexists(folder) and os.path.lexists(dest):
-            if dest.is_dir() and not dest.is_symlink():
-                shutil.rmtree(dest)
-            else:
-                dest.unlink()
-        raise
-    record["project"] = str(project)
-    record["items"][archive_id] = item
-    write_json(root / "archived.json", record)
-    if entry_id:
-        (draft_dir(config, entry_id) / "installed.json").unlink(missing_ok=True)
-        _set_skill_path(config, entry_id, "")
-    return {"archived": archive_id, "path": str(dest), "unlinked": entry_id}
-
-
-def restore(config: Config, project: str | Path, archive_id: str) -> dict:
-    """Put an archived skill back where it was. Refused, never forced, when
-    something is already there."""
-    record = _archive_record(config, project)
-    item = record["items"].get(archive_id)
-    folder = str(item.get("folder") or "") if isinstance(item, dict) else ""
-    source = archive_root(config, project) / archive_id
-    if not SAFE_NAME.match(folder) or not os.path.lexists(source):
-        raise LookupError("not in the archive")
-    if not Path(project).expanduser().is_dir():
-        raise FileNotFoundError(f"{project} is gone; the skill stays archived")
-    root = skills_dir(project)
-    dest = root / folder
-    if os.path.lexists(dest):
-        raise FileExistsError(f"{dest} already exists; archive or rename it first")
-    created = not root.exists()
-    root.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(source), str(dest))
-    del record["items"][archive_id]
-    write_json(archive_root(config, project) / "archived.json", record)
-    return {"path": str(dest), "relinked": _relink(config, item, dest),
-            "reload": created}
-
-
-def _relink(config: Config, item: dict, dest: Path) -> bool:
-    """Record a restored skill as installed from its draft again, when it still
-    is that install: the draft exists and was not installed anywhere since."""
-    entry_id, installed = str(item.get("entry") or ""), item.get("installed") or {}
-    if not entry_id or not installed or install_record(config, entry_id):
-        return False
-    if os.path.normpath(str(installed.get("path", ""))) != os.path.normpath(str(dest)):
-        return False
-    if not _set_skill_path(config, entry_id, str(dest / "SKILL.md")):
-        return False
-    write_json(draft_dir(config, entry_id) / "installed.json", installed)
-    return True
-
-
 # -- the gallery ---------------------------------------------------------------
 
-def _card(config: Config, folder: Path, installs: dict, usage: dict, found: dict) -> dict:
+def _card(folder: Path, found: dict) -> dict:
+    """A skill as its card shows it: what is in its folder, whoever put it there."""
     front, _ = frontmatter(folder)
-    key = override_key(folder, front)
-    files = skill_files(folder)
-    meta = front.get("metadata") if isinstance(front.get("metadata"), dict) else {}
-    entry_id, record = installs.get(os.path.realpath(folder), ("", {}))
-    drafted = drafted_skill(config, entry_id) if entry_id else None
-    ours = meta.get("source") == "skill-plus-plus" or str(meta.get("provenance", "")).startswith("ledger:")
-    used = usage.get(key) if isinstance(usage.get(key), dict) else {}
     return {
         "name": folder.name,
-        "skill_name": key,
-        "name_mismatch": key != folder.name,
         "description": str(front.get("description") or ""),
-        "path": str(folder),
-        "link": os.readlink(folder) if folder.is_symlink() else "",
-        "files": [p.relative_to(folder).as_posix() for p in files[:20]],
-        "file_count": len(files),
-        "bytes": sum(p.lstat().st_size for p in files),
-        "made_by": "draft" if entry_id else "skill-plus-plus" if ours else "",
-        "entry": entry_id,
-        "update": bool(drafted) and install_stale(record, drafted),
         "edit_block": edit_refusal(folder),
-        "visibility": visibility(key, found),
-        "uses": int(used.get("uses") or 0),
-        "last_used": str(used.get("last_used") or ""),
+        "visibility": visibility(override_key(folder, front), found),
     }
 
 
-def list_project(config: Config, project: str, *, installs: dict | None = None,
-                 usage: dict | None = None, home: Path | None = None) -> dict:
-    """One project's gallery: its skills as cards, and the ones archived from
-    it. Reads files only and starts no process, so the page can ask on every
-    poll."""
-    installs = install_index(config) if installs is None else installs
-    usage = load_usage(config) if usage is None else usage
-    root = skills_dir(project)
-    found = read_overrides(project, home)
-    return {"project": project,
-            "name": Path(project).name,
-            "exists": Path(project).expanduser().is_dir(),
-            "linked": os.readlink(root) if root.is_symlink() else "",
+def list_place(place: Place) -> dict:
+    """One project's skills, as cards. Reads files only and starts no
+    process, so the page can ask on every poll."""
+    found = read_overrides(place)
+    return {"project": place.key,
+            "name": place.name,
+            "exists": Path(place.key).expanduser().is_dir(),
             "settings_error": found["local_error"],
-            "skills": [_card(config, folder, installs, usage, found)
-                       for folder in skill_folders(project)],
-            "archived": archived(config, project)}
+            "skills": [_card(folder, found) for folder in skill_folders(place)]}
 
 
 def _read_head(path: Path, limit: int) -> bytes:
@@ -520,41 +365,16 @@ def _read_head(path: Path, limit: int) -> bytes:
         return handle.read(limit)
 
 
-def read_skill(folder: Path) -> dict:
-    """Every file of a skill, for the viewer: text shown, binaries and links
-    only named. *folder* was resolved by the caller; nothing here takes a path
-    from a request."""
-    files, shown, hidden = [], 0, 0
-    for path in skill_files(folder):
-        if len(files) >= READ_FILES_CAP:
-            hidden += 1
-            continue
-        item: dict = {"path": path.relative_to(folder).as_posix(), "kind": "text",
-                      "size": 0, "text": None, "truncated": False}
-        files.append(item)
-        if path.is_symlink():
-            item.update(kind="link", target=os.readlink(path))
-            continue
-        try:
-            item["size"] = path.lstat().st_size
-            data = _read_head(path, READ_FILE_CAP + 1)
-        except OSError as exc:
-            item.update(kind="unreadable", error=exc.strerror or str(exc))
-            continue
-        cut = len(data) > READ_FILE_CAP
-        try:
-            text = data[:READ_FILE_CAP].decode("utf-8", errors="ignore" if cut else "strict")
-        except UnicodeDecodeError:
-            text = None
-        if text is None or "\0" in text[:8192]:
-            item["kind"] = "binary"
-            continue
-        if shown + len(text) > READ_TOTAL_CAP:
-            item["truncated"] = True
-            continue
-        shown += len(text)
-        item.update(text=text, truncated=cut)
-    return {"files": files, "hidden": hidden}
+def read_skill_md(folder: Path) -> dict:
+    """A skill's SKILL.md for the page: its text, up to READ_CAP, and never
+    read through a link. The caller resolved *folder*; nothing here takes a
+    path from a request."""
+    try:
+        data = _read_head(folder / "SKILL.md", READ_CAP + 1)
+    except OSError as exc:
+        return {"text": None, "truncated": False, "error": exc.strerror or str(exc)}
+    return {"text": data[:READ_CAP].decode("utf-8", errors="replace"),
+            "truncated": len(data) > READ_CAP, "error": ""}
 
 
 # -- edits ---------------------------------------------------------------------
@@ -576,14 +396,14 @@ HISTORY_KEPT = 10
 UPLOAD_KEYS = ("name", "description", "license", "compatibility", "metadata", "allowed-tools")
 
 
-def edit_root(config: Config, project: str | Path, folder_name: str) -> Path:
-    return config.root / "edits" / project_key(project) / folder_name
+def edit_root(config: Config, place: Place, folder_name: str) -> Path:
+    return config.root / "edits" / place.store / folder_name
 
 
-def edit_dir(config: Config, project: str | Path, folder_name: str) -> Path:
+def edit_dir(config: Config, place: Place, folder_name: str) -> Path:
     """The one edit of this skill in progress or waiting: `status.json`,
     `base.json`, `base/`, `proposal/` and `agent.log`."""
-    return edit_root(config, project, folder_name) / "current"
+    return edit_root(config, place, folder_name) / "current"
 
 
 def edit_refusal(folder: Path) -> str:
@@ -751,27 +571,7 @@ def _write_into(folder: Path, rel: str, source: Path) -> None:
     os.replace(tmp, target)
 
 
-def _sync_draft(config: Config, entry_id: str, proposal: Path, before: dict, after: dict) -> None:
-    """Give the draft a skill was installed from the same edit, so the page's
-    Update and Uninstall keep treating the installed copy as theirs. The
-    draft's SKILL.md before it is kept in `.revisions/`, as a revision's is."""
-    root = draft_dir(config, entry_id)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    history = root / ".revisions"
-    history.mkdir(parents=True, exist_ok=True)
-    if (root / "SKILL.md").is_file():
-        shutil.copy2(root / "SKILL.md", history / f"SKILL.{stamp}.md")
-    for rel, want in after.items():
-        if before.get(rel) != want:
-            (root / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(proposal / rel, root / rel)
-    for rel in before:
-        if rel not in after and (root / rel).is_file():
-            (history / stamp / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(root / rel), str(history / stamp / rel))
-
-
-def apply_edit(config: Config, project: str | Path, folder: Path) -> dict:
+def apply_edit(config: Config, place: Place, folder: Path) -> dict:
     """Write a proposed edit into the skill.
 
     Refused when the skill changed after the agent's copy was taken: the
@@ -779,7 +579,7 @@ def apply_edit(config: Config, project: str | Path, folder: Path) -> dict:
     write, what was written is put back from the copy. The replaced version
     goes to `history/`, with the last HISTORY_KEPT edits kept.
     """
-    current = edit_dir(config, project, folder.name)
+    current = edit_dir(config, place, folder.name)
     base = json.loads((current / "base.json").read_text(encoding="utf-8"))
     before = base["files"]
     if not folder.is_dir() or folder.is_symlink() or snapshot(folder) != before:
@@ -808,25 +608,20 @@ def apply_edit(config: Config, project: str | Path, folder: Path) -> dict:
         _prune_empty(folder)
         raise
     _prune_empty(folder)
-    entry_id, record = install_index(config).get(os.path.realpath(folder), ("", {}))
-    if entry_id:
-        _sync_draft(config, entry_id, current / "proposal", before, after)
-        write_json(draft_dir(config, entry_id) / "installed.json",
-                   {**record, "files": after, "edited_at": _now()})
-    history = edit_root(config, project, folder.name) / "history"
+    history = edit_root(config, place, folder.name) / "history"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     history.mkdir(parents=True, exist_ok=True)
     os.replace(current, history / stamp)
     write_json(history / stamp / "applied.json", {"at": _now(), "changed": changed})
     for old in sorted(history.iterdir())[:-HISTORY_KEPT]:
         shutil.rmtree(old, ignore_errors=True)
-    return {"changed": changed, "synced_draft": entry_id}
+    return {"changed": changed}
 
 
-def discard_edit(config: Config, project: str | Path, folder_name: str) -> None:
+def discard_edit(config: Config, place: Place, folder_name: str) -> None:
     """Drop a proposed edit. Only Skill++'s own copy goes; the skill is untouched."""
-    shutil.rmtree(edit_dir(config, project, folder_name), ignore_errors=True)
+    shutil.rmtree(edit_dir(config, place, folder_name), ignore_errors=True)
     try:                                  # left empty unless edits were applied before
-        edit_root(config, project, folder_name).rmdir()
+        edit_root(config, place, folder_name).rmdir()
     except OSError:
         pass

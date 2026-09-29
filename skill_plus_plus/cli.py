@@ -372,16 +372,27 @@ def cmd_revise(args: argparse.Namespace) -> int:
     """Have the developer's agent change a draft SKILL.md as instructed.
 
     Only an existing draft under `<root>/drafts/<id>/` is revised, in place. The
-    version before the revision is kept in `.revisions/` beside it, which the
-    web page leaves out of the download. Like `draft`, nothing is installed.
+    version before the revision is kept in `.revisions/` beside it, which is
+    never installed. Like `draft`, nothing is installed. A draft that is
+    installed is not revised: the installed folder is the skill now, and
+    `edit-skill` changes it.
     """
     import hashlib
     import subprocess
+
+    from . import skills
 
     config, _, entry = _entry(args)
     instruction = (args.instruction or "").strip()
     if not instruction:
         print("Say what to change with --instruction.", file=sys.stderr)
+        return 1
+    installed = skills.installed_skill(entry)
+    if installed:
+        folder = installed.parent
+        print(f"{entry.id} is installed in {folder}, and that folder is the skill now. "
+              f"Change it with: skill-plus-plus edit-skill {folder.name} "
+              f"--project={folder.parents[2]} --instruction=\"…\" --apply", file=sys.stderr)
         return 1
     drafted = sorted((config.root / "drafts" / entry.id).rglob("SKILL.md"))
     drafted = [p for p in drafted if ".revisions" not in p.parts]
@@ -498,9 +509,10 @@ def cmd_edit_skill(args: argparse.Namespace) -> int:
     if not instruction:
         print("Say what to change with --instruction.", file=sys.stderr)
         return 1
-    folder = skills.skills_dir(args.project) / args.folder
+    place = skills.project_place(args.project)
+    folder = place.skills / args.folder
     if not skills.SAFE_NAME.match(args.folder) or not (folder / "SKILL.md").is_file():
-        print(f"No skill {args.folder!r} in {skills.skills_dir(args.project)}", file=sys.stderr)
+        print(f"No skill {args.folder!r} in {place.skills}", file=sys.stderr)
         return 1
     refused = skills.edit_refusal(folder)
     if refused:
@@ -513,13 +525,13 @@ def cmd_edit_skill(args: argparse.Namespace) -> int:
                  "It has no `name`, so Claude Code names it after its folder; do not add one.")
     print(f"skill      {folder}")
     print(f"change     {instruction[:200]}")
-    current = skills.edit_dir(config, args.project, args.folder)
+    current = skills.edit_dir(config, place, args.folder)
     if (current / "proposal").exists():
         print("An edit of this skill is waiting; apply or discard it first.", file=sys.stderr)
         return 1
     work = _agent_workspace(args.folder)
     copy = work / args.folder
-    prompt = _EDIT_PROMPT.format(folder=copy, instruction=instruction, project=args.project,
+    prompt = _EDIT_PROMPT.format(folder=copy, instruction=instruction, project=place.key,
                                  name_rule=name_rule)
     try:
         argv = _agent_argv(config, prompt)
@@ -539,7 +551,7 @@ def cmd_edit_skill(args: argparse.Namespace) -> int:
                 if child.name != "status.json":
                     shutil.rmtree(child) if child.is_dir() else child.unlink()
         files = skills.snapshot(folder, current / "base")
-        base = {"project": args.project, "folder": args.folder, "name": name,
+        base = {"project": place.key, "folder": args.folder, "name": name,
                 "had_name": bool(name), "had_front": bool(front), "files": files,
                 "instruction": instruction,
                 "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
@@ -590,7 +602,7 @@ def cmd_edit_skill(args: argparse.Namespace) -> int:
     print()
     for item in skills.diff_proposal(current, folder)["files"]:
         print(f"{item['change']:8} {item['path']}")
-    print("\nProposed. Apply or discard it under Project skills on the review page.")
+    print("\nProposed. Apply or discard it on the review page: open the skill on the Skills tab.")
     return 0
 
 
@@ -909,19 +921,14 @@ def cmd_fold_pending(args: argparse.Namespace) -> int:
 
 def cmd_web(args: argparse.Namespace) -> int:
     """Serve the ledger as a local page. Loopback only; there is no auth."""
-    from .config import default_skills_dir
     from .web import serve
 
     config = Config(args.root)
     config.ensure_dirs()
-    skills_dir = (Path(args.skills_dir).expanduser() if args.skills_dir
-                  else default_skills_dir())
-    httpd = serve(config, skills_dir, port=args.port,
-                  open_browser=not args.no_browser)
+    httpd = serve(config, port=args.port, open_browser=not args.no_browser)
     url = f"http://127.0.0.1:{httpd.server_port}/"
     print(f"serving  {url}")
     print(f"ledger   {config.root}")
-    print(f"skills   {skills_dir}")
     print("Ctrl-C to stop.")
     try:
         httpd.serve_forever()
@@ -1956,7 +1963,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("web", help="browse the ledger in a local page")
     p.add_argument("--port", type=int, default=8765)
-    p.add_argument("--skills-dir")
     p.add_argument("--no-browser", action="store_true",
                    help="do not open a browser window")
     p.set_defaults(func=cmd_web)

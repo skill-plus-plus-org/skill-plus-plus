@@ -17,10 +17,8 @@ Dependency-free on purpose: `http.server` and one self-contained page.
 from __future__ import annotations
 
 import functools
-import io
 import json
 import math
-import os
 import re
 import shutil
 import subprocess
@@ -28,16 +26,15 @@ import sys
 import threading
 import time
 import webbrowser
-import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 from . import skills
 from .config import Config
 from .ledger import (STATUS_CANDIDATE, STATUS_DISMISSED, STATUS_PROMOTED,
                      Ledger)
-from .lifecycle import load_usage, parse_frontmatter
+from .lifecycle import parse_frontmatter
 from .normalize import parameterize
 from .summary import cached_summary, load_summaries, summaries_path
 from .sanitize import scrub
@@ -122,7 +119,7 @@ def row_state(config: Config, entry) -> dict:
         if not entry.ready(config.recurrence_threshold):
             return {"state": "collecting"}
         return {"state": "undecided"}
-    if entry.skill_path and Path(entry.skill_path).expanduser().exists():
+    if skills.installed_skill(entry):
         return {"state": "installed", "path": entry.skill_path}
     status = _read_status(config, entry.id)
     fresh, orphaned = _job_fresh(status)
@@ -490,20 +487,18 @@ def collect_state(config: Config) -> dict:
                              (r["title"] or "").lower()))
     drafts = list_drafts(config)
     projects = project_list(rows, drafts)
-    installs, usage = skills.install_index(config), load_usage(config)
+    places = [skills.project_place(p["path"]) for p in projects if p["path"]]
     return {"threshold": threshold, "ttl": config.candidate_ttl_days,
             "rows": rows, "drafts": drafts, "projects": projects,
             "capture": capture_status([p["path"] for p in projects]),
             "memory": memory_waiting(config),
-            "skills": [_with_edits(config, skills.list_project(
-                config, p["path"], installs=installs, usage=usage))
-                for p in projects if p["path"]]}
+            "skills": [_with_edits(config, place, skills.list_place(place)) for place in places]}
 
 
-def _with_edits(config: Config, gallery: dict) -> dict:
+def _with_edits(config: Config, place, gallery: dict) -> dict:
     """Each card's edit, if one is running, waiting or failed."""
     for card in gallery["skills"]:
-        card["edit"] = edit_state(config, gallery["project"], card["name"])
+        card["edit"] = edit_state(config, place, card["name"])
     return gallery
 
 
@@ -635,7 +630,7 @@ def _skill_name(entry, skill_md: Path) -> str:
 
 # `## Known gaps` was the scaffold's name for the same section and nothing read
 # it, so a draft carrying four unanswered questions rendered no answer fields
-# and downloaded freely. One name now — the old one stays matchable for drafts
+# and could leave the page. One name now — the old one stays matchable for drafts
 # written before the rename.
 _QUESTIONS_HEADING = re.compile(r"^##\s+(?:Open questions|Known gaps)\s*$",
                                 re.IGNORECASE)
@@ -650,7 +645,7 @@ def split_open_questions(text: str) -> tuple[list[dict], str]:
     The drafting agent cannot ask, so it writes what it could not tell from the
     runs there (`skill_plus_plus/commands/skill-plus-plus-draft.md`, *Ask through open questions*). Those are gaps in the
     skill, not part of it: the page shows them as answer fields, hides the
-    section from the rendered draft, and refuses the download while any remain.
+    section from the rendered draft, and refuses the install while any remain.
     The section ends at the next heading or horizontal rule.
 
     Each question is `{"question", "options"}`: the answers suggested under it,
@@ -682,41 +677,14 @@ def split_open_questions(text: str) -> tuple[list[dict], str]:
     return [q for q in questions if q["question"]], remaining
 
 
-def record_download(config: Config, entry_id: str) -> None:
-    """Remember that this version of the draft was downloaded.
-
-    Kept as a digest of SKILL.md, so a draft revised after its download counts
-    as not downloaded again: the copy someone has is no longer this one.
-    """
-    from datetime import datetime, timezone
-    entry = Ledger(config).get(entry_id)
-    if not entry:
-        return
-    skill_md = Path(row_state(config, entry)["path"])
-    path = skills.draft_dir(config, entry.id) / "downloaded.json"
-    path.write_text(json.dumps({
-        "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "sha256": skills.digest(skill_md)}), encoding="utf-8")
-
-
-def _downloaded_at(config: Config, entry_id: str, skill_md: Path) -> str:
-    try:
-        record = json.loads((skills.draft_dir(config, entry_id) / "downloaded.json")
-                            .read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
-    return record.get("at", "") if record.get("sha256") == skills.digest(skill_md) else ""
-
-
-def _install_fields(config: Config, entry, skill_md: Path) -> dict:
-    """What the card shows about installing: where it went, whether the draft
-    changed since (a revision to pass on), and the project it would go to."""
+def _install_fields(entry, installed: bool) -> dict:
+    """Where the draft went, if it is installed (it is then a card in its
+    project's gallery, not a draft to review), and the project it would be
+    installed into. A skill whose folder was removed by hand is not installed
+    any more: its draft is back to review, and Install puts it in again."""
     from .capture import project_of
-    record = skills.install_record(config, entry.id)
     home = project_of(entry.projects[0]) if entry.projects else ""
-    return {"installed": record.get("path", "") if entry.skill_path else "",
-            "installed_target": record.get("target", ""),
-            "install_stale": skills.install_stale(record, skill_md),
+    return {"installed": str(Path(entry.skill_path).expanduser().parent) if installed else "",
             "project_name": Path(home).name if home else ""}
 
 
@@ -746,29 +714,31 @@ def list_drafts(config: Config) -> list[dict]:
             "revising": state["state"] == "revising",
             "since": state.get("since"),
             "message": state.get("message", ""),
-            "downloaded_at": _downloaded_at(config, entry.id, skill_md),
             # When SKILL.md was last written, by the draft or a revision. Drafts
             # are listed newest first: the one just asked for is the one looked
             # for, and a name alone did not tell drafts apart.
             "drafted_at": datetime.fromtimestamp(
                 skill_md.stat().st_mtime, timezone.utc).isoformat(),
             "projects": _projects(entry),
-            **_install_fields(config, entry, skill_md),
+            **_install_fields(entry, state["state"] == "installed"),
         })
     drafts.sort(key=lambda d: d["drafted_at"], reverse=True)
     return drafts
 
 
 def _shippable(config: Config, entry_id: str):
-    """(entry, SKILL.md) for a draft that may leave the page, or (None, why).
+    """(entry, SKILL.md) for a draft that may be installed, or (None, why).
 
-    One gate for the download and the install: a finished draft, and no open
-    question left. The id is looked up, never joined into a path.
+    A finished draft, and no open question left. The id is looked up, never
+    joined into a path.
     """
     entry = Ledger(config).get(entry_id)
     if not entry:
         return None, "no such entry"
-    if row_state(config, entry)["state"] not in ("drafted", "installed"):
+    state = row_state(config, entry)["state"]
+    if state == "installed":
+        return None, "it is installed already"
+    if state != "drafted":
         return None, "there is no finished draft"
     skill_md = skills.drafted_skill(config, entry.id)
     if skill_md is None:
@@ -778,126 +748,42 @@ def _shippable(config: Config, entry_id: str):
     return (entry, skill_md), ""
 
 
-def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
-    """A draft as `<skill-name>.zip`, holding `<skill-name>/SKILL.md` and any
-    files beside it, so it unpacks straight into a skills directory.
-
-    Only a ledger entry with a finished draft is served; the id is looked up,
-    never joined into a path from the request.
-    """
-    got, _ = _shippable(config, entry_id)
-    if not got:
-        return None
-    entry, skill_md = got
-    root = skills.draft_dir(config, entry.id)
-    name = _skill_name(entry, skill_md)
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for path in skills.draft_files(config, entry.id):
-            archive.write(path, f"{name}/{path.relative_to(root)}")
-    return f"{name}.zip", buffer.getvalue()
-
-
 @_locked
-def install_skill(config: Config, entry_id: str, target: str,
-                  personal_dir: Path | None = None) -> dict:
-    """Copy a finished draft into a skills folder and mark it installed.
+def install_skill(config: Config, entry_id: str) -> dict:
+    """Copy a finished draft into its project's `.claude/skills/<name>/` and
+    mark it installed. A skill belongs to the repo the candidate came from:
+    committed there, it reaches everyone who works in the repo.
 
-    `project` is `<repo>/.claude/skills/<name>/`, the repo the candidate belongs
-    to: committed there, it reaches everyone who works in the repo. `personal`
-    is `~/.claude/skills/` (or the folder `skill-plus-plus web --skills-dir` names).
-    The folder is built from the ledger only, never from the request. A folder
-    of the same name that this draft did not install is left alone; our own is
-    replaced, which is how a revision reaches an installed skill.
+    The folder is built from the ledger only, never from the request, and a
+    folder already there is left alone. Nothing else is kept of the install
+    but the ledger's `skill_path`: from here on the folder is the skill,
+    changed on its card, and deleting it takes the skill out.
     """
-    from datetime import datetime, timezone
     from .capture import project_of
-    if target not in ("project", "personal"):
-        return {"ok": False, "error": "install where? project or personal"}
     got, why = _shippable(config, entry_id)
     if not got:
         return {"ok": False, "error": why}
     entry, skill_md = got
-    if target == "project":
-        home = project_of(entry.projects[0]) if entry.projects else ""
-        if not home:
-            return {"ok": False, "error": "this candidate was recorded without a project "
-                                          "folder; install it just for you"}
-        base = Path(home) / ".claude" / "skills"
-    else:
-        base = Path(personal_dir or Path.home() / ".claude" / "skills").expanduser()
-    dest = base / _skill_name(entry, skill_md)
-
-    previous = skills.install_record(config, entry.id)
-    if previous and _edit_waiting(config, previous):
-        return {"ok": False, "error": EDIT_WAITING}
-    if previous and Path(previous["path"]) != dest:
-        return {"ok": False, "error": f"already installed in {previous['path']}; uninstall it first"}
-    if dest.exists() and not previous:
-        return {"ok": False, "error": f"{dest} already exists and was not installed from "
-                                      f"this draft; it is left alone"}
-    if previous:
-        changed = skills.changed_since_install(previous)
-        if changed:
-            return {"ok": False, "error": f"{changed[0]} was changed after it was installed; "
-                                          f"keep your edits or remove the folder by hand"}
-        _remove_installed(previous)
-
+    home = project_of(entry.projects[0]) if entry.projects else ""
+    if not home:
+        return {"ok": False, "error": "this candidate was recorded without a project "
+                                      "folder, so there is no project to install it into"}
+    dest = Path(home) / ".claude" / "skills" / _skill_name(entry, skill_md)
+    if dest.exists() or dest.is_symlink():
+        return {"ok": False, "error": f"{dest} already exists; it is left alone"}
+    # An edit still waiting from a skill that was here before is not this one's.
+    place = skills.project_place(home)
+    if f"edit:{place.store}/{dest.name}" not in _jobs:
+        skills.discard_edit(config, place, dest.name)
     root = skills.draft_dir(config, entry.id)
-    files = {}
     for path in skills.draft_files(config, entry.id):
         rel = path.relative_to(root)
         (dest / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, dest / rel)
-        files[str(rel)] = skills.digest(dest / rel)
-    (root / "installed.json").write_text(json.dumps({
-        "path": str(dest), "target": target, "files": files,
-        "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}, indent=1))
     ledger = Ledger(config)
     entry.skill_path = str(dest / "SKILL.md")
     ledger.save(entry)
     return {"ok": True, "path": str(dest)}
-
-
-def _remove_installed(record: dict) -> None:
-    """Remove the files an install wrote, and the folders it leaves empty.
-    Anything else in the folder was put there by someone else and stays."""
-    dest = Path(record["path"])
-    for rel in record.get("files", {}):
-        try:
-            (dest / rel).unlink()
-        except FileNotFoundError:
-            pass
-    # The skills folder too, if the install left it empty; nothing above it.
-    for folder in sorted({(dest / rel).parent for rel in record.get("files", {})} | {dest, dest.parent},
-                         key=lambda p: len(p.parts), reverse=True):
-        try:
-            folder.rmdir()
-        except OSError:
-            pass                   # not empty: someone else's files are in it
-
-
-@_locked
-def uninstall_skill(config: Config, entry_id: str) -> dict:
-    """Take out what `install_skill` put in, if nobody has changed it since."""
-    entry = Ledger(config).get(entry_id)
-    if not entry:
-        return {"ok": False, "error": "no such entry"}
-    record = skills.install_record(config, entry.id)
-    if not record:
-        return {"ok": False, "error": "it was not installed from this page"}
-    if _edit_waiting(config, record):
-        return {"ok": False, "error": EDIT_WAITING}
-    changed = skills.changed_since_install(record)
-    if changed:
-        return {"ok": False, "error": f"{changed[0]} was changed after it was installed; "
-                                      f"remove it by hand"}
-    _remove_installed(record)
-    (skills.draft_dir(config, entry.id) / "installed.json").unlink()
-    ledger = Ledger(config)
-    entry.skill_path = ""
-    ledger.save(entry)
-    return {"ok": True, "path": record["path"]}
 
 
 def _decide(config: Config, entry_id: str, command: str) -> dict:
@@ -921,7 +807,7 @@ def accept(config: Config, entry_id: str) -> dict:
 # and all: the draft is kept, and returns if the candidate is brought back and
 # promoted again. Two cases wait: a draft still being written would land in an
 # ignored entry, and an installed skill would stay in its skills folder while
-# the page calls it ignored, so it is uninstalled first.
+# the page calls it ignored, so its folder is removed first.
 IGNORABLE = ("undecided", "accepted", "drafted", "failed", "declined")
 
 
@@ -932,7 +818,8 @@ def decline(config: Config, entry_id: str) -> dict:
         return {"ok": False, "error": "no such entry"}
     state = row_state(config, entry)["state"]
     if state == "installed":
-        return {"ok": False, "error": "Uninstall the skill first, then ignore it."}
+        return {"ok": False, "error": "The skill is installed: remove its folder from "
+                                      ".claude/skills/ first, then ignore it."}
     if state not in IGNORABLE:
         return {"ok": False, "error": f"{entry.id} cannot be ignored while it is {state}"}
     proc = _run(config, "dismiss", entry.id)
@@ -1077,47 +964,49 @@ def answer_questions(config: Config, entry_id: str, answers: list) -> dict:
     return revise(config, entry_id, instruction, limit=MAX_ANSWERS + 1000)
 
 
-def _project_skill(config: Config, project: str, name: str):
-    """(project, skill folder) for a request, or (None, why).
+def _place(config: Config, key: str):
+    """The project a request names, if the page lists it. Never a path the
+    request supplies."""
+    return skills.project_place(key) if key in known_projects(config) else None
 
-    The request names a project the page lists and a skill folder in it; it
-    never supplies a path. A name is one safe folder name, so `..` and `/`
-    cannot reach past the project's `.claude/skills/`.
+
+def _project_skill(config: Config, key: str, name: str):
+    """(place, skill folder) for a request, or (None, why).
+
+    The request names a project and a skill folder in it, never a path. A name
+    is one safe folder name, so `..` and `/` cannot reach past the project's
+    `.claude/skills/`.
     """
-    if project not in known_projects(config):
+    place = _place(config, key)
+    if place is None:
         return None, "unknown project"
-    if not skills.SAFE_NAME.match(name):
+    folder = place.skills / name
+    if not skills.SAFE_NAME.match(name) or not (folder / "SKILL.md").is_file():
         return None, "no such skill"
-    folder = skills.skills_dir(project) / name
-    if not (folder / "SKILL.md").is_file():
-        return None, "no such skill"
-    return project, folder
+    return place, folder
 
 
 def read_project_skill(config: Config, project: str, name: str) -> dict:
-    """A skill in full, for the viewer."""
-    project, folder = _project_skill(config, project, name)
-    if project is None:
+    """A skill's SKILL.md, for the page that opens it."""
+    place, folder = _project_skill(config, project, name)
+    if place is None:
         return {"ok": False, "error": folder}
-    front, _ = skills.frontmatter(folder)
-    return {"ok": True, "name": folder.name, "skill_name": skills.override_key(folder, front),
-            "path": str(folder), "link": os.readlink(folder) if folder.is_symlink() else "",
-            **skills.read_skill(folder)}
+    return {"ok": True, "name": folder.name, **skills.read_skill_md(folder)}
 
 
 @_locked
 def turn_project_skill(config: Config, project: str, name: str, off: bool) -> dict:
-    """Turn Off or Turn on, for this user only: the project's local settings."""
-    project, folder = _project_skill(config, project, name)
-    if project is None:
+    """Turn off or Turn on, for this user only: the project's local settings."""
+    place, folder = _project_skill(config, project, name)
+    if place is None:
         return {"ok": False, "error": folder}
     front, _ = skills.frontmatter(folder)
     key = skills.override_key(folder, front)
     try:
-        done = skills.set_override(config, project, key, "off" if off else None)
+        done = skills.set_override(config, place, key, "off" if off else None)
     except (RuntimeError, OSError) as exc:
         return {"ok": False, "error": str(exc)}
-    now = skills.visibility(key, skills.read_overrides(project))
+    now = skills.visibility(key, skills.read_overrides(place))
     note = ""
     if not off and now["state"] != "on":
         note = {"team": "It is still off: the project's committed settings turn it off.",
@@ -1125,44 +1014,10 @@ def turn_project_skill(config: Config, project: str, name: str, off: bool) -> di
     return {"ok": True, **done, "visibility": now, "note": note}
 
 
-@_locked
-def archive_project_skill(config: Config, project: str, name: str) -> dict:
-    project, folder = _project_skill(config, project, name)
-    if project is None:
-        return {"ok": False, "error": folder}
-    edit = edit_state(config, project, folder.name).get("state")
-    if edit in ("editing", "edit-ready"):
-        return {"ok": False, "error": "an edit of this skill is running or waiting; apply "
-                                      "or discard it first"}
-    try:
-        done = skills.archive(config, project, folder)
-    except (RuntimeError, OSError) as exc:
-        return {"ok": False, "error": str(exc)}
-    skills.discard_edit(config, project, folder.name)   # a failed edit's leftovers
-    return {"ok": True, **done}
-
-
-@_locked
-def restore_project_skill(config: Config, project: str, archive_id: str) -> dict:
-    if project not in known_projects(config):
-        return {"ok": False, "error": "unknown project"}
-    try:
-        done = skills.restore(config, project, archive_id)
-    except (LookupError, RuntimeError, OSError) as exc:
-        return {"ok": False, "error": str(exc.args[0] if exc.args else exc)}
-    note = ("Open Claude Code sessions need /reload-skills: this project had no "
-            ".claude/skills folder until now." if done["reload"] else "")
-    return {"ok": True, **done, "note": note}
-
-
-EDIT_WAITING = ("an edit of the installed skill is waiting under Project skills; "
-                "apply or discard it first")
-
-
-def edit_state(config: Config, project: str, folder_name: str) -> dict:
+def edit_state(config: Config, place, folder_name: str) -> dict:
     """Where an edit of this skill stands, read from its status file only:
     `{}` for none, else `editing`, `edit-ready` or `edit-failed`."""
-    current = skills.edit_dir(config, project, folder_name)
+    current = skills.edit_dir(config, place, folder_name)
     try:
         status = json.loads((current / "status.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -1186,27 +1041,10 @@ def edit_state(config: Config, project: str, folder_name: str) -> dict:
     return {}
 
 
-def _edit_waiting(config: Config, record: dict) -> bool:
-    """Whether the Project skills tab holds an edit of this installed copy."""
-    if record.get("target") != "project" or not record.get("path"):
-        return False
-    folder = Path(record["path"])
-    return edit_state(config, str(folder.parents[2]), folder.name).get("state") in (
-        "editing", "edit-ready")
-
-
-def _draft_newer(config: Config, folder: Path) -> bool:
-    """For a skill installed from a draft: whether the draft changed since."""
-    entry_id, record = skills.install_index(config).get(os.path.realpath(folder), ("", {}))
-    drafted = skills.drafted_skill(config, entry_id) if entry_id else None
-    return bool(drafted) and skills.install_stale(record, drafted)
-
-
-def _edit_job(config: Config, key: str, project: str, folder_name: str,
-              instruction: str) -> None:
-    status = skills.edit_dir(config, project, folder_name) / "status.json"
+def _edit_job(config: Config, key: str, place, folder_name: str, instruction: str) -> None:
+    status = skills.edit_dir(config, place, folder_name) / "status.json"
     try:
-        proc = _run(config, "edit-skill", folder_name, f"--project={project}",
+        proc = _run(config, "edit-skill", folder_name, f"--project={place.key}",
                     f"--instruction={instruction}", "--apply")
         if proc.returncode != 0:
             skills.write_json(status, {"state": "failed", "instruction": instruction,
@@ -1224,18 +1062,18 @@ def _edit_job(config: Config, key: str, project: str, folder_name: str,
 @_locked
 def edit_project_skill(config: Config, project: str, name: str, instruction: str) -> dict:
     """Have the agent edit a copy of an installed skill, in the background.
-    What it made waits as a proposal; nothing in the project changes until
+    What it made waits as a proposal; nothing in the skill changes until
     Apply."""
     instruction = (instruction or "").strip()
     if not instruction:
         return {"ok": False, "error": "say what to change"}
     if len(instruction) > MAX_INSTRUCTION:
         return {"ok": False, "error": f"at most {MAX_INSTRUCTION} characters"}
-    project, folder = _project_skill(config, project, name)
-    if project is None:
+    place, folder = _project_skill(config, project, name)
+    if place is None:
         return {"ok": False, "error": folder}
-    key = f"edit:{skills.project_key(project)}/{folder.name}"
-    state = edit_state(config, project, folder.name).get("state")
+    key = f"edit:{place.store}/{folder.name}"
+    state = edit_state(config, place, folder.name).get("state")
     if key in _jobs or state == "editing":
         return {"ok": False, "error": "the agent is already editing this skill"}
     if state == "edit-ready":
@@ -1243,14 +1081,11 @@ def edit_project_skill(config: Config, project: str, name: str, instruction: str
     refused = skills.edit_refusal(folder)
     if refused:
         return {"ok": False, "error": f"it cannot be edited here: {refused}"}
-    if _draft_newer(config, folder):
-        return {"ok": False, "error": "its draft is newer than the installed copy: "
-                                      "Update it from Drafts first"}
-    skills.write_json(skills.edit_dir(config, project, folder.name) / "status.json",
+    skills.write_json(skills.edit_dir(config, place, folder.name) / "status.json",
                       {"state": "editing", "started": time.time(), "boot": _BOOT,
                        "instruction": instruction})
     job = threading.Thread(target=_edit_job, daemon=True,
-                           args=(config, key, project, folder.name, instruction))
+                           args=(config, key, place, folder.name, instruction))
     _jobs[key] = job
     job.start()
     return {"ok": True}
@@ -1258,30 +1093,27 @@ def edit_project_skill(config: Config, project: str, name: str, instruction: str
 
 def proposal_project_skill(config: Config, project: str, name: str) -> dict:
     """The waiting edit of a skill, as a diff."""
-    project, folder = _project_skill(config, project, name)
-    if project is None:
+    place, folder = _project_skill(config, project, name)
+    if place is None:
         return {"ok": False, "error": folder}
-    if edit_state(config, project, folder.name).get("state") != "edit-ready":
+    if edit_state(config, place, folder.name).get("state") != "edit-ready":
         return {"ok": False, "error": "no edit is waiting for this skill"}
     try:
         return {"ok": True, **skills.diff_proposal(
-            skills.edit_dir(config, project, folder.name), folder)}
+            skills.edit_dir(config, place, folder.name), folder)}
     except (OSError, ValueError, KeyError) as exc:
         return {"ok": False, "error": str(exc)}
 
 
 @_locked
 def apply_project_skill_edit(config: Config, project: str, name: str) -> dict:
-    project, folder = _project_skill(config, project, name)
-    if project is None:
+    place, folder = _project_skill(config, project, name)
+    if place is None:
         return {"ok": False, "error": folder}
-    if edit_state(config, project, folder.name).get("state") != "edit-ready":
+    if edit_state(config, place, folder.name).get("state") != "edit-ready":
         return {"ok": False, "error": "no edit is waiting for this skill"}
-    if _draft_newer(config, folder):
-        return {"ok": False, "error": "its draft changed since it was installed: Update it "
-                                      "from Drafts, then ask for the edit again"}
     try:
-        done = skills.apply_edit(config, project, folder)
+        done = skills.apply_edit(config, place, folder)
     except (RuntimeError, OSError, ValueError, KeyError) as exc:
         return {"ok": False, "error": str(exc)}
     return {"ok": True, **done}
@@ -1289,21 +1121,19 @@ def apply_project_skill_edit(config: Config, project: str, name: str) -> dict:
 
 @_locked
 def discard_project_skill_edit(config: Config, project: str, name: str) -> dict:
-    project, folder = _project_skill(config, project, name)
-    if project is None:
+    place, folder = _project_skill(config, project, name)
+    if place is None:
         return {"ok": False, "error": folder}
-    key = f"edit:{skills.project_key(project)}/{folder.name}"
-    if key in _jobs or edit_state(config, project, folder.name).get("state") == "editing":
+    key = f"edit:{place.store}/{folder.name}"
+    if key in _jobs or edit_state(config, place, folder.name).get("state") == "editing":
         return {"ok": False, "error": "the agent is still editing; wait for it to finish"}
-    skills.discard_edit(config, project, folder.name)
+    skills.discard_edit(config, place, folder.name)
     return {"ok": True}
 
 
-def make_handler(config: Config, skills_dir: Path | None = None):
+def make_handler(config: Config):
     actions = {
-        "/api/install": lambda p: install_skill(config, str(p.get("id", "")),
-                                                str(p.get("target", "")), skills_dir),
-        "/api/uninstall": lambda p: uninstall_skill(config, str(p.get("id", ""))),
+        "/api/install": lambda p: install_skill(config, str(p.get("id", ""))),
         "/api/accept": lambda p: accept(config, str(p.get("id", ""))),
         "/api/summary": lambda p: summarise(config, str(p.get("id", ""))),
         "/api/transcript": lambda p: transcript(config, str(p.get("session", ""))),
@@ -1322,10 +1152,6 @@ def make_handler(config: Config, skills_dir: Path | None = None):
                                                        str(p.get("name", "")), off=True),
         "/api/skill/on": lambda p: turn_project_skill(config, str(p.get("project", "")),
                                                       str(p.get("name", "")), off=False),
-        "/api/skill/archive": lambda p: archive_project_skill(
-            config, str(p.get("project", "")), str(p.get("name", ""))),
-        "/api/skill/restore": lambda p: restore_project_skill(
-            config, str(p.get("project", "")), str(p.get("archive", ""))),
         "/api/skill/edit": lambda p: edit_project_skill(
             config, str(p.get("project", "")), str(p.get("name", "")),
             str(p.get("instruction") or "")),
@@ -1392,26 +1218,6 @@ def make_handler(config: Config, skills_dir: Path | None = None):
                 return self._send(200, PAGE, "text/html; charset=utf-8")
             if url.path == "/api/state":
                 return self._send(200, json.dumps(collect_state(config)))
-            if url.path == "/api/draft.zip":
-                entry_id = (parse_qs(url.query).get("id") or [""])[0]
-                found = draft_zip(config, entry_id)
-                if not found:
-                    waiting = any(d["id"] == entry_id and d["questions"]
-                                  for d in list_drafts(config))
-                    if waiting:
-                        return self._send(409, json.dumps(
-                            {"error": "answer the open questions first"}))
-                    return self._send(404, json.dumps({"error": "no such draft"}))
-                filename, data = found
-                record_download(config, entry_id)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/zip")
-                self.send_header("Content-Disposition",
-                                 f'attachment; filename="{filename}"')
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-                return
             self._send(404, json.dumps({"error": "not found"}))
 
         def do_POST(self):
@@ -1432,10 +1238,10 @@ def make_handler(config: Config, skills_dir: Path | None = None):
     return Handler
 
 
-def serve(config: Config, skills_dir: Path | None = None, port: int = 8765,
+def serve(config: Config, port: int = 8765,
           open_browser: bool = True) -> ThreadingHTTPServer:
     """Serve on loopback only. Never bind anywhere else: there is no auth."""
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(config, skills_dir))
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(config))
     if open_browser:
         threading.Thread(target=webbrowser.open, daemon=True,
                          args=[f"http://127.0.0.1:{httpd.server_port}/"]).start()
@@ -1530,13 +1336,6 @@ PAGE = r"""<!doctype html>
  .badge.drafted{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .cand.drafted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
  .draft.review{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
- .draft.downloaded{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.07),var(--panel) 40%)}
- .badge.review{color:var(--go);border-color:var(--goline);background:var(--gobg)}
- .badge.downloaded{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
- .badge.installed{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
- .draft.installed{border-left:3px solid var(--ok)}
- .where{font:12px var(--mono);color:var(--ok);white-space:nowrap;max-width:220px;
-   overflow:hidden;text-overflow:ellipsis}
  .badge.declined{color:var(--no);border-color:var(--noline);background:var(--nobg)}
  .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
  .clock:empty{display:none}
@@ -1670,61 +1469,60 @@ PAGE = r"""<!doctype html>
  .note .bar{display:flex;gap:8px;align-items:center}
  .blocked{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;color:var(--muted);
    border:1px solid var(--line);white-space:nowrap;cursor:not-allowed}
- a.download{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;text-decoration:none;
-   color:var(--dim);border:1px solid var(--line);white-space:nowrap}
- /* Project skills: every skill a project has in .claude/skills/, three to a row. */
- .gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 10px}
- .skill{display:flex;flex-direction:column;gap:8px;min-width:0;padding:14px 14px 12px;
-   background:var(--panel);border:1px solid var(--line);border-radius:8px}
- .skill.off{border-style:dashed}
- .skill.off .name,.skill.off .desc{opacity:.6}
- .skill .name{font:600 13px var(--mono);color:var(--fg);background:none;border:0;padding:0;
-   text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .skill .name:hover{text-decoration:underline}
- .skill .desc{margin:0;font-size:12.5px;color:var(--dim);display:-webkit-box;-webkit-line-clamp:3;
-   -webkit-box-orient:vertical;overflow:hidden;min-height:calc(3 * 1.45em)}
- .skill .badges{display:flex;flex-wrap:wrap;gap:6px}
- .skill .meta{font:11.5px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .skill .acts{margin-top:auto;flex-wrap:wrap;gap:6px}
- .skill .acts button{padding:5px 9px}
- button.badge{cursor:pointer}
- .badge.off{color:var(--dim);border-color:var(--line);background:var(--surface)}
- .badge.mine{color:var(--go);border-color:var(--goline);background:var(--gobg)}
- .badge.heed{color:#fbbf24;border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.1)}
+ /* The Skills tab: one block per project, its drafts to review, then its skills. */
+ .project{margin:0 0 32px}
+ .project-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:0 0 4px;
+   padding:0 0 8px;border-bottom:1px solid var(--line)}
+ .project-head h2{margin:0;font:600 15px var(--mono);color:var(--fg)}
+ .project-head span{font-size:12px;color:var(--muted)}
+ h3.sub{margin:16px 0 8px;font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+ .gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+ /* A card is the skill and nothing else: its name, what it is for, its state. */
+ button.skill{display:flex;flex-direction:column;gap:8px;min-width:0;width:100%;padding:14px 16px;
+   text-align:left;font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);
+   border-radius:10px;cursor:pointer;transition:border-color .12s}
+ button.skill:hover{border-color:var(--dim)}
+ button.skill:focus-visible{outline:2px solid var(--go);outline-offset:2px}
+ .skill .top{display:flex;align-items:center;gap:8px;min-width:0}
+ .skill .name{flex:1;min-width:0;font:600 13.5px var(--mono);color:var(--fg);white-space:nowrap;
+   overflow:hidden;text-overflow:ellipsis}
+ .skill .pills{display:flex;gap:6px;flex-shrink:0}
+ .skill .desc{font-size:12.5px;line-height:1.5;color:var(--dim);display:-webkit-box;-webkit-line-clamp:3;
+   -webkit-box-orient:vertical;overflow:hidden}
+ .pill{display:inline-flex;align-items:center;font:600 10px var(--mono);text-transform:uppercase;
+   letter-spacing:.06em;padding:2px 8px;border-radius:999px;border:1px solid;white-space:nowrap}
+ .pill .spin{width:8px;height:8px;margin-right:5px}
+ .pill.off{color:#fff;background:var(--no);border-color:var(--no)}
+ .pill.heed{color:#fbbf24;border-color:rgba(251,191,36,.45);background:rgba(251,191,36,.1)}
+ .pill.work{color:var(--go);border-color:var(--goline);background:var(--gobg)}
+ .pill.fail{color:var(--no);border-color:var(--noline);background:var(--nobg)}
+ /* Off, at a glance: a solid Off pill, the name struck through, the card hatched. */
+ button.skill.off{border:1px dashed var(--noline);
+   background:repeating-linear-gradient(135deg,var(--panel) 0 10px,color-mix(in srgb,var(--no) 7%,var(--panel)) 10px 20px)}
+ .skill.off .name{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--no)}
+ .skill.off .desc{opacity:.5}
  button.danger:hover{color:var(--no);border-color:var(--noline);background:var(--nobg)}
- .archived{margin:4px 0 22px;font-size:12.5px;color:var(--dim)}
- .archived summary{cursor:pointer;font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
- .archived ul{list-style:none;margin:8px 0 0;padding:0}
- .archived li{display:flex;align-items:center;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
- .archived .n{font:12.5px var(--mono);color:var(--fg)}
- .archived .d{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .archived .ago{color:var(--muted);font-size:12px;white-space:nowrap}
- /* The viewer: one skill in full, and its edit. */
- dialog#viewer{width:min(1100px,94vw);height:min(86vh,900px);max-width:none;max-height:none;padding:0;
-   border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg)}
+ /* An opened skill: its SKILL.md, what can be done with it, and its edit. */
+ dialog#viewer{width:min(900px,94vw);height:min(86vh,900px);max-width:none;max-height:none;padding:0;
+   border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--fg)}
  dialog#viewer::backdrop{background:rgba(0,0,0,.6)}
- /* minmax(0,1fr): a long path in the head must not widen the dialog past its edge. */
+ body:has(dialog[open]){overflow:hidden}
  .viewer{display:grid;grid-template-rows:auto minmax(0,1fr);grid-template-columns:minmax(0,1fr);height:100%}
- .vhead{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)}
- .vname{font:600 14px var(--mono)}
- .vpath{flex:1;min-width:0;font:11.5px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .vbody{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:0}
- .vfiles{border-right:1px solid var(--line);overflow:auto;padding:8px}
- .vfiles button{display:block;width:100%;text-align:left;border:0;background:none;padding:5px 8px;
-   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .vfiles button[aria-selected=true]{background:var(--surface);color:var(--fg)}
- .vpane{overflow:auto;padding:16px 20px}
- pre.src{margin:0;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;
-   font:12px/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:#cbd2e1}
+ .vhead{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:14px 18px;border-bottom:1px solid var(--line)}
+ .vname{font:600 15px var(--mono);margin-right:4px;min-width:0;overflow-wrap:anywhere}
+ .vhead .grow{flex:1}
+ .vpane{overflow:auto;padding:18px 22px}
  .vnote{font:12px var(--mono);color:var(--muted);margin:6px 0}
- .edit{margin:18px 0 0;padding-top:14px;border-top:1px solid var(--line)}
+ .vpane .err{font:12px var(--mono);color:var(--no);margin:0 0 8px}
+ .edit{margin:0 0 20px;padding:0 0 18px;border-bottom:1px solid var(--line)}
  .edit h4{margin:0 0 4px;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.04em;color:var(--fg)}
  .edit label{display:block;margin:0 0 2px;font-size:13px;color:var(--fg)}
  .edit .hint{margin:0 0 8px;font-size:12px;color:var(--dim)}
  .edit textarea{width:100%;min-height:80px;resize:vertical;font:13px/1.5 var(--sans);color:var(--fg);
    background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;margin:0 0 8px}
  .edit .bar{display:flex;gap:8px;align-items:center}
- .edit .err{font:12px var(--mono);color:var(--no);margin:0 0 8px}
+ .edit .failed{justify-content:space-between;margin:0 0 10px}
+ .edit .failed .err{margin:0}
  .edit .warns{margin:0 0 10px;padding:8px 12px 8px 28px;border:1px solid rgba(251,191,36,.35);
    background:rgba(251,191,36,.06);border-radius:6px;font-size:12.5px;color:var(--fg)}
  .diff{margin:8px 0 12px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
@@ -1733,28 +1531,38 @@ PAGE = r"""<!doctype html>
  .diff .l{display:block;padding:0 10px;white-space:pre}
  .diff .add{color:var(--ok);background:var(--okbg)} .diff .del{color:var(--no);background:var(--nobg)}
  .diff .hunk{color:var(--go)} .diff .meta{color:var(--muted)}
+ /* The page's own pop-up, for a question to answer or a message to read. */
+ dialog#ask{width:min(440px,92vw);max-width:none;padding:0;border:1px solid var(--line);
+   border-radius:12px;background:var(--panel);color:var(--fg)}
+ dialog#ask::backdrop{background:rgba(0,0,0,.6)}
+ .ask{margin:0;padding:18px 20px 16px}
+ .ask h2{margin:0 0 8px;font:600 14px/1.45 var(--sans);color:var(--fg);overflow-wrap:anywhere}
+ .ask p{margin:0 0 8px;font-size:13px;line-height:1.55;color:var(--dim);white-space:pre-line;
+   overflow-wrap:anywhere}
+ .ask .bar{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+ .ask button.danger{color:#fff;border-color:var(--no);background:var(--no);font-weight:600}
+ .ask button.danger:hover{filter:brightness(1.1)}
  @media(max-width:880px){.gallery{grid-template-columns:repeat(2,minmax(0,1fr))}}
  @media(max-width:560px){.gallery{grid-template-columns:minmax(0,1fr)}
-   dialog#viewer{width:100vw;height:100dvh;border-radius:0}
-   .vbody{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
-   .vfiles{border-right:0;border-bottom:1px solid var(--line);max-height:26vh}}
- /* Three tabs and the project switcher don't fit a phone's width on one line. */
+   dialog#viewer{width:100vw;height:100dvh;border-radius:0}}
+ /* The tabs and the project switcher don't fit a phone's width on one line. */
  @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}
    header{flex-wrap:wrap;padding:10px 16px}nav{flex-wrap:wrap}nav button{white-space:nowrap}
    header select{max-width:100%}}
- /* A draft's row holds the most buttons (install, just for me, download,
-    ignore), so it breaks onto two lines sooner than a candidate's. */
+ /* A draft's row holds its install and ignore buttons, so it breaks onto two
+    lines sooner than a candidate's. */
  @media(max-width:880px){.draft .row{flex-wrap:wrap}.draft .title{flex-basis:calc(100% - 40px)}}
 </style></head><body>
 <header><span style="display:flex;align-items:center;gap:6px 18px;flex-wrap:wrap"><b>Skill++</b>
 <nav id="nav"></nav></span><select id="project" aria-label="Project" hidden></select></header>
 <main id="list"></main>
 <dialog id="viewer" aria-labelledby="viewer-title"></dialog>
+<dialog id="ask" aria-labelledby="ask-title"></dialog>
 <script>
 let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
-// A candidate with a draft is reviewed in the Drafts tab, not listed here.
-// A draft's row lives in the Drafts tab, installed ones too; a skill installed
-// by hand, with no draft here, stays on the Candidates tab.
+// A candidate with a draft lives on the Skills tab, not here, under its
+// project: in To review while it is a draft, as a skill card once installed. A
+// skill installed by hand, with no draft here, stays on the Candidates tab.
 const DOCS = "https://skill-plus-plus-org.github.io/usage/";
 // Nothing captured looks the same as nothing repeated yet, so the page says
 // which: a warning while no hooks feed it, and an empty list that explains
@@ -1808,7 +1616,7 @@ function actions(r){
       <button class="decline" data-act="decline" data-id="${id}"${off} title="${IGNORE_HINT}">Ignore</button>`;
     case "accepted": return draftButton(r) + ignoreButton(r);
     case "creating": return `<span class="state"><span class="spin"></span>Creating skill…</span>`;
-    case "drafted": return `<a class="state ok" data-goto="${id}" title="Review in Drafts">Review</a>`;
+    case "drafted": return `<a class="state ok" data-goto="${id}" title="Review it under Skills">Review</a>`;
     case "revising": return `<span class="state"><span class="spin"></span>Revising…</span>`;
     case "installed": return `<span class="state ok" title="${esc(r.path)}">Skill installed</span>`;
     case "failed": case "declined":
@@ -1819,11 +1627,39 @@ function actions(r){
   }
 }
 
+// The page's own pop-ups, for a question to answer or a message to read. The
+// browser's own confirm and alert boxes can be switched off, and Claude's
+// in-app browser does: a question there answered "no" without being shown, so
+// Ignore seemed to do nothing, and an error said nothing. A <dialog> of the
+// page's own is never blocked.
+let askBound = false, answer = null;
+function popup(body, buttons){
+  const dlg = document.getElementById("ask");
+  if(!askBound){
+    askBound = true;
+    dlg.addEventListener("close", () => { const done = answer; answer = null; if(done) done(dlg.returnValue); });
+    dlg.addEventListener("click", ev => { if(ev.target === dlg) dlg.close(); });   // beside it
+  }
+  if(answer){ answer(""); answer = null; }       // a newer one takes the place of one still open
+  dlg.returnValue = "";
+  dlg.innerHTML = `<form method="dialog" class="ask">${body}<div class="bar">${buttons}</div></form>`;
+  if(!dlg.open) dlg.showModal();
+  return new Promise(done => { answer = done; });
+}
+// A question: its first paragraph is what is asked, the rest says why. Cancel,
+// Esc and a click beside it all answer no; Cancel has the focus, so Enter does.
+async function ask(message, action){
+  const [question, ...why] = message.split("\n\n");
+  return await popup(`<h2 id="ask-title">${esc(question)}</h2>${why.map(w => `<p>${esc(w)}</p>`).join("")}`,
+    `<button value="">Cancel</button><button value="yes" class="danger">${esc(action)}</button>`) === "yes";
+}
+const tell = message => popup(`<p id="ask-title">${esc(message)}</p>`, `<button value="ok" class="create">OK</button>`);
+
 // Ignore is the one decision that is easy to make by mistake and quiet
 // afterwards: an ignored procedure is still recognised, so it never shows up
 // again to remind anyone. A pending card says so on hover; a promoted one, which
-// someone already chose, asks first. An installed skill is uninstalled first,
-// or it would stay in its skills folder while the page calls it ignored.
+// someone already chose, asks first. An installed skill can't be ignored: it
+// would stay in its skills folder while the page calls it ignored.
 const IGNORE_HINT = "Won't be proposed again. You can bring it back from Ignored.";
 function ignoreButton(r, drafted){
   if(noting.has(r.id)) return "";
@@ -1836,8 +1672,8 @@ function ignoreWarning(title, drafted){
     + "\n\nYou can bring it back any time from Ignored.";
 }
 function bindIgnore(list){
-  list.querySelectorAll("[data-ignore]").forEach(b => b.onclick = () => {
-    if(confirm(ignoreWarning(b.dataset.title, b.dataset.drafted))) act("decline", b.dataset.ignore);
+  list.querySelectorAll("[data-ignore]").forEach(b => b.onclick = async () => {
+    if(await ask(ignoreWarning(b.dataset.title, b.dataset.drafted), "Ignore")) act("decline", b.dataset.ignore);
   });
 }
 
@@ -1865,7 +1701,7 @@ async function startDraft(id){
   try {
     const note = (notes[id] || "").trim();
     const r = await (await post("/api/create", {id, note})).json();
-    if(!r.ok){ alert(r.error || "failed"); return; }
+    if(!r.ok){ tell(r.error || "failed"); return; }
     // The note stays in `notes`, so a retry after a failed run starts from it.
     noting.delete(id);
   } finally { busy.delete(id); await load(); }
@@ -1916,7 +1752,7 @@ function syncSeen(){
   saveSeen();
 }
 const isNew = d => !d.revising && seen && seen.cards[d.id] !== d.drafted_at;
-const newSinceTab = () => S.drafts.filter(d => isNew(d) && stamp(d.drafted_at) > seen.tab).length;
+const newSinceTab = () => S.drafts.filter(d => !d.installed && isNew(d) && stamp(d.drafted_at) > seen.tab).length;
 function markTabSeen(){
   const top = Math.max(seen.tab, ...S.drafts.map(d => stamp(d.drafted_at)));
   if(top !== seen.tab){ seen.tab = top; saveSeen(); }
@@ -1928,10 +1764,10 @@ function markCardSeen(id){
 
 function renderNav(){
   const nav = document.getElementById("nav");
-  nav.innerHTML = [["candidates","Candidates",S.rows.filter(r => !inDrafts(r)).length],["drafts","Drafts",S.drafts.length],
-                   ["skills","Project skills",(S.skills || []).reduce((n, g) => n + g.skills.length, 0)]]
+  const onTab = S.drafts.filter(d => !d.installed).length + (S.skills || []).reduce((n, g) => n + g.skills.length, 0);
+  nav.innerHTML = [["candidates","Candidates",S.rows.filter(r => !inDrafts(r)).length],["skills","Skills",onTab]]
     .map(([k,l,n]) => {
-      const fresh = k === "drafts" ? newSinceTab() : 0;
+      const fresh = k === "skills" ? newSinceTab() : 0;
       return `<button data-view="${k}" aria-selected="${view===k}">${l} (${n})${fresh
         ? `<span class="new" title="${fresh} new draft${fresh===1?"":"s"} since you last looked">${fresh} new</span>` : ""}</button>`;
     }).join("");
@@ -2055,18 +1891,13 @@ function questionsBlock(d){
         data-other placeholder="write your own answer" value="${esc(a.text || "")}">`)}</div>`;
   };
   return `<div class="questions"><h4>Open questions</h4>
-    <p class="hint">The agent could not tell these from the recorded runs. Pick an answer or write your own; the skill downloads once none are left.</p>
+    <p class="hint">The agent could not tell these from the recorded runs. Pick an answer or write your own; the skill can be installed once none are left.</p>
     ${d.questions.map(one).join("")}
     <div class="bar" style="margin-top:12px"><button class="create" data-answer-send="${id}">Send answers</button></div>
   </div>`;
 }
 
 function reviseBlock(d){
-  // An installed skill is changed where it is installed, under Project skills,
-  // which keeps its draft in step. One installed just for you is uninstalled first.
-  if(d.installed) return d.installed_target === "project"
-    ? `<div class="revise"><button class="create" data-goto-skill="${esc(d.installed)}">Edit under Project skills</button></div>`
-    : `<div class="revise"><p class="files">Installed just for you: uninstall it to revise the draft.</p></div>`;
   const id = esc(d.id);
   const err = d.message ? `<p class="err">Last revision: ${esc(d.message)}</p>` : "";
   if(d.revising) return "";   // the notice at the top of the card says it
@@ -2077,35 +1908,33 @@ function reviseBlock(d){
     <button data-revise-cancel="${id}">Cancel</button></div></div>`;
 }
 
-function renderDrafts(list){
-  // Install is the way a skill reaches its project: into the repo's
-  // .claude/skills/, where committing it shares it. Download stays for
-  // anywhere else.
-  const installActs = d => d.installed
-    ? (d.installed_target === "project"
-        ? `<a class="where" data-goto-skill="${esc(d.installed)}" title="Open it under Project skills: ${esc(d.installed)}">in ${esc(d.project_name)}</a>`
-        : `<span class="where" title="${esc(d.installed)}">for you</span>`)
-      + (d.install_stale ? `<button class="create" data-install="${esc(d.id)}" data-target="${esc(d.installed_target)}" title="The draft changed since it was installed">Update</button>` : "")
-      + `<button data-uninstall="${esc(d.id)}" data-where="${esc(d.installed)}">Uninstall</button>`
-    : (d.project_name ? `<button class="create" data-install="${esc(d.id)}" data-target="project" title="Into the repo's .claude/skills/. Commit it to share it with everyone in the repo.">Install in ${esc(d.project_name)}</button>` : "")
-      + `<button data-install="${esc(d.id)}" data-target="personal" title="Into ~/.claude/skills/, only for you">${d.project_name ? "Just for me" : "Install for me"}</button>`
-      + `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">Download</a>`;
-  const kind = d => d.installed ? "installed" : d.downloaded_at ? "downloaded" : "review";
-  // A draft can be ignored like its candidate; one being revised waits, and an
-  // installed one is uninstalled first.
-  const draftIgnore = d => d.revising ? ""
-    : d.installed ? ` <button class="decline" disabled title="Uninstall the skill first, then ignore it">Ignore</button>`
-    : ignoreButton(d, true);
-  const card = d => `<div class="draft ${kind(d)} ${open.has(d.id) || d.revising ? "open" : ""} ${d.revising ? "busy" : ""} ${isNew(d)?"fresh":""}">
+// The Skills tab, one project at a time: the project's drafts to review and
+// install, then the skills it has. A draft, once installed, is one of them.
+// Turn off is this user's own switch, in the project's settings.local.json,
+// where Claude Code's /skills menu writes too. Edit has the agent change a
+// copy, shown as a diff that changes nothing until Apply.
+let viewer = null, viewerBound = false, editText = {};
+const skillKey = (p, n) => p + "\n" + n;
+function findGallery(p){ return ((ALL || S).skills || []).find(g => g.project === p) || null; }
+function findCard(p, n){
+  const g = findGallery(p);
+  return g ? g.skills.find(c => c.name === n) || null : null;
+}
+function draftCard(d){
+  const install = d.questions.length
+    ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
+    : d.project_name
+      ? `<button class="create" data-install="${esc(d.id)}" title="Into ${esc(d.project_name)}'s .claude/skills/. Commit it to share it with everyone in the repo.">Install in ${esc(d.project_name)}</button>`
+      : `<span class="blocked" title="The candidate was recorded without a project folder">No project to install into</span>`;
+  // A draft can be ignored like its candidate; one being revised waits.
+  const ignore = d.revising ? "" : ignoreButton(d, true);
+  return `<div class="draft review ${open.has(d.id) || d.revising ? "open" : ""} ${d.revising ? "busy" : ""} ${isNew(d)?"fresh":""}">
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
         ${isNew(d) ? `<span class="new" title="Written since you last opened it">New</span>` : ""}
         <span class="ago" title="${esc(when(d.drafted_at))}">${d.revising ? `<span class="spin"></span>Revising…` : "drafted " + ago(d.drafted_at)}</span>
-        <span class="badge ${kind(d)}">${{installed: "Installed", downloaded: "Downloaded", review: "To review"}[kind(d)]}</span>
-        <span class="acts">${d.questions.length
-          ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
-          : installActs(d)}${draftIgnore(d)}</span>
+        <span class="acts">${install}${ignore}</span>
       </div>
       <p class="desc">${esc(d.description)}</p>
       <div class="body">
@@ -2115,35 +1944,56 @@ function renderDrafts(list){
         <div class="md">${md(d.body)}</div>
         ${reviseBlock(d)}
       </div></div>`;
-  const toReview = S.drafts.filter(d => kind(d) === "review");
-  const installed = S.drafts.filter(d => kind(d) === "installed");
-  const downloaded = S.drafts.filter(d => kind(d) === "downloaded");
-  const part = (title, note, items, none) => `<div class="section"><h2>${title}</h2><span>${note}</span></div>
-    ${items.length ? items.map(card).join("") : `<p class="empty">${none}</p>`}`;
-  list.innerHTML = S.drafts.length
-    ? part("To review", "Drafts not installed or downloaded yet.", toReview, "Nothing waiting.")
-      + part("Installed", "In a skills folder, where your agent loads them. A newer draft is passed on with Update; to change one, edit it under Project skills.", installed, "Nothing installed yet.")
-      + (downloaded.length ? part("Downloaded", "Downloaded but not installed from here.", downloaded, "") : "")
-    : `<p class="empty">No drafts yet. Promote a candidate, then Draft Skill.</p>`;
+}
+const OFF_BY = {
+  local: ["Off", "Turned off for you, in this project's .claude/settings.local.json: Claude doesn't see it and /name is hidden. Teammates keep it."],
+  team: ["Off for the team", "Turned off in the project's committed .claude/settings.json, for everyone. Change it there."],
+  user: ["Off in your settings", "Turned off in your ~/.claude/settings.json, in every project. Change it there."]};
+const SHOWN_AS = {"name-only": "Name only", "user-invocable-only": "Only by /name"};
+function statePills(c){
+  const v = c.visibility, e = c.edit || {};
+  const off = v.state === "off" ? OFF_BY[v.source] || OFF_BY.local : null;
+  return [
+    off ? `<span class="pill off" title="${esc(off[1])}">${off[0]}</span>`
+      : v.state !== "on" ? `<span class="pill heed" title="skillOverrides in your ${esc(v.source)} settings">${esc(SHOWN_AS[v.state] || v.state)}</span>` : "",
+    e.state === "editing" ? `<span class="pill work"><span class="spin"></span>Editing</span>` : "",
+    e.state === "edit-ready" ? `<span class="pill heed" title="The agent's change is waiting for you">Edit ready</span>` : "",
+    e.state === "edit-failed" ? `<span class="pill fail" title="${esc(e.message)}">Edit failed</span>` : "",
+  ].filter(Boolean).join("");
+}
+function skillCard(g, c){
+  const pills = statePills(c), e = c.edit || {};
+  return `<button class="skill${c.visibility.state === "off" ? " off" : ""}${e.state === "editing" ? " busy" : ""}" data-open-skill data-project="${esc(g.project)}" data-name="${esc(c.name)}">
+    <span class="top"><span class="name">${esc(c.name)}</span>${pills ? `<span class="pills">${pills}</span>` : ""}</span>
+    <span class="desc">${esc(c.description) || "No description."}</span></button>`;
+}
+function projectHTML(g, drafts){
+  const counts = [plural(g.skills.length, "skill"), drafts.length ? `${plural(drafts.length, "draft")} to review` : ""]
+    .filter(Boolean).join(" · ");
+  const warn = !g.exists ? `<div class="warn"><strong>Folder not found.</strong> ${esc(g.project)} is gone.</div>` : "";
+  const review = drafts.length ? `<h3 class="sub">To review</h3>${drafts.map(draftCard).join("")}` : "";
+  const skills = g.skills.length
+    ? `<h3 class="sub">Skills</h3><div class="gallery">${g.skills.map(c => skillCard(g, c)).join("")}</div>`
+    : g.exists ? `<p class="empty">No skills in this project yet.${drafts.length ? " Install one from a draft above." : ""}</p>` : "";
+  return `<section class="project"><div class="project-head"><h2>${esc(g.name)}</h2><span title="${esc(g.project)}">${counts}</span></div>${warn}${review}${skills}</section>`;
+}
+function skillsTabHTML(){
+  const galleries = S.skills || [], waiting = S.drafts.filter(d => !d.installed);
+  const blocks = galleries.map(g => projectHTML(g, waiting.filter(d => (d.projects || []).includes(g.project))));
+  const loose = waiting.filter(d => !(d.projects || []).some(k => galleries.some(g => g.project === k)));
+  if(loose.length) blocks.push(`<section class="project"><div class="project-head"><h2>No project</h2>
+    <span>Drafts from sessions recorded without a project folder</span></div>${loose.map(draftCard).join("")}</section>`);
+  return blocks.join("") || `<div class="empty"><p><strong>Nothing here yet.</strong></p>
+    <p>Promote a candidate and press Draft Skill: the draft shows up here, under its project, to review and install.</p></div>`;
+}
+function bindSkillsTab(list){
   list.querySelectorAll("[data-install]").forEach(b => b.onclick = async () => {
     b.disabled = true;
-    const r = await (await post("/api/install", {id: b.dataset.install, target: b.dataset.target})).json();
-    if (!r.ok) { alert(r.error || "install failed"); b.disabled = false; return; }
+    const r = await (await post("/api/install", {id: b.dataset.install})).json();
+    if (!r.ok) { tell(r.error || "install failed"); b.disabled = false; return; }
     await load();
   });
-  list.querySelectorAll("[data-uninstall]").forEach(b => b.onclick = async () => {
-    if (!confirm(`Remove the skill installed in\n${b.dataset.where}?\n\nOnly the files installed from this page are removed.`)) return;
-    b.disabled = true;
-    const r = await (await post("/api/uninstall", {id: b.dataset.uninstall})).json();
-    if (!r.ok) { alert(r.error || "uninstall failed"); b.disabled = false; return; }
-    await load();
-  });
-  list.querySelectorAll("a.download").forEach(a => a.addEventListener("click", () => setTimeout(load, 1000)));
-  list.querySelectorAll("[data-goto-skill]").forEach(a => a.onclick = () => {
-    const at = a.dataset.gotoSkill.match(/^(.*)\/\.claude\/skills\/([^/]+)\/?$/);
-    if(!at) return;
-    view = "skills"; render(); openViewer(at[1], at[2]);
-  });
+  list.querySelectorAll("[data-open-skill]").forEach(b => b.onclick = () => openViewer(b.dataset.project, b.dataset.name));
   bindIgnore(list);
   list.querySelectorAll("[data-revise-open]").forEach(b => b.onclick = () => {
     writing.add(b.dataset.reviseOpen); render();
@@ -2174,10 +2024,10 @@ function renderDrafts(list){
       const answer = a.choice && a.choice !== "other" ? q.options[+a.choice] : a.text;
       return {question: q.question, answer: (answer || "").trim()};
     }).filter(a => a.answer);
-    if(!payload.length){ alert("Answer at least one question."); return; }
+    if(!payload.length){ tell("Answer at least one question."); return; }
     b.disabled = true;
     const r = await (await post("/api/answer", {id, answers: payload})).json();
-    if(!r.ok){ alert(r.error || "failed"); b.disabled = false; return; }
+    if(!r.ok){ tell(r.error || "failed"); b.disabled = false; return; }
     delete answers[id]; await load();
   });
   list.querySelectorAll("[data-revise-send]").forEach(b => b.onclick = async () => {
@@ -2185,7 +2035,7 @@ function renderDrafts(list){
     if(!instruction) return;
     b.disabled = true;
     const r = await (await post("/api/revise", {id, instruction})).json();
-    if(!r.ok){ alert(r.error || "failed"); b.disabled = false; return; }
+    if(!r.ok){ tell(r.error || "failed"); b.disabled = false; return; }
     writing.delete(id); delete drafts[id]; await load();
   });
   list.querySelectorAll("[data-toggle]").forEach(h => h.onclick = ev => {
@@ -2199,126 +2049,6 @@ function renderDrafts(list){
   });
 }
 
-// Project skills: every skill a project has in .claude/skills/, whoever made
-// it. Turn off is this user's own switch, in the project's settings.local.json,
-// where Claude Code's /skills menu writes too. Archive moves the folder out of
-// the repo into Skill++'s folder. Edit has the agent change a copy, shown as a
-// diff that changes nothing until Apply.
-let viewer = null, viewerBound = false, editText = {}, openArchived = new Set();
-const skillKey = (p, n) => p + "\n" + n;
-function findCard(p, n){
-  const g = ((ALL || S).skills || []).find(x => x.project === p);
-  return g ? g.skills.find(c => c.name === n) || null : null;
-}
-const size = n => n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`;
-const OFF_BY = {
-  local: ["Off for you", "Turned off in this project's .claude/settings.local.json, for you only: Claude doesn't see it and /name is hidden. Teammates keep it."],
-  team: ["Off for the team", "Turned off in the project's committed .claude/settings.json, for everyone. Change it there."],
-  user: ["Off in your settings", "Turned off in your ~/.claude/settings.json, in every project. Change it there."]};
-const SHOWN_AS = {"name-only": "Name only", "user-invocable-only": "Only by /name"};
-function visibilityBadge(v){
-  if(v.state === "on") return "";
-  if(v.state === "off"){
-    const [label, why] = OFF_BY[v.source] || OFF_BY.local;
-    return `<span class="badge off" title="${esc(why)}">${label}</span>`;
-  }
-  return `<span class="badge off" title="skillOverrides in your ${esc(v.source)} settings">${esc(SHOWN_AS[v.state] || v.state)}</span>`;
-}
-function skillCard(g, c){
-  const e = c.edit || {}, at = `data-project="${esc(g.project)}" data-name="${esc(c.name)}"`;
-  const off = c.visibility.state !== "on", pending = e.state === "editing" || e.state === "edit-ready";
-  const badges = [
-    visibilityBadge(c.visibility),
-    c.made_by === "draft" ? `<button class="badge mine" data-goto-draft="${esc(c.entry)}" title="Installed from a draft: open it in Drafts">From a draft</button>`
-      : c.made_by === "skill-plus-plus" ? `<span class="badge mine" title="Written with Skill++">Skill++</span>` : "",
-    c.update ? `<button class="badge heed" data-goto-draft="${esc(c.entry)}" title="The draft changed since it was installed: pass it on with Update in Drafts">Update available</button>` : "",
-    e.state === "editing" ? `<span class="badge mine"><span class="spin"></span>Editing…</span>` : "",
-    e.state === "edit-ready" ? `<span class="badge heed" title="The agent's change is waiting: open the skill to apply or discard it">Edit ready</span>` : "",
-    e.state === "edit-failed" ? `<span class="badge declined" title="${esc(e.message)}">Edit failed</span>` : "",
-    c.link ? `<span class="badge off" title="A link to ${esc(c.link)}">Linked</span>` : "",
-    c.name_mismatch ? `<span class="badge heed" title="Claude Code knows it as ${esc(c.skill_name)}, the name in its frontmatter">Named ${esc(c.skill_name)}</span>` : "",
-  ].filter(Boolean).join("");
-  const used = c.uses ? `used ${c.uses}× · last ${ago(c.last_used)}` : "not used yet";
-  const noEdit = e.state === "editing" ? "The agent is editing it"
-    : c.edit_block ? `It can't be edited from here: ${c.edit_block}`
-    : c.update ? "Its draft is newer: Update it from Drafts first" : "";
-  const turn = !off
-    ? `<button data-skill-off ${at}${g.settings_error ? ` disabled title="${esc(g.settings_error)}"` : ` title="Claude stops seeing it, for you only; teammates keep it"`}>Turn off</button>`
-    : c.visibility.source === "local"
-      ? `<button data-skill-on ${at}${g.settings_error ? ` disabled title="${esc(g.settings_error)}"` : ""}>Turn on</button>`
-      : `<button disabled title="${esc((OFF_BY[c.visibility.source] || ["", "Set outside this project's local settings"])[1])}">Turn on</button>`;
-  return `<div class="skill${off ? " off" : ""}${e.state === "editing" ? " busy" : ""}">
-    <button class="name" data-skill-view ${at} title="${esc(c.path)}">${esc(c.name)}</button>
-    <p class="desc" title="${esc(c.description)}">${esc(c.description) || "No description."}</p>
-    ${badges ? `<div class="badges">${badges}</div>` : ""}
-    <div class="meta" title="Usage is counted by skill name, across every project">${plural(c.file_count, "file")} · ${size(c.bytes)} · ${used}</div>
-    <div class="acts"><button data-skill-view ${at}>View</button>
-      <button class="create" data-skill-edit ${at}${noEdit ? ` disabled title="${esc(noEdit)}"` : ""}>Edit</button>
-      ${turn}
-      <button class="danger" data-skill-archive ${at}${pending ? ` disabled title="Apply or discard the edit first"` : ` title="Move it out of the project into Skill++'s archive; restore it any time"`}>Archive</button></div>
-  </div>`;
-}
-function archivedHTML(g){
-  if(!g.archived.length) return "";
-  const items = g.archived.map(a => `<li><span class="n">${esc(a.name || a.folder)}</span>
-      <span class="d" title="${esc(a.description)}">${esc(a.description)}</span>
-      <span class="ago" title="${esc(when(a.archived_at))}">archived ${ago(a.archived_at)}</span>
-      <button data-restore="${esc(a.id)}" data-project="${esc(g.project)}"${g.exists ? "" : ` disabled title="The project folder is gone"`}>Restore</button></li>`).join("");
-  return `<details class="archived" data-archived="${esc(g.project)}"${openArchived.has(g.project) ? " open" : ""}>
-    <summary>Archived (${g.archived.length})</summary><ul>${items}</ul></details>`;
-}
-function skillsHTML(galleries){
-  if(!galleries.length) return `<div class="empty"><p><strong>No project skills to show.</strong></p>
-    <p>Each project Skill++ has seen you work in shows its skills here: everything in its <code>.claude/skills/</code>.</p></div>`;
-  return galleries.map(g => {
-    const head = `<div class="section"><h2>${esc(g.name)}</h2><span title="${esc(g.project)}">${plural(g.skills.length, "skill")} in ${esc(g.project)}/.claude/skills/${g.linked ? ` · a link to ${esc(g.linked)}` : ""}</span></div>`;
-    const warn = !g.exists ? `<div class="warn"><strong>Folder not found.</strong> ${esc(g.project)} is gone, so nothing here can be restored until it is back.</div>`
-      : g.settings_error ? `<div class="warn"><strong>Skills can't be turned off or on here.</strong> ${esc(g.settings_error)}. Skill++ never writes over a settings file it can't read.</div>` : "";
-    const cards = g.skills.length ? `<div class="gallery">${g.skills.map(c => skillCard(g, c)).join("")}</div>`
-      : g.exists ? `<p class="empty">No skills here yet. Install one from Drafts, or add a folder with a SKILL.md to <code>.claude/skills/</code>.</p>` : "";
-    return head + warn + cards + archivedHTML(g);
-  }).join("");
-}
-function archiveWarning(name, project){
-  return `Archive "${name}"?\n\nIt moves out of ${project}/.claude/skills/ into Skill++'s own folder, so Claude Code stops loading it. Nothing is deleted: restore it any time from Archived.`
-    + `\n\nUntil you commit or restore it, git shows the folder as deleted.`;
-}
-async function skillAct(what, b, extra){
-  b.disabled = true;
-  const body = {project: b.dataset.project, name: b.dataset.name, ...(extra || {})};
-  const r = await (await post("/api/skill/" + what, body)).json();
-  if(!r.ok){ alert(r.error || `${what} failed`); b.disabled = false; return; }
-  if(r.note) alert(r.note);
-  await load();
-}
-function renderSkills(list){
-  list.innerHTML = skillsHTML(S.skills || []);
-  const at = b => [b.dataset.project, b.dataset.name];
-  list.querySelectorAll("[data-skill-view]").forEach(b => b.onclick = () => openViewer(...at(b)));
-  list.querySelectorAll("[data-skill-edit]").forEach(b => b.onclick = () => openViewer(...at(b), true));
-  list.querySelectorAll("[data-skill-off]").forEach(b => b.onclick = () => skillAct("off", b));
-  list.querySelectorAll("[data-skill-on]").forEach(b => b.onclick = () => skillAct("on", b));
-  list.querySelectorAll("[data-skill-archive]").forEach(b => b.onclick = () => {
-    if(confirm(archiveWarning(b.dataset.name, b.dataset.project))) skillAct("archive", b);
-  });
-  list.querySelectorAll("[data-restore]").forEach(b => b.onclick = () => skillAct("restore", b, {archive: b.dataset.restore}));
-  list.querySelectorAll("[data-goto-draft]").forEach(b => b.onclick = () => {
-    view = "drafts"; open.add(b.dataset.gotoDraft); render();
-  });
-  list.querySelectorAll("details[data-archived]").forEach(d => d.ontoggle = () => {
-    d.open ? openArchived.add(d.dataset.archived) : openArchived.delete(d.dataset.archived);
-  });
-}
-
-function fileHTML(f, source){
-  if(!f) return `<p class="vnote">No files.</p>`;
-  if(f.kind === "link") return `<p class="vnote">${esc(f.path)} is a link to ${esc(f.target)}. Links are named here, never followed.</p>`;
-  if(f.kind === "binary") return `<p class="vnote">${esc(f.path)} is a binary file (${size(f.size)}), not shown.</p>`;
-  if(f.kind === "unreadable") return `<p class="vnote">${esc(f.path)} can't be read: ${esc(f.error)}</p>`;
-  if(f.text === null) return `<p class="vnote">${esc(f.path)} is too large to show here (${size(f.size)}).</p>`;
-  const cut = f.truncated ? `<p class="vnote">Only the start is shown: the file is ${size(f.size)}.</p>` : "";
-  return (f.path === "SKILL.md" && !source ? `<div class="md">${md(f.text)}</div>` : `<pre class="src">${esc(f.text)}</pre>`) + cut;
-}
 function diffHTML(f){
   const head = `${esc(f.path)} <span class="vnote">${esc(f.change)}${f.binary ? ", binary" : ` · +${f.added} −${f.removed}`}</span>`;
   if(f.binary) return `<div class="diff"><div class="dh">${head}</div></div>`;
@@ -2344,75 +2074,86 @@ function editHTML(v){
   const c = findCard(v.project, v.name);
   if(!c) return "";
   const e = c.edit || {};
-  if(e.state === "editing") return working("The agent is editing a copy",
-    `The skill stays as it is until you apply the change. You asked: ${esc(e.instruction)}`, e.since);
+  if(e.state === "editing") return `<div class="edit">${working("The agent is editing a copy",
+    `The skill stays as it is until you apply the change. You asked: ${esc(e.instruction)}`, e.since)}</div>`;
   if(e.state === "edit-ready") return proposalHTML(v.proposal);
-  const block = c.edit_block ? `It can't be edited from here: ${c.edit_block}.`
-    : c.update ? "Its draft is newer than this copy. Pass the draft on with Update in Drafts first." : "";
-  if(block) return `<div class="edit"><p class="vnote">${esc(block)}</p></div>`;
-  const err = e.state === "edit-failed" ? `<p class="err">Last edit: ${esc(e.message || "it failed")}</p>` : "";
-  return `<div class="edit">${err}<label for="edit-box">What should change?</label>
-    <p class="hint">Your agent edits a copy. The change shows here as a diff, and the skill stays as it is until you apply it.</p>
+  const failed = e.state === "edit-failed" ? `<div class="bar failed"><p class="err">Last edit failed: ${esc(e.message || "no reason given")}</p>
+    <button data-edit-dismiss title="Clear it; the skill is as it was">Dismiss</button></div>` : "";
+  if(!v.editing) return failed ? `<div class="edit">${failed}</div>` : "";
+  return `<div class="edit">${failed}<label for="edit-box">What should change?</label>
+    <p class="hint">Your agent edits a copy. You see the change here and apply it or not; the skill stays as it is until then.</p>
     <textarea id="edit-box" data-edit-project="${esc(v.project)}" data-edit-name="${esc(v.name)}" placeholder="e.g. also check the milestone's due date before building the deck">${esc(editText[skillKey(v.project, v.name)] || "")}</textarea>
-    <div class="bar"><button class="create" data-edit-send>Send to agent</button></div></div>`;
+    <div class="bar"><button class="create" data-edit-send>Send to agent</button><button data-edit-cancel>Cancel</button></div></div>`;
+}
+function viewerHeadHTML(v){
+  const c = findCard(v.project, v.name), g = findGallery(v.project) || {};
+  const close = `<button data-vclose>Close</button>`;
+  if(!c) return `<span class="vname" id="viewer-title">${esc(v.name)}</span><span class="grow"></span>${close}`;
+  const e = c.edit || {}, pending = e.state === "editing" || e.state === "edit-ready";
+  const noEdit = c.edit_block ? `It can't be edited from here: ${c.edit_block}` : "";
+  const turn = c.visibility.state === "on"
+    ? `<button data-vturn="off"${g.settings_error ? ` disabled title="${esc(g.settings_error)}"` : ` title="Claude stops seeing it, for you only; teammates keep it"`}>Turn off</button>`
+    : c.visibility.source === "local"
+      ? `<button class="create" data-vturn="on"${g.settings_error ? ` disabled title="${esc(g.settings_error)}"` : ""}>Turn on</button>`
+      : `<button disabled title="${esc((OFF_BY[c.visibility.source] || ["", "Set outside this project's local settings"])[1])}">Turn on</button>`;
+  return `<span class="vname" id="viewer-title">${esc(v.name)}</span>${statePills(c)}<span class="grow"></span>
+    ${pending || v.editing ? "" : `<button data-vedit${noEdit ? ` disabled title="${esc(noEdit)}"` : ""}>Edit</button>`}
+    ${turn}${close}`;
 }
 function viewerHTML(v){
-  const d = v.data, files = d ? d.files : [];
-  const f = files.find(x => x.path === v.file) || files[0];
-  const list = files.map(x => `<button data-vfile="${esc(x.path)}" aria-selected="${!!f && x.path === f.path}" title="${esc(x.path)}">${esc(x.path)}</button>`).join("")
-    + (d && d.hidden ? `<p class="vnote">${d.hidden} more not shown</p>` : "");
-  const body = !d ? `<p class="vnote">Loading…</p>` : d.error ? `<p class="err">${esc(d.error)}</p>` : fileHTML(f, v.source);
-  return `<div class="viewer"><div class="vhead"><span class="vname" id="viewer-title">${esc(v.name)}</span>
-      <span class="vpath" title="${esc((d && d.path) || "")}">${esc((d && d.path) || "")}</span>
-      ${f && f.path === "SKILL.md" && f.text !== null ? `<button data-vsource>${v.source ? "Rendered" : "Source"}</button>` : ""}
-      <button data-vclose>Close</button></div>
-    <div class="vbody"><div class="vfiles">${list}</div>
-      <div class="vpane"><div id="vfile">${body}</div><div id="vedit"></div></div></div></div>`;
+  const d = v.data;
+  const body = !d ? `<p class="vnote">Loading…</p>`
+    : d.text === null ? `<p class="err">${esc(d.error || "SKILL.md can't be read")}</p>`
+    : `<div class="md">${md(d.text)}</div>${d.truncated ? `<p class="vnote">Only the start is shown.</p>` : ""}`;
+  return `<div class="viewer"><div class="vhead" id="vhead"></div>
+    <div class="vpane"><div id="vedit"></div><div id="vfile">${body}</div></div></div>`;
 }
 function paintViewer(){
   const dlg = document.getElementById("viewer");
   if(!viewer || !dlg) return;
   dlg.innerHTML = viewerHTML(viewer);
-  paintViewerEdit();
+  paintViewerParts();
 }
-// Repainted on every poll without touching the file being read: only the edit.
-function paintViewerEdit(){
-  const box = viewer && document.getElementById("vedit");
-  if(!box) return;
+// Repainted on every poll without touching the SKILL.md being read: its head
+// (state, actions) and its edit.
+function paintViewerParts(){
+  const head = viewer && document.getElementById("vhead"), box = document.getElementById("vedit");
+  if(!head || !box) return;
   const c = findCard(viewer.project, viewer.name), state = c && c.edit && c.edit.state;
   if(state !== "edit-ready") viewer.proposal = null;
   else if(!viewer.proposal){ viewer.proposal = {loading: true}; loadProposal(viewer); }
+  if(state === "editing" || state === "edit-ready") viewer.editing = false;
+  head.innerHTML = viewerHeadHTML(viewer);
   box.innerHTML = editHTML(viewer);
 }
 async function loadProposal(v){
   const r = await (await post("/api/skill/proposal", {project: v.project, name: v.name})).json();
   if(viewer !== v) return;
   v.proposal = r.ok ? r : {error: r.error || "no change is waiting"};
-  paintViewerEdit();
+  paintViewerParts();
 }
-async function openViewer(project, name, toEdit){
+async function openViewer(project, name){
   const dlg = document.getElementById("viewer");
   bindViewer(dlg);
-  const v = viewer = {project, name, file: "SKILL.md", source: false, data: null, proposal: null};
+  const v = viewer = {project, name, data: null, proposal: null, editing: false};
   paintViewer();
   if(!dlg.open) dlg.showModal();
   const r = await (await post("/api/skill/read", {project, name})).json();
   if(viewer !== v) return;
-  v.data = r.ok ? r : {files: [], hidden: 0, error: r.error || "it can't be read"};
+  v.data = r.ok ? r : {text: null, error: r.error || "it can't be read"};
   paintViewer();
-  if(toEdit){ const box = document.getElementById("edit-box"); if(box) box.focus(); }
 }
-async function viewerAct(b, what){
+async function viewerAct(b, path, body){
   const v = viewer;
   b.disabled = true;
-  const body = {project: v.project, name: v.name};
-  if(what === "edit") body.instruction = (editText[skillKey(v.project, v.name)] || "").trim();
-  const r = await (await post("/api/skill/" + what, body)).json();
-  if(!r.ok){ alert(r.error || `${what} failed`); b.disabled = false; return; }
-  if(what === "edit") delete editText[skillKey(v.project, v.name)];
+  const r = await (await post(path, body || {project: v.project, name: v.name})).json();
+  if(!r.ok){ tell(r.error || "failed"); b.disabled = false; return; }
+  if(r.note) tell(r.note);
+  if(path === "/api/skill/edit"){ delete editText[skillKey(v.project, v.name)]; v.editing = false; }
   v.proposal = null;
   await load();
-  if(what === "apply" && viewer === v) openViewer(v.project, v.name);
+  // Apply changes SKILL.md: read it again.
+  if(path === "/api/skill/apply" && viewer === v) openViewer(v.project, v.name);
 }
 function bindViewer(dlg){
   if(viewerBound) return;
@@ -2426,17 +2167,26 @@ function bindViewer(dlg){
     if(ev.target === dlg) return dlg.close();          // the backdrop
     const b = ev.target.closest("button");
     if(!b || b.disabled || !viewer) return;
-    const v = viewer;
-    if("vclose" in b.dataset) return dlg.close();
-    if("vfile" in b.dataset){ v.file = b.dataset.vfile; v.source = false; return paintViewer(); }
-    if("vsource" in b.dataset){ v.source = !v.source; return paintViewer(); }
-    if("editSend" in b.dataset){
-      if((editText[skillKey(v.project, v.name)] || "").trim()) viewerAct(b, "edit");
+    const v = viewer, ds = b.dataset;
+    if("vclose" in ds) return dlg.close();
+    if("vedit" in ds){
+      v.editing = true; paintViewerParts();
+      const box = document.getElementById("edit-box");
+      if(box) box.focus();
       return;
     }
-    if("editApply" in b.dataset) return viewerAct(b, "apply");
-    if("editDiscard" in b.dataset && confirm("Discard the proposed change? The skill stays as it is."))
-      return viewerAct(b, "discard");
+    if("editCancel" in ds){ v.editing = false; return paintViewerParts(); }
+    if("vturn" in ds) return viewerAct(b, "/api/skill/" + ds.vturn);
+    if("editSend" in ds){
+      const instruction = (editText[skillKey(v.project, v.name)] || "").trim();
+      if(instruction) viewerAct(b, "/api/skill/edit", {project: v.project, name: v.name, instruction});
+      return;
+    }
+    if("editApply" in ds) return viewerAct(b, "/api/skill/apply");
+    if("editDismiss" in ds) return viewerAct(b, "/api/skill/discard");
+    if("editDiscard" in ds)
+      return ask("Discard the proposed change?\n\nThe skill stays as it is.", "Discard")
+        .then(yes => yes && viewerAct(b, "/api/skill/discard"));
   });
 }
 
@@ -2547,7 +2297,7 @@ async function fetchSummary(id){
 // for the next draft, an answer, a revision. Put it back where it was.
 function render(){
   syncSeen();
-  if(view === "drafts") markTabSeen();
+  if(view === "skills") markTabSeen();
   const t = document.activeElement;
   const typing = t && t.tagName === "TEXTAREA" ? {
     at: [...t.attributes].filter(a => a.name.startsWith("data-"))
@@ -2561,8 +2311,11 @@ function render(){
 function paint(){
   renderNav();
   const list = document.getElementById("list");
-  if(view === "drafts") return renderDrafts(list);
-  if(view === "skills"){ renderSkills(list); return paintViewerEdit(); }
+  if(view === "skills"){
+    list.innerHTML = skillsTabHTML();
+    bindSkillsTab(list);
+    return paintViewerParts();
+  }
   const highlight = r => r.state === "dismissed" ? "declined"
     : ["drafted", "revising", "installed"].includes(r.state) ? "drafted"
     : ["undecided", "collecting"].includes(r.state) ? (r.ready ? "ready" : "")
@@ -2578,13 +2331,13 @@ function paint(){
         title="Deleted by skill-plus-plus expire ${S.ttl} days after it was last recognized, unless you promote it first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
       <span class="seen count ${r.occurrences >= S.threshold ? "reached" : ""}" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
       ${noteBlock(r)}
-      <div class="body">${r.state === "creating" ? working("Writing the skill", "The agent reads the first run and drafts the skill. It appears under Drafts when it is done.", r.since) : ""}${candidateBody(r)}</div></div>`;
+      <div class="body">${r.state === "creating" ? working("Writing the skill", "The agent reads the first run and drafts the skill. It appears on the Skills tab when it is done.", r.since) : ""}${candidateBody(r)}</div></div>`;
   const declined = S.rows.filter(r => r.state === "dismissed");
   const promoted = S.rows.filter(r => !["undecided", "collecting", "dismissed"].includes(r.state) && !inDrafts(r));
   const open_ = S.rows.filter(r => ["undecided", "collecting"].includes(r.state));
   const ready = open_.filter(r => r.ready), collecting = open_.filter(r => !r.ready);
   list.innerHTML = `${captureWarning()}${memoryWarning()}
-    ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>Candidates you promoted. Draft a skill from them; the draft appears in the Drafts tab.</span></div>
+    ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>Candidates you promoted. Draft a skill from them; the draft appears on the Skills tab, under its project.</span></div>
     ${promoted.map(card).join("")}` : ""}
     <div class="section"><h2>Still collecting</h2><span>Work Skill++ saw you repeat. Once something is seen ${S.threshold}×, you can promote or ignore it.</span></div>
     ${ready.length + collecting.length ? `<div class="collecting">
@@ -2622,7 +2375,7 @@ function paint(){
     render();
   });
   list.querySelectorAll("[data-goto]").forEach(a => a.onclick = () => {
-    view = "drafts"; open.add(a.dataset.goto); markCardSeen(a.dataset.goto); render();
+    view = "skills"; open.add(a.dataset.goto); markCardSeen(a.dataset.goto); render();
   });
 }
 
@@ -2630,7 +2383,7 @@ async function act(what, id){
   busy.add(id); render();
   try {
     const r = await (await post("/api/" + what, {id})).json();
-    if(!r.ok) alert(r.error || "failed");
+    if(!r.ok) tell(r.error || "failed");
   } finally { busy.delete(id); await load(); }
 }
 
