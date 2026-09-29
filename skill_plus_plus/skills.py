@@ -2,8 +2,8 @@
 
 `web` shows and changes them, and `skill-plus-plus edit-skill` has the agent edit
 one. Neither imports the other for it, so what both need lives here: where a
-draft sits, which of its files are the skill, how an install is recorded, and
-whether the installed copy changed since.
+draft sits, which of its files are the skill, which skills a project has, and
+the agent's edits of them.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Config
-from .install import read_settings, write_settings
 from .lifecycle import parse_frontmatter
 
 # A folder name a skill may be installed under, or addressed by from the page.
@@ -32,8 +31,6 @@ NOT_SKILL_FILES = ("status.json", "downloaded.json", "installed.json", "agent.lo
 # How much of a SKILL.md the page shows. A skill is a few pages of text;
 # anything bigger is not for reading in a browser.
 READ_CAP = 256 * 1024
-# The values `skillOverrides` takes (settings reference). An absent entry is "on".
-OVERRIDE_STATES = ("on", "name-only", "user-invocable-only", "off")
 # A YAML block scalar, `description: >`: the frontmatter reader only sees its marker.
 _BLOCK_MARKERS = (">", "|", ">-", "|-", ">+", "|+")
 
@@ -139,186 +136,22 @@ def frontmatter(folder: Path) -> tuple[dict, str]:
     return front, text
 
 
-def override_key(folder: Path, front: dict) -> str:
-    """The name Claude Code knows the skill by, which `skillOverrides` matches:
-    its frontmatter `name`, or its folder's when it has none."""
-    name = front.get("name")
-    return name.strip() if isinstance(name, str) and name.strip() else folder.name
-
-
-# -- turned off, or not ------------------------------------------------------
-
-def _main_checkout(dot_git: Path) -> Path | None:
-    """The main checkout of the linked worktree whose `.git` file this is."""
-    try:
-        line = dot_git.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    if not line.startswith("gitdir:"):
-        return None
-    gitdir = (dot_git.parent / line[len("gitdir:"):].strip()).resolve()
-    try:
-        common = (gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip()).resolve()
-    except OSError:
-        return None                       # a submodule: its own checkout, no main one
-    return common.parent if common.name == ".git" else None
-
-
-def local_settings_path(project: str | Path) -> Path:
-    """This user's own settings for the project, which Claude Code keeps at the
-    repository root, and at the main checkout's root when the project is a
-    linked worktree (settings docs, "Where Claude Code keeps the local file in
-    a git repository")."""
-    root = Path(project).expanduser()
-    if (root / ".git").is_file():
-        root = _main_checkout(root / ".git") or root
-    return root / ".claude" / "settings.local.json"
-
-
 # -- where a gallery's skills are ----------------------------------------------
 
 @dataclass(frozen=True)
 class Place:
-    """One project's skills: the folder they are in, the settings file Turn
-    off writes, the ones it only reads, and its folder under `edits/`."""
+    """One project's skills: the folder they are in, and its folder under
+    `edits/`."""
     key: str                                # the project's path, as the ledger has it
     name: str
     skills: Path
-    settings: Path                          # the user's own, and the only one ever written
-    shared: tuple[tuple[str, Path], ...]    # (source, path): read for "off", never written
     store: str
 
 
-def project_place(project: str, home: Path | None = None) -> Place:
-    """A project's skills: turned off in its local settings, and read as off
-    from its committed settings and from the user's own."""
+def project_place(project: str) -> Place:
     root = Path(project).expanduser()
     return Place(key=project, name=root.name or project, skills=root / ".claude" / "skills",
-                 settings=local_settings_path(project),
-                 shared=(("team", root / ".claude" / "settings.json"),
-                         ("user", (home or Path.home()) / ".claude" / "settings.json")),
                  store=project_key(project))
-
-
-def _overrides(path: Path) -> dict:
-    value = read_settings(path).get("skillOverrides", {})
-    if not isinstance(value, dict):
-        raise RuntimeError(f"{path}: skillOverrides is not an object")
-    return value
-
-
-def read_overrides(place: Place) -> dict:
-    """The `skillOverrides` maps that apply to a project's skills: the user's
-    own file, which Turn off writes ("local"), the project's committed settings
-    ("team") and the user's settings ("user").
-
-    Only the written file's errors are reported, and they keep Turn off and
-    Turn on from writing over it. The others are read leniently: they are not
-    ours to fix, and Claude Code says so.
-    """
-    found = {"local": {}, "team": {}, "user": {}, "local_error": ""}
-    try:
-        found["local"] = _overrides(place.settings)
-    except RuntimeError as exc:
-        found["local_error"] = str(exc)
-    for source, path in place.shared:
-        try:
-            found[source] = _overrides(path)
-        except RuntimeError:
-            pass
-    return found
-
-
-def visibility(key: str, found: dict) -> dict:
-    """What Claude Code does with the skill named *key*, and whose setting
-    says so: the local file over the project's, over the user's, entry by
-    entry. No entry anywhere means "on"."""
-    for source in ("local", "team", "user"):
-        value = (found.get(source) or {}).get(key)
-        if value in OVERRIDE_STATES:
-            return {"state": value, "source": source}
-    return {"state": "on", "source": ""}
-
-
-# What in a clone's `.git/info/exclude` already keeps the local file out of commits.
-_EXCLUDES_LOCAL = {"/.claude/settings.local.json", ".claude/settings.local.json",
-                   "**/.claude/settings.local.json", "settings.local.json",
-                   "/.claude/", ".claude/", "/.claude", ".claude"}
-
-
-def git_exclude_path(root: Path) -> Path | None:
-    """The clone's own ignore file, `.git/info/exclude`. It is never committed,
-    so a line there keeps a file out of commits without a change anyone else
-    has to review."""
-    dot_git = root / ".git"
-    if dot_git.is_dir():
-        return dot_git / "info" / "exclude"
-    try:
-        line = dot_git.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    if not line.startswith("gitdir:"):
-        return None
-    gitdir = (root / line[len("gitdir:"):].strip()).resolve()
-    try:                                  # a worktree reads the shared excludes
-        gitdir = (gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip()).resolve()
-    except OSError:
-        pass
-    return gitdir / "info" / "exclude"
-
-
-def _exclude_local_settings(settings_path: Path) -> bool:
-    """Keep a local settings file Skill++ has just created out of commits, as
-    Claude Code does for the ones it creates. Whether a line was added."""
-    exclude = git_exclude_path(settings_path.parent.parent)
-    if exclude is None:
-        return False
-    try:
-        text = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
-        if any(line.strip() in _EXCLUDES_LOCAL for line in text.splitlines()):
-            return False
-        exclude.parent.mkdir(parents=True, exist_ok=True)
-        with exclude.open("a", encoding="utf-8") as handle:
-            handle.write(("" if not text or text.endswith("\n") else "\n")
-                         + "# Skill++: this user's own Claude Code settings\n"
-                         + "/.claude/settings.local.json\n")
-    except OSError:
-        return False
-    return True
-
-
-def set_override(config: Config, place: Place, key: str, value: str | None) -> dict:
-    """Turn the skill named *key* off for this user (*value* "off") or back
-    on (None), in the project's local settings, the file Claude Code's own
-    `/skills` menu writes.
-
-    Every other setting stays as it was, in its order, and `skillOverrides`
-    goes once nothing is left in it. Turning on removes the entry rather than
-    writing "on", so a skill nobody turned off never creates a file. A file
-    that cannot be parsed is never written over. Before a write, the file as
-    it was is kept under `backups/`.
-    """
-    path = place.settings
-    existed = path.exists()
-    settings = read_settings(path)
-    overrides = settings.get("skillOverrides", {})
-    if not isinstance(overrides, dict):
-        raise RuntimeError(f"{path}: skillOverrides is not an object")
-    if value is None:
-        if key not in overrides:
-            return {"changed": False, "created": False, "excluded": False, "path": str(path)}
-        del overrides[key]
-        if not overrides:
-            del settings["skillOverrides"]
-    else:
-        settings["skillOverrides"] = {**overrides, key: value}
-    if existed:
-        backup = config.root / "backups" / place.store / path.name
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, backup)
-    write_settings(path, settings)
-    return {"changed": True, "created": not existed, "path": str(path),
-            "excluded": not existed and _exclude_local_settings(path)}
 
 
 def write_json(path: Path, data) -> None:
@@ -331,26 +164,21 @@ def write_json(path: Path, data) -> None:
 
 # -- the gallery ---------------------------------------------------------------
 
-def _card(folder: Path, found: dict) -> dict:
+def _card(folder: Path) -> dict:
     """A skill as its card shows it: what is in its folder, whoever put it there."""
     front, _ = frontmatter(folder)
-    return {
-        "name": folder.name,
-        "description": str(front.get("description") or ""),
-        "edit_block": edit_refusal(folder),
-        "visibility": visibility(override_key(folder, front), found),
-    }
+    return {"name": folder.name,
+            "description": str(front.get("description") or ""),
+            "edit_block": edit_refusal(folder)}
 
 
 def list_place(place: Place) -> dict:
     """One project's skills, as cards. Reads files only and starts no
     process, so the page can ask on every poll."""
-    found = read_overrides(place)
     return {"project": place.key,
             "name": place.name,
             "exists": Path(place.key).expanduser().is_dir(),
-            "settings_error": found["local_error"],
-            "skills": [_card(folder, found) for folder in skill_folders(place)]}
+            "skills": [_card(folder) for folder in skill_folders(place)]}
 
 
 def _read_head(path: Path, limit: int) -> bytes:

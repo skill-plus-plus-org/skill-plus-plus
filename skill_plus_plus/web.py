@@ -995,26 +995,6 @@ def read_project_skill(config: Config, project: str, name: str) -> dict:
     return {"ok": True, "name": folder.name, **skills.read_skill_md(folder)}
 
 
-@_locked
-def turn_project_skill(config: Config, project: str, name: str, off: bool) -> dict:
-    """Turn off or Turn on, for this user only: the project's local settings."""
-    place, folder = _project_skill(config, project, name)
-    if place is None:
-        return {"ok": False, "error": folder}
-    front, _ = skills.frontmatter(folder)
-    key = skills.override_key(folder, front)
-    try:
-        done = skills.set_override(config, place, key, "off" if off else None)
-    except (RuntimeError, OSError) as exc:
-        return {"ok": False, "error": str(exc)}
-    now = skills.visibility(key, skills.read_overrides(place))
-    note = ""
-    if not off and now["state"] != "on":
-        note = {"team": "It is still off: the project's committed settings turn it off.",
-                "user": "It is still off: your user settings turn it off."}.get(now["source"], "")
-    return {"ok": True, **done, "visibility": now, "note": note}
-
-
 def edit_state(config: Config, place, folder_name: str) -> dict:
     """Where an edit of this skill stands, read from its status file only:
     `{}` for none, else `editing`, `edit-ready` or `edit-failed`."""
@@ -1183,10 +1163,6 @@ def make_handler(config: Config):
         "/api/fold-now": lambda p: fold_now(config),
         "/api/skill/read": lambda p: read_project_skill(config, str(p.get("project", "")),
                                                         str(p.get("name", ""))),
-        "/api/skill/off": lambda p: turn_project_skill(config, str(p.get("project", "")),
-                                                       str(p.get("name", "")), off=True),
-        "/api/skill/on": lambda p: turn_project_skill(config, str(p.get("project", "")),
-                                                      str(p.get("name", "")), off=False),
         "/api/skill/edit": lambda p: edit_project_skill(
             config, str(p.get("project", "")), str(p.get("name", "")),
             str(p.get("instruction") or "")),
@@ -1530,15 +1506,9 @@ PAGE = r"""<!doctype html>
  .pill{display:inline-flex;align-items:center;font:600 10px var(--mono);text-transform:uppercase;
    letter-spacing:.06em;padding:2px 8px;border-radius:999px;border:1px solid;white-space:nowrap}
  .pill .spin{width:8px;height:8px;margin-right:5px}
- .pill.off{color:#fff;background:var(--no);border-color:var(--no)}
  .pill.heed{color:#fbbf24;border-color:rgba(251,191,36,.45);background:rgba(251,191,36,.1)}
  .pill.work{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .pill.fail{color:var(--no);border-color:var(--noline);background:var(--nobg)}
- /* Off, at a glance: a solid Off pill, the name struck through, the card hatched. */
- button.skill.off{border:1px dashed var(--noline);
-   background:repeating-linear-gradient(135deg,var(--panel) 0 10px,color-mix(in srgb,var(--no) 7%,var(--panel)) 10px 20px)}
- .skill.off .name{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--no)}
- .skill.off .desc{opacity:.5}
  button.danger:hover{color:var(--no);border-color:var(--noline);background:var(--nobg)}
  /* An opened skill: its SKILL.md, what can be done with it, and its edit. */
  dialog#viewer{width:min(900px,94vw);height:min(86vh,900px);max-width:none;max-height:none;padding:0;
@@ -1952,9 +1922,8 @@ function reviseBlock(d){
 
 // The Skills tab, one project at a time: the project's drafts to review and
 // install, then the skills it has. A draft, once installed, is one of them.
-// Turn off is this user's own switch, in the project's settings.local.json,
-// where Claude Code's /skills menu writes too. Edit has the agent change a
-// copy, shown as a diff that changes nothing until Apply.
+// Edit has the agent change a copy, shown as a diff that changes nothing
+// until Apply.
 let viewer = null, viewerBound = false, editText = {};
 // The skill whose edit was just applied, and the token its Undo needs; null
 // once anything else is done, and after a reload.
@@ -1990,17 +1959,9 @@ function draftCard(d){
         ${reviseBlock(d)}
       </div></div>`;
 }
-const OFF_BY = {
-  local: ["Off", "Turned off for you, in this project's .claude/settings.local.json: Claude doesn't see it and /name is hidden. Teammates keep it."],
-  team: ["Off for the team", "Turned off in the project's committed .claude/settings.json, for everyone. Change it there."],
-  user: ["Off in your settings", "Turned off in your ~/.claude/settings.json, in every project. Change it there."]};
-const SHOWN_AS = {"name-only": "Name only", "user-invocable-only": "Only by /name"};
 function statePills(c){
-  const v = c.visibility, e = c.edit || {};
-  const off = v.state === "off" ? OFF_BY[v.source] || OFF_BY.local : null;
+  const e = c.edit || {};
   return [
-    off ? `<span class="pill off" title="${esc(off[1])}">${off[0]}</span>`
-      : v.state !== "on" ? `<span class="pill heed" title="skillOverrides in your ${esc(v.source)} settings">${esc(SHOWN_AS[v.state] || v.state)}</span>` : "",
     e.state === "editing" ? `<span class="pill work"><span class="spin"></span>Editing</span>` : "",
     e.state === "edit-ready" ? `<span class="pill heed" title="The agent's change is waiting for you">Edit ready</span>` : "",
     e.state === "edit-failed" ? `<span class="pill fail" title="${esc(e.message)}">Edit failed</span>` : "",
@@ -2008,7 +1969,7 @@ function statePills(c){
 }
 function skillCard(g, c){
   const pills = statePills(c), e = c.edit || {};
-  return `<button class="skill${c.visibility.state === "off" ? " off" : ""}${e.state === "editing" ? " busy" : ""}" data-open-skill data-project="${esc(g.project)}" data-name="${esc(c.name)}">
+  return `<button class="skill${e.state === "editing" ? " busy" : ""}" data-open-skill data-project="${esc(g.project)}" data-name="${esc(c.name)}">
     <span class="top"><span class="name">${esc(c.name)}</span>${pills ? `<span class="pills">${pills}</span>` : ""}</span>
     <span class="desc">${esc(c.description) || "No description."}</span></button>`;
 }
@@ -2134,19 +2095,14 @@ function editHTML(v){
     <div class="bar"><button class="create" data-edit-send>Send to agent</button><button data-edit-cancel>Cancel</button></div></div>`;
 }
 function viewerHeadHTML(v){
-  const c = findCard(v.project, v.name), g = findGallery(v.project) || {};
+  const c = findCard(v.project, v.name);
   const close = `<button data-vclose>Close</button>`;
   if(!c) return `<span class="vname" id="viewer-title">${esc(v.name)}</span><span class="grow"></span>${close}`;
   const e = c.edit || {}, pending = e.state === "editing" || e.state === "edit-ready";
   const noEdit = c.edit_block ? `It can't be edited from here: ${c.edit_block}` : "";
-  const turn = c.visibility.state === "on"
-    ? `<button data-vturn="off"${g.settings_error ? ` disabled title="${esc(g.settings_error)}"` : ` title="Claude stops seeing it, for you only; teammates keep it"`}>Turn off</button>`
-    : c.visibility.source === "local"
-      ? `<button class="create" data-vturn="on"${g.settings_error ? ` disabled title="${esc(g.settings_error)}"` : ""}>Turn on</button>`
-      : `<button disabled title="${esc((OFF_BY[c.visibility.source] || ["", "Set outside this project's local settings"])[1])}">Turn on</button>`;
   return `<span class="vname" id="viewer-title">${esc(v.name)}</span>${statePills(c)}<span class="grow"></span>
     ${pending || v.editing ? "" : `<button data-vedit${noEdit ? ` disabled title="${esc(noEdit)}"` : ""}>Edit</button>`}
-    ${turn}${close}`;
+    ${close}`;
 }
 function viewerHTML(v){
   const d = v.data;
@@ -2225,7 +2181,6 @@ function bindViewer(dlg){
       return;
     }
     if("editCancel" in ds){ v.editing = false; return paintViewerParts(); }
-    if("vturn" in ds) return viewerAct(b, "/api/skill/" + ds.vturn);
     if("editSend" in ds){
       const instruction = (editText[skillKey(v.project, v.name)] || "").trim();
       if(instruction) viewerAct(b, "/api/skill/edit", {project: v.project, name: v.name, instruction});

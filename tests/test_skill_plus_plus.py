@@ -7665,9 +7665,6 @@ class ProjectSkillsCase(TempRoot):
     def _cards(self, repo=None):
         return {c["name"]: c for c in self._gallery(repo)["skills"]}
 
-    def _local(self, repo=None):
-        return (repo or self.repo) / ".claude" / "settings.local.json"
-
     def _drafted_and_installed(self, eid="x", name="add-eval-case"):
         from skill_plus_plus.ledger import STATUS_PROMOTED
         from skill_plus_plus.web import _write_status, install_skill
@@ -7716,8 +7713,7 @@ class TestProjectSkills(ProjectSkillsCase):
         cards = self._cards()
         self.assertEqual(list(cards), ["deploy", "made"])
         self.assertEqual(cards["deploy"], {
-            "name": "deploy", "description": "Use when testing.", "edit_block": "",
-            "visibility": {"state": "on", "source": ""}, "edit": {}},
+            "name": "deploy", "description": "Use when testing.", "edit_block": "", "edit": {}},
             "a card is the skill: no path, file list, size or usage")
 
     def test_a_description_written_as_a_yaml_block_reads_as_one_line(self):
@@ -7725,102 +7721,6 @@ class TestProjectSkills(ProjectSkillsCase):
         (root / "SKILL.md").write_text("---\nname: deploy\ndescription: >\n  Use when shipping\n"
                                        "  to production.\n---\n# Steps\n")
         self.assertEqual(self._cards()["deploy"]["description"], "Use when shipping to production.")
-
-    def test_a_skill_named_differently_from_its_folder_is_turned_off_by_its_name(self):
-        from skill_plus_plus.web import turn_project_skill
-        self._skill("deploy-folder", name="deploy")
-        self.assertTrue(turn_project_skill(self.config, str(self.repo), "deploy-folder", off=True)["ok"])
-        self.assertEqual(json.loads(self._local().read_text()), {"skillOverrides": {"deploy": "off"}})
-        self.assertEqual(self._cards()["deploy-folder"]["visibility"],
-                         {"state": "off", "source": "local"})
-
-    def test_turning_off_writes_only_its_own_entry_and_keeps_every_other_setting(self):
-        from skill_plus_plus.skills import project_key
-        from skill_plus_plus.web import turn_project_skill
-        self._skill("deploy")
-        before = {"permissions": {"allow": ["Bash(npm test)"]},
-                  "skillOverrides": {"other": "name-only"}, "model": "opus"}
-        self._local().write_text(json.dumps(before))
-        original = self._local().read_bytes()
-        self.assertTrue(turn_project_skill(self.config, str(self.repo), "deploy", off=True)["ok"])
-        after = json.loads(self._local().read_text())
-        self.assertEqual(list(after), ["permissions", "skillOverrides", "model"], "order kept")
-        self.assertEqual(after["skillOverrides"], {"other": "name-only", "deploy": "off"})
-        backup = self.config.root / "backups" / project_key(str(self.repo)) / "settings.local.json"
-        self.assertEqual(backup.read_bytes(), original)
-        self.assertTrue(turn_project_skill(self.config, str(self.repo), "deploy", off=False)["ok"])
-        self.assertEqual(json.loads(self._local().read_text()), before)
-        again = turn_project_skill(self.config, str(self.repo), "deploy", off=False)
-        self.assertEqual((again["ok"], again["changed"]), (True, False))
-        self._local().write_text(json.dumps({"skillOverrides": {"deploy": "off"}}))
-        turn_project_skill(self.config, str(self.repo), "deploy", off=False)
-        self.assertEqual(json.loads(self._local().read_text()), {},
-                         "an empty skillOverrides map is removed, not left behind")
-
-    def test_turning_off_creates_the_local_file_and_keeps_it_out_of_git(self):
-        from skill_plus_plus.web import turn_project_skill
-        self._skill("deploy")
-        exclude = self.repo / ".git" / "info" / "exclude"
-        exclude.write_text("# git ls-files --others --exclude-from=.git/info/exclude\n")
-        done = turn_project_skill(self.config, str(self.repo), "deploy", off=True)
-        self.assertEqual((done["created"], done["excluded"]), (True, True))
-        turn_project_skill(self.config, str(self.repo), "deploy", off=False)
-        turn_project_skill(self.config, str(self.repo), "deploy", off=True)
-        self.assertEqual(exclude.read_text().splitlines().count("/.claude/settings.local.json"), 1)
-        other = self._project("other")
-        self._skill("deploy", repo=other)
-        (other / ".git" / "info" / "exclude").write_text(".claude/settings.local.json\n")
-        done = turn_project_skill(self.config, str(other), "deploy", off=True)
-        self.assertEqual((done["created"], done["excluded"]), (True, False),
-                         "already ignored: nothing to add")
-
-    def test_invalid_local_settings_are_never_overwritten(self):
-        from skill_plus_plus.web import turn_project_skill
-        self._skill("deploy")
-        self._local().write_text("{oops")
-        done = turn_project_skill(self.config, str(self.repo), "deploy", off=True)
-        self.assertFalse(done["ok"])
-        self.assertIn("cannot parse", done["error"])
-        self.assertEqual(self._local().read_text(), "{oops")
-        self.assertIn("cannot parse", self._gallery()["settings_error"])
-
-    def test_off_in_the_committed_settings_shows_as_off_for_the_team_and_stays_off(self):
-        from skill_plus_plus.web import turn_project_skill
-        self._skill("deploy")
-        (self.repo / ".claude" / "settings.json").write_text(
-            json.dumps({"skillOverrides": {"deploy": "off"}}))
-        self.assertEqual(self._cards()["deploy"]["visibility"], {"state": "off", "source": "team"})
-        done = turn_project_skill(self.config, str(self.repo), "deploy", off=False)
-        self.assertEqual((done["ok"], done["changed"]), (True, False))
-        self.assertIn("committed settings", done["note"])
-        self.assertFalse(self._local().exists())
-
-    def test_turning_on_a_skill_nobody_turned_off_creates_no_file(self):
-        from skill_plus_plus.web import turn_project_skill
-        self._skill("deploy")
-        done = turn_project_skill(self.config, str(self.repo), "deploy", off=False)
-        self.assertEqual((done["ok"], done["changed"]), (True, False))
-        self.assertFalse(self._local().exists())
-        self.assertFalse((self.repo / ".git" / "info" / "exclude").exists())
-
-    def test_a_worktree_turns_a_skill_off_in_the_main_checkouts_local_settings(self):
-        """Claude Code keeps a worktree's local settings at the main checkout's
-        root (settings docs), so that is the file that turns a skill off there."""
-        from skill_plus_plus.web import turn_project_skill
-        main = self.root / "main"
-        (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
-        (main / ".git" / "worktrees" / "wt" / "commondir").write_text("../..\n")
-        worktree = self._project("wt")
-        shutil.rmtree(worktree / ".git")
-        (worktree / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n")
-        self._skill("deploy", repo=worktree)
-        self.assertTrue(turn_project_skill(self.config, str(worktree), "deploy", off=True)["ok"])
-        self.assertEqual(json.loads(self._local(main).read_text()),
-                         {"skillOverrides": {"deploy": "off"}})
-        self.assertFalse(self._local(worktree).exists())
-        self.assertIn("/.claude/settings.local.json",
-                      (main / ".git" / "info" / "exclude").read_text())
-        self.assertEqual(self._cards(worktree)["deploy"]["visibility"]["state"], "off")
 
     def test_an_opened_skill_shows_its_skill_md_and_never_reads_through_a_link(self):
         from skill_plus_plus import skills
@@ -7858,17 +7758,15 @@ class TestProjectSkills(ProjectSkillsCase):
         for path in ("/a/app", "/x/.hidden", "/tmp/my repo!", "/"):
             self.assertRegex(project_key(path), r"\A[A-Za-z0-9_][A-Za-z0-9._-]*\Z", path)
 
-    def test_a_linked_skill_folder_can_be_turned_off_but_not_edited(self):
-        from skill_plus_plus.web import turn_project_skill
+    def test_a_linked_skill_folder_is_listed_but_not_edited(self):
         shared = self.root / "shared" / "deploy"
         shared.mkdir(parents=True)
         (shared / "SKILL.md").write_text("---\nname: deploy\ndescription: \"shared\"\n---\n")
         (self.repo / ".claude" / "skills").mkdir(parents=True)
         (self.repo / ".claude" / "skills" / "deploy").symlink_to(shared)
-        self.assertIn("link", self._cards()["deploy"]["edit_block"])
-        self.assertTrue(turn_project_skill(self.config, str(self.repo), "deploy", off=True)["ok"])
-        self.assertEqual(self._cards()["deploy"]["visibility"]["state"], "off")
-        self.assertIn("shared", (shared / "SKILL.md").read_text(), "its target is untouched")
+        card = self._cards()["deploy"]
+        self.assertEqual(card["description"], "shared")
+        self.assertIn("link", card["edit_block"])
 
     def test_a_project_folder_that_is_gone_lists_no_skills(self):
         self._skill("deploy")
@@ -8266,8 +8164,7 @@ class TestProjectSkillsPage(PageScriptCase):
     """The Skills tab, run in node on made-up state: each project apart, its
     drafts to review above its skills, and a skill opened from its card."""
 
-    CARD = {"name": "deploy", "description": "Use when shipping.", "edit_block": "",
-            "visibility": {"state": "on", "source": ""}, "edit": {}}
+    CARD = {"name": "deploy", "description": "Use when shipping.", "edit_block": "", "edit": {}}
 
     DRAFT = {"title": "t", "description": "d", "body": "# B", "questions": [], "files": ["SKILL.md"],
              "revising": False, "since": None, "message": "", "installed": "",
@@ -8275,7 +8172,7 @@ class TestProjectSkillsPage(PageScriptCase):
 
     def _gallery(self, project, cards, **kw):
         return {"project": project, "name": project.rsplit("/", 1)[-1], "exists": True,
-                "settings_error": "", "skills": cards, **kw}
+                "skills": cards, **kw}
 
     def _cards(self, cards):
         return self._run(f"{json.dumps(cards)}.map(c => skillCard("
@@ -8325,26 +8222,6 @@ class TestProjectSkillsPage(PageScriptCase):
             self.assertNotIn(gone, card)
 
     @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
-    def test_an_off_skill_is_plain_to_see_and_only_your_own_off_is_turned_on_here(self):
-        from skill_plus_plus.web import PAGE
-        mine = {**self.CARD, "visibility": {"state": "off", "source": "local"}}
-        team = {**self.CARD, "visibility": {"state": "off", "source": "team"}}
-        on_card, mine_card, team_card = self._cards([self.CARD, mine, team])
-        self.assertTrue(on_card.startswith('<button class="skill" '))
-        self.assertTrue(mine_card.startswith('<button class="skill off" '))
-        self.assertIn('<span class="pill off"', mine_card)
-        self.assertIn(">Off for the team<", team_card)
-        self.assertIn("button.skill.off{border:1px dashed", PAGE)
-        self.assertIn("text-decoration:line-through", PAGE)
-        self.assertIn('data-vturn="off"', self._opened(self.CARD)["head"])
-        self.assertIn('data-vturn="on"', self._opened(mine)["head"])
-        head = self._opened(team)["head"]
-        self.assertNotIn("data-vturn", head)
-        self.assertRegex(head, r'<button disabled title="[^"]*committed[^"]*">Turn on</button>')
-        self.assertRegex(self._opened(mine, settings_error="cannot parse")["head"],
-                         r'data-vturn="on" disabled title="cannot parse"')
-
-    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
     def test_edit_is_a_button_in_the_opened_skill_and_its_box_shows_only_after_it(self):
         closed = self._opened(self.CARD)
         self.assertIn("data-vedit", closed["head"])
@@ -8380,7 +8257,7 @@ justApplied = {{project: "/w/app", name: "deploy", token: "t"}};
 const shown = editHTML(v), other = editHTML({{...v, name: "notes"}});
 await send("/api/skill/read", {{}});
 const afterRead = justApplied !== null;
-await post("/api/skill/off", {{}});
+await post("/api/install", {{}});
 return [none, shown, other, afterRead, justApplied];""")
         self.assertEqual(none, "")
         self.assertIn("The edit is applied.", shown)

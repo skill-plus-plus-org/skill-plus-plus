@@ -159,29 +159,20 @@ writes a Claude Code plugin folder instead.
 The **Skills** tab shows each project on its own: its drafts to review first,
 then every skill it has in `.claude/skills/`, three to a row, whoever put it
 there: Skill++, you or a teammate. The menu beside the tabs narrows it to one
-project. A card is the skill's name and what it is for, with a label when it
-is off and when an edit is running or waiting. A skill that is off is struck
-through and hatched.
+project. A card is the skill's name and what it is for, with a label while an
+edit is running or waiting.
 
 Click a card to open the skill: its `SKILL.md`, and what you can do with it.
 
 - **Edit** asks your agent for a change: say what should change, and it edits
   a copy in a temporary folder. The change comes back as a diff. Nothing in the
   project changes until you press **Apply**; **Discard** drops it. Apply is
-  refused if the skill changed after the agent took its copy. Right after
-  Apply, **Undo** puts the skill back as it was. It lasts until your next
-  action or a reload of the page, and is refused if anything changed the skill
-  since.
-  The draft a skill was installed from stays as it was. A linked skill folder,
-  and one over 100 files or 1 MB, are not edited from here.
-- **Turn off** switches the skill off for you only, as Claude Code's own
-  `/skills` menu does: it writes `"skillOverrides": {"<name>": "off"}` into the
-  project's `.claude/settings.local.json` (the main checkout's, in a git
-  worktree). Claude no longer sees the skill and `/<name>` is hidden, while
-  teammates keep it. **Turn on** removes the entry. When Skill++ creates that
-  file, it adds it to the clone's `.git/info/exclude`, so it is not committed.
-  A skill turned off in the committed `.claude/settings.json`, or in your
-  `~/.claude/settings.json`, shows as off and is changed there.
+  refused if the skill changed after the agent took its copy. The draft a
+  skill was installed from stays as it was. A linked skill folder, and one over
+  100 files or 1 MB, are not edited from here.
+- **Undo**, right after Apply, puts the skill back as it was. It lasts until
+  your next action or a reload of the page, and is refused if anything changed
+  the skill since.
 
 The same edit from the terminal:
 
@@ -191,7 +182,7 @@ skill-plus-plus edit-skill <folder> --project ~/code/my-repo --instruction "what
 
 Open Claude Code sessions pick up a changed `SKILL.md` at once. After the first
 install into a project creates its `.claude/skills/` folder, run
-`/reload-skills` there; a skill turned off or on may need a new session.
+`/reload-skills` there.
 
 ## Housekeeping
 

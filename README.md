@@ -189,9 +189,8 @@ new Code session in the desktop app) and work as usual.
 7. **Install in your project** (③ above; commit `.claude/skills/` to share it).
    From then on the folder is the skill.
 8. **Keep it current** on the same tab: every skill in the project, three to a
-   row. Click one to read it, have your agent edit it (you see the change as a
-   diff before anything is written), or turn it off for yourself while
-   teammates keep it.
+   row. Click one to read it, or have your agent edit it: you see the change as
+   a diff before anything is written, and can undo it right after.
 
 **Faster than three repeats:** `SKILL_PLUS_PLUS_RECURRENCE=1` makes a candidate ready the
 first time it is seen.
