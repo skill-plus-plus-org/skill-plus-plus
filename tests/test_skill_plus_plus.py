@@ -7147,6 +7147,11 @@ class TestMemoryGuard(TempRoot):
     TWO_TASKS = ("npm test", "git commit -m 'fix'", "cargo build", "git commit -m 'feat'")
 
     def setUp(self) -> None:
+        # The scripted machine runs gemma4:e4b, whatever the default model is:
+        # the sizes and the figures these tests expect are that model's.
+        pinned = mock.patch.dict(os.environ, {"SKILL_PLUS_PLUS_LOCAL_MODEL": self.FOLD[0]})
+        pinned.start()
+        self.addCleanup(pinned.stop)
         super().setUp()
         self.config.memory_guard = True
 
