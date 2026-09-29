@@ -188,6 +188,10 @@ new Code session in the desktop app) and work as usual.
 
 7. **Install in your project** (commit `.claude/skills/` to share it), or **just
    for you** (③ above). A later revision reaches it with **Update**.
+8. **Keep it current** under **Project skills**: every skill in the project,
+   three to a row. View one in full, have your agent edit it (you see the
+   change as a diff before anything is written), turn it off just for you, or
+   archive it.
 
 **Faster than three repeats:** `SKILL_PLUS_PLUS_RECURRENCE=1` makes a candidate ready the
 first time it is seen.

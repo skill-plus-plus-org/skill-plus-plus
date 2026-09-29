@@ -21,6 +21,14 @@ All notable changes to Skill++. The format follows
   when a fold waits or is stopped, and `doctor` and `stats` show the figures.
   `SKILL_PLUS_PLUS_MEMORY_GUARD`, `SKILL_PLUS_PLUS_MEMORY_RESERVE_GB`,
   `SKILL_PLUS_PLUS_IDLE_MINUTES` and `SKILL_PLUS_PLUS_NOTIFY` configure it.
+- **Project skills**, a third tab on the review page: every skill a project has
+  in `.claude/skills/`, whoever made it, three to a row. **View** shows one in
+  full. **Edit** has your agent change a copy and shows the change as a diff
+  to **Apply** or **Discard**; `skill-plus-plus edit-skill` does the same from
+  the terminal. **Turn off** writes `skillOverrides` into the project's
+  `.claude/settings.local.json`, for you only, as Claude Code's `/skills` menu
+  does. **Archive** moves the folder into Skill++'s own, and **Restore** puts it
+  back.
 
 ### Changed
 
@@ -49,6 +57,16 @@ All notable changes to Skill++. The format follows
   confirmation; before, only the command line could. Its draft is kept, and
   returns if the candidate is brought back and promoted again. An installed
   skill is uninstalled first.
+
+### Fixed
+
+- `skill-plus-plus tier` no longer deletes a skill already in the target tier
+  to make room. The cold and archive tiers are shared by every project, so it
+  was another project's skill; now it says so and moves nothing.
+- A revision whose instruction starts with `-`, such as `--shorter`, reaches
+  the agent instead of being refused as an unknown option.
+- Revise is no longer offered on a draft that is installed, where it always
+  failed. A skill installed in a project is edited under Project skills.
 
 ## [0.1.1] - 2026-09-27
 

@@ -52,6 +52,7 @@ is **held**, not guessed at, and banked by the next `SessionStart`.
 | `cli` | Every command, including `draft`/`revise` and the agent they start. |
 | `install` | Wiring hooks into a settings file and removing them, and copying the slash commands. |
 | `lifecycle` | Tiers (hot, cold, archived) and staleness for installed skills. |
+| `skills` | The skills a project has installed: the Project skills cards, the viewer, turning one off, archiving, and the agent's edits as proposals to apply. |
 | `normalize` | Parameterising paths and ids, and the shape of a step used for comparison. |
 | `sanitize` | Scrubbing secrets and addresses from every captured string. |
 | `decisions` | The append-only record of what you promoted and dismissed. |
@@ -89,6 +90,9 @@ the code; reuse it rather than writing a second one.
 | Which hooks are wired here? | `install.installed_events` |
 | What does a session bank? | `capture.fold_session`, which `score.py` calls rather than copying |
 | How are sessions loaded for scoring? | `tests/fixtures/sessions/score.load` (reads `SKILL_PLUS_PLUS_FIXTURES`) |
+| Which projects may a page request name? | `web.known_projects` |
+| Which installed folder came from which draft? | `skills.install_index` |
+| Where are a project's per-user Claude Code settings? | `skills.local_settings_path` |
 
 ## Measuring a change
 

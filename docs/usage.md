@@ -151,6 +151,52 @@ An uploaded skill lives in your account, not on your machine. Read it before
 uploading. For a team, `--format plugin --plugin-name <name> --with-commands`
 writes a Claude Code plugin folder instead.
 
+## Skills in your projects
+
+**Project skills**, the review page's third tab, shows every skill each project
+has in `.claude/skills/`, three to a row: the ones Skill++ installed and the
+ones you or anyone else put there. Under **All projects**, each project gets
+its own gallery. A card says what Claude Code knows the skill by, whether it is
+on, whether it came from a draft and whether that draft is newer, and how often
+it was used.
+
+- **View** shows the skill in full: `SKILL.md` rendered, with a **Source**
+  toggle, and every file beside it. Binary files and links are named, never
+  opened.
+- **Edit** sends your agent what should change. It edits a copy in a temporary
+  folder, and the change comes back as a diff in the viewer. Nothing in the
+  project changes until you press **Apply**; **Discard** drops it. Apply is
+  refused if the skill changed after the agent took its copy, and the version
+  it replaces is kept in
+  `~/.claude/skill-plus-plus/edits/<project>/<name>/history/` (the last ten).
+  A skill installed from a draft gets the same change in its draft, so
+  **Update** and **Uninstall** keep working. A linked skill folder, one over
+  100 files or 1 MB, and one whose draft is newer than the installed copy are
+  not edited from here.
+- **Turn off** switches the skill off for you only, as Claude Code's own
+  `/skills` menu does: it writes `"skillOverrides": {"<name>": "off"}` into the
+  project's `.claude/settings.local.json` (the main checkout's, in a git
+  worktree). Claude no longer sees the skill and `/<name>` is hidden, while
+  teammates keep it. **Turn on** removes the entry. When Skill++ creates that
+  file, it adds it to the clone's `.git/info/exclude`, so it is not committed.
+  A skill turned off in the committed `.claude/settings.json`, or in your
+  `~/.claude/settings.json`, shows as off and is changed there.
+- **Archive** moves the skill's folder out of the repo, into
+  `~/.claude/skill-plus-plus/archive/<project>/`, where Claude Code does not
+  load it. Nothing is deleted: **Restore** in the gallery's **Archived** list
+  puts it back, and never over a skill of the same name. Until you commit or
+  restore, git shows the folder as deleted.
+
+The same edit from the terminal:
+
+```bash
+skill-plus-plus edit-skill <folder> --project ~/code/my-repo --instruction "what to change" --apply
+```
+
+Open Claude Code sessions pick up a changed `SKILL.md` at once. After a restore
+creates a project's `.claude/skills/` folder, run `/reload-skills` there; a
+skill turned off or on may need a new session.
+
 ## Housekeeping
 
 ```bash
@@ -175,7 +221,7 @@ edits settings or spends a model call is a dry run until you add `--apply`.
 | Deciding | `promote`, `dismiss` (or `ignore`), `reopen`, `ignored` |
 | Drafting | `draft`, `revise`, `name`, `scaffold`, `dictate` (work in progress) |
 | Fixing candidates | `split`, `merge`, `retitle`, `sift` |
-| Skills you have | `lifecycle`, `tier`, `check`, `reconcile`, `bundle`, `expire`, `accuracy` |
+| Skills you have | `edit-skill`, `lifecycle`, `tier`, `check`, `reconcile`, `bundle`, `expire`, `accuracy` |
 | Internal (run by the hooks) | `hook`, `fold-session`, `fold-pending` |
 
 ## Memory
@@ -260,6 +306,10 @@ All settings are environment variables.
   denied tool is the usual cause; its output is in the log.
 - *Timed out*: drafts get 900 seconds; `skill-plus-plus draft … --timeout N` gives more.
 
+**An edit failed.** Read
+`~/.claude/skill-plus-plus/edits/<project>/<name>/current/agent.log`; the causes
+are the same as for a draft. **Discard** clears it.
+
 **The page will not start: `Address already in use`.** Another `skill-plus-plus web` is
 running. Stop it with Ctrl-C in its terminal, or use `skill-plus-plus web --port 8766`.
 
@@ -279,10 +329,11 @@ do nothing for it.
 
 ```bash
 skill-plus-plus install --project ~/code/my-repo --remove --apply   # or --user
-rm -rf ~/.claude/skill-plus-plus/                                   # the ledger, sessions and drafts
+rm -rf ~/.claude/skill-plus-plus/                                   # the ledger, sessions, drafts and archived skills
 pipx uninstall skill-plus-plus
 ```
 
+Restore any archived skill you want to keep before deleting that folder.
 `--remove` takes out only Skill++'s own hook entries and the slash commands it
 copied, and keeps a command file you edited. Skills you installed keep working:
 they are ordinary `SKILL.md` files that do not depend on Skill++.
