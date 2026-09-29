@@ -7650,3 +7650,331 @@ class TestMemoryGuardAcrossProcesses(TempRoot):
                                   asked.append(payload["model"]) or {}):
             memory.unload(self.config, ["gemma4:e4b"], linger=20.0)
         self.assertEqual(asked, ["gemma4:e4b", "gemma4:e4b"])
+
+
+class TestProjectSkills(TempRoot):
+    """The Project skills tab: every skill a project has in `.claude/skills/`,
+    whoever made it, and what the page does with one without an agent: show
+    it in full, turn it off or on for this user, archive it and restore it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.ledger = Ledger(self.config)
+        self.home = self.root / "home"
+        home = mock.patch("pathlib.Path.home", return_value=self.home)
+        home.start()
+        self.addCleanup(home.stop)
+        self.repo = self._project("repo")
+
+    def _project(self, name, eid=None):
+        repo = self.root / name
+        (repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
+        self.ledger.save(Entry(id=eid or f"e-{name}", title=f"work in {name}", occurrences=3,
+                               sessions=["s0", "s1", "s2"],
+                               steps=[{"tool": "Bash", "input": {"command": "npm test"}}],
+                               projects=[str(repo)]))
+        return repo
+
+    def _skill(self, folder, name="", description="Use when testing.", files=None, repo=None,
+               metadata=""):
+        root = (repo or self.repo) / ".claude" / "skills" / folder
+        root.mkdir(parents=True, exist_ok=True)
+        head = f"name: {name or folder}\n" if name is not None else ""
+        (root / "SKILL.md").write_text(
+            f"---\n{head}description: \"{description}\"\n{metadata}---\n# Steps\n")
+        for rel, data in (files or {}).items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_bytes(data if isinstance(data, bytes) else data.encode())
+        return root
+
+    def _gallery(self, repo=None):
+        from skill_plus_plus.web import collect_state
+        galleries = {g["project"]: g for g in collect_state(self.config)["skills"]}
+        return galleries[str(repo or self.repo)]
+
+    def _cards(self, repo=None):
+        return {c["name"]: c for c in self._gallery(repo)["skills"]}
+
+    def _local(self, repo=None):
+        return (repo or self.repo) / ".claude" / "settings.local.json"
+
+    def _drafted_and_installed(self, eid="x", name="add-eval-case"):
+        from skill_plus_plus.ledger import STATUS_PROMOTED
+        from skill_plus_plus.web import _write_status, install_skill
+        entry = self.ledger.get(f"e-{self.repo.name}")
+        self.ledger.save(Entry(id=eid, title="add a case", occurrences=3, status=STATUS_PROMOTED,
+                               sessions=["s0", "s1", "s2"], steps=entry.steps,
+                               projects=[str(self.repo)]))
+        folder = self.config.root / "drafts" / eid
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: \"Use when adding a case.\"\n---\n# Body\n")
+        _write_status(self.config, eid, state="ready")
+        self.assertTrue(install_skill(self.config, eid, "project")["ok"])
+        return self.repo / ".claude" / "skills" / name
+
+    def _tree(self, folder):
+        return {p.relative_to(folder).as_posix(): p.read_bytes()
+                for p in sorted(folder.rglob("*")) if p.is_file()}
+
+    def test_every_folder_with_a_skill_md_is_listed_whoever_made_it(self):
+        self._skill("deploy", files={"scripts/run.sh": "#!/bin/sh\necho hi\n"})
+        self._skill("made", metadata="metadata:\n  source: \"skill-plus-plus\"\n")
+        (self.repo / ".claude" / "skills" / "notes").mkdir()          # no SKILL.md
+        self._skill(".hidden")
+        cards = self._cards()
+        self.assertEqual(list(cards), ["deploy", "made"])
+        self.assertEqual(cards["deploy"]["made_by"], "")
+        self.assertEqual(cards["made"]["made_by"], "skill-plus-plus")
+        self.assertEqual(cards["deploy"]["files"], ["SKILL.md", "scripts/run.sh"])
+        self.assertEqual(cards["deploy"]["file_count"], 2)
+        self.assertEqual(cards["deploy"]["description"], "Use when testing.")
+        self.assertEqual(cards["deploy"]["visibility"], {"state": "on", "source": ""})
+
+    def test_a_description_written_as_a_yaml_block_reads_as_one_line(self):
+        root = self._skill("deploy")
+        (root / "SKILL.md").write_text("---\nname: deploy\ndescription: >\n  Use when shipping\n"
+                                       "  to production.\n---\n# Steps\n")
+        self.assertEqual(self._cards()["deploy"]["description"], "Use when shipping to production.")
+
+    def test_a_skill_installed_from_a_draft_names_its_entry_and_says_when_the_draft_is_newer(self):
+        self._drafted_and_installed("x")
+        card = self._cards()["add-eval-case"]
+        self.assertEqual((card["made_by"], card["entry"], card["update"]), ("draft", "x", False))
+        draft = self.config.root / "drafts" / "x" / "SKILL.md"
+        draft.write_text(draft.read_text() + "## Traps\n")
+        self.assertTrue(self._cards()["add-eval-case"]["update"])
+
+    def test_a_skill_named_differently_from_its_folder_is_turned_off_by_its_name(self):
+        from skill_plus_plus.web import turn_project_skill
+        self._skill("deploy-folder", name="deploy")
+        card = self._cards()["deploy-folder"]
+        self.assertEqual((card["skill_name"], card["name_mismatch"]), ("deploy", True))
+        self.assertTrue(turn_project_skill(self.config, str(self.repo), "deploy-folder", off=True)["ok"])
+        self.assertEqual(json.loads(self._local().read_text()), {"skillOverrides": {"deploy": "off"}})
+        self.assertEqual(self._cards()["deploy-folder"]["visibility"],
+                         {"state": "off", "source": "local"})
+
+    def test_turning_off_writes_only_its_own_entry_and_keeps_every_other_setting(self):
+        from skill_plus_plus.skills import project_key
+        from skill_plus_plus.web import turn_project_skill
+        self._skill("deploy")
+        before = {"permissions": {"allow": ["Bash(npm test)"]},
+                  "skillOverrides": {"other": "name-only"}, "model": "opus"}
+        self._local().write_text(json.dumps(before))
+        original = self._local().read_bytes()
+        self.assertTrue(turn_project_skill(self.config, str(self.repo), "deploy", off=True)["ok"])
+        after = json.loads(self._local().read_text())
+        self.assertEqual(list(after), ["permissions", "skillOverrides", "model"], "order kept")
+        self.assertEqual(after["skillOverrides"], {"other": "name-only", "deploy": "off"})
+        backup = self.config.root / "backups" / project_key(str(self.repo)) / "settings.local.json"
+        self.assertEqual(backup.read_bytes(), original)
+        self.assertTrue(turn_project_skill(self.config, str(self.repo), "deploy", off=False)["ok"])
+        self.assertEqual(json.loads(self._local().read_text()), before)
+        again = turn_project_skill(self.config, str(self.repo), "deploy", off=False)
+        self.assertEqual((again["ok"], again["changed"]), (True, False))
+        self._local().write_text(json.dumps({"skillOverrides": {"deploy": "off"}}))
+        turn_project_skill(self.config, str(self.repo), "deploy", off=False)
+        self.assertEqual(json.loads(self._local().read_text()), {},
+                         "an empty skillOverrides map is removed, not left behind")
+
+    def test_turning_off_creates_the_local_file_and_keeps_it_out_of_git(self):
+        from skill_plus_plus.web import turn_project_skill
+        self._skill("deploy")
+        exclude = self.repo / ".git" / "info" / "exclude"
+        exclude.write_text("# git ls-files --others --exclude-from=.git/info/exclude\n")
+        done = turn_project_skill(self.config, str(self.repo), "deploy", off=True)
+        self.assertEqual((done["created"], done["excluded"]), (True, True))
+        turn_project_skill(self.config, str(self.repo), "deploy", off=False)
+        turn_project_skill(self.config, str(self.repo), "deploy", off=True)
+        self.assertEqual(exclude.read_text().splitlines().count("/.claude/settings.local.json"), 1)
+        other = self._project("other")
+        self._skill("deploy", repo=other)
+        (other / ".git" / "info" / "exclude").write_text(".claude/settings.local.json\n")
+        done = turn_project_skill(self.config, str(other), "deploy", off=True)
+        self.assertEqual((done["created"], done["excluded"]), (True, False),
+                         "already ignored: nothing to add")
+
+    def test_invalid_local_settings_are_never_overwritten(self):
+        from skill_plus_plus.web import turn_project_skill
+        self._skill("deploy")
+        self._local().write_text("{oops")
+        done = turn_project_skill(self.config, str(self.repo), "deploy", off=True)
+        self.assertFalse(done["ok"])
+        self.assertIn("cannot parse", done["error"])
+        self.assertEqual(self._local().read_text(), "{oops")
+        self.assertIn("cannot parse", self._gallery()["settings_error"])
+
+    def test_off_in_the_committed_settings_shows_as_off_for_the_team_and_stays_off(self):
+        from skill_plus_plus.web import turn_project_skill
+        self._skill("deploy")
+        (self.repo / ".claude" / "settings.json").write_text(
+            json.dumps({"skillOverrides": {"deploy": "off"}}))
+        self.assertEqual(self._cards()["deploy"]["visibility"], {"state": "off", "source": "team"})
+        done = turn_project_skill(self.config, str(self.repo), "deploy", off=False)
+        self.assertEqual((done["ok"], done["changed"]), (True, False))
+        self.assertIn("committed settings", done["note"])
+        self.assertFalse(self._local().exists())
+
+    def test_turning_on_a_skill_nobody_turned_off_creates_no_file(self):
+        from skill_plus_plus.web import turn_project_skill
+        self._skill("deploy")
+        done = turn_project_skill(self.config, str(self.repo), "deploy", off=False)
+        self.assertEqual((done["ok"], done["changed"]), (True, False))
+        self.assertFalse(self._local().exists())
+        self.assertFalse((self.repo / ".git" / "info" / "exclude").exists())
+
+    def test_a_worktree_turns_a_skill_off_in_the_main_checkouts_local_settings(self):
+        """Claude Code keeps a worktree's local settings at the main checkout's
+        root (settings docs), so that is the file that turns a skill off there."""
+        from skill_plus_plus.web import turn_project_skill
+        main = self.root / "main"
+        (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+        (main / ".git" / "worktrees" / "wt" / "commondir").write_text("../..\n")
+        worktree = self._project("wt")
+        shutil.rmtree(worktree / ".git")
+        (worktree / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n")
+        self._skill("deploy", repo=worktree)
+        self.assertTrue(turn_project_skill(self.config, str(worktree), "deploy", off=True)["ok"])
+        self.assertEqual(json.loads(self._local(main).read_text()),
+                         {"skillOverrides": {"deploy": "off"}})
+        self.assertFalse(self._local(worktree).exists())
+        self.assertIn("/.claude/settings.local.json",
+                      (main / ".git" / "info" / "exclude").read_text())
+        self.assertEqual(self._cards(worktree)["deploy"]["visibility"]["state"], "off")
+
+    def test_the_viewer_reads_text_names_binaries_and_never_follows_a_link_out(self):
+        from skill_plus_plus import skills
+        from skill_plus_plus.web import read_project_skill
+        (self.root / "secret.txt").write_text("TOKEN-123")
+        root = self._skill("deploy", files={"scripts/run.sh": "echo hi\n",
+                                            "assets/logo.png": b"\x89PNG\x00\x01",
+                                            "big.md": "x" * 1500, ".env": "HIDDEN=1"})
+        (root / "secret").symlink_to(self.root / "secret.txt")
+        with mock.patch.object(skills, "READ_FILE_CAP", 1000):
+            read = read_project_skill(self.config, str(self.repo), "deploy")
+        files = {f["path"]: f for f in read["files"]}
+        self.assertEqual(list(files)[0], "SKILL.md")
+        self.assertEqual(files["scripts/run.sh"]["text"], "echo hi\n")
+        self.assertEqual((files["assets/logo.png"]["kind"], files["assets/logo.png"]["text"]),
+                         ("binary", None))
+        self.assertEqual((files["big.md"]["truncated"], len(files["big.md"]["text"])), (True, 1000))
+        self.assertEqual(files["secret"]["kind"], "link")
+        self.assertNotIn(".env", files)
+        self.assertNotIn("TOKEN-123", json.dumps(read))
+        self.assertNotIn("HIDDEN", json.dumps(read))
+
+    def test_a_skill_request_cannot_choose_the_folder(self):
+        from skill_plus_plus.web import read_project_skill
+        self._skill("deploy")
+        (self.root / "elsewhere" / ".claude" / "skills" / "deploy").mkdir(parents=True)
+        (self.root / "elsewhere" / ".claude" / "skills" / "deploy" / "SKILL.md").write_text("x")
+        for project, name in ((str(self.root / "elsewhere"), "deploy"), (str(self.repo), "../deploy"),
+                              (str(self.repo), "deploy/../../x"), (str(self.repo), ""),
+                              (str(self.repo), "missing")):
+            self.assertFalse(read_project_skill(self.config, project, name)["ok"], (project, name))
+
+    def test_archive_moves_the_folder_out_of_the_repo_and_restore_brings_it_back(self):
+        from skill_plus_plus.web import archive_project_skill, restore_project_skill
+        root = self._skill("deploy", files={"scripts/run.sh": "#!/bin/sh\n", "ref/notes.md": "n"})
+        before = self._tree(root)
+        done = archive_project_skill(self.config, str(self.repo), "deploy")
+        self.assertTrue(done["ok"], done)
+        self.assertFalse(root.exists())
+        self.assertNotIn(str(self.repo), done["path"])
+        self.assertEqual(self._gallery()["skills"], [])
+        [item] = self._gallery()["archived"]
+        self.assertEqual((item["id"], item["name"]), ("deploy", "deploy"))
+        back = restore_project_skill(self.config, str(self.repo), "deploy")
+        self.assertTrue(back["ok"], back)
+        self.assertEqual(self._tree(root), before)
+        self.assertEqual(self._gallery()["archived"], [])
+
+    def test_archiving_the_same_name_twice_keeps_both(self):
+        from skill_plus_plus.web import archive_project_skill
+        self._skill("deploy", description="first")
+        archive_project_skill(self.config, str(self.repo), "deploy")
+        self._skill("deploy", description="second")
+        archive_project_skill(self.config, str(self.repo), "deploy")
+        items = {i["id"]: i["description"] for i in self._gallery()["archived"]}
+        self.assertEqual(items, {"deploy": "first", "deploy.2": "second"})
+
+    def test_restore_never_replaces_a_skill_already_there(self):
+        from skill_plus_plus.web import archive_project_skill, restore_project_skill
+        self._skill("deploy", description="old")
+        archive_project_skill(self.config, str(self.repo), "deploy")
+        root = self._skill("deploy", description="new")
+        done = restore_project_skill(self.config, str(self.repo), "deploy")
+        self.assertFalse(done["ok"])
+        self.assertIn("already exists", done["error"])
+        self.assertIn("new", (root / "SKILL.md").read_text())
+        self.assertEqual(len(self._gallery()["archived"]), 1)
+
+    def test_two_projects_archive_skills_of_the_same_name_apart(self):
+        from skill_plus_plus.web import archive_project_skill, restore_project_skill
+        other = self._project("other")
+        self._skill("deploy", description="repo's")
+        self._skill("deploy", description="other's", repo=other)
+        for repo in (self.repo, other):
+            self.assertTrue(archive_project_skill(self.config, str(repo), "deploy")["ok"])
+        for repo, said in ((self.repo, "repo's"), (other, "other's")):
+            self.assertTrue(restore_project_skill(self.config, str(repo), "deploy")["ok"])
+            self.assertIn(said, (repo / ".claude" / "skills" / "deploy" / "SKILL.md").read_text())
+
+    def test_the_project_key_is_stable_safe_and_tells_same_named_projects_apart(self):
+        from skill_plus_plus.skills import project_key
+        self.assertEqual(project_key("/a/app"), project_key("/a/app/"))
+        self.assertNotEqual(project_key("/a/app"), project_key("/b/app"))
+        for path in ("/a/app", "/x/.hidden", "/tmp/my repo!", "/"):
+            self.assertRegex(project_key(path), r"\A[A-Za-z0-9_][A-Za-z0-9._-]*\Z", path)
+
+    def test_archiving_a_skill_installed_from_a_draft_unlinks_it_and_restore_links_it_again(self):
+        from skill_plus_plus.web import (archive_project_skill, restore_project_skill,
+                                         row_state, uninstall_skill)
+        folder = self._drafted_and_installed("x")
+        self.assertTrue(archive_project_skill(self.config, str(self.repo), folder.name)["ok"])
+        self.assertFalse((self.config.root / "drafts" / "x" / "installed.json").exists())
+        self.assertEqual(self.ledger.get("x").skill_path, "")
+        self.assertEqual(row_state(self.config, self.ledger.get("x"))["state"], "drafted")
+        back = restore_project_skill(self.config, str(self.repo), folder.name)
+        self.assertTrue(back["relinked"], back)
+        self.assertEqual(row_state(self.config, self.ledger.get("x"))["state"], "installed")
+        self.assertTrue(uninstall_skill(self.config, "x")["ok"])
+        self.assertFalse(folder.exists())
+
+    def test_a_linked_skill_folder_is_archived_as_a_link_and_its_target_is_untouched(self):
+        from skill_plus_plus.web import archive_project_skill, restore_project_skill
+        shared = self.root / "shared" / "deploy"
+        shared.mkdir(parents=True)
+        (shared / "SKILL.md").write_text("---\nname: deploy\ndescription: \"shared\"\n---\n")
+        (self.repo / ".claude" / "skills").mkdir(parents=True)
+        link = self.repo / ".claude" / "skills" / "deploy"
+        link.symlink_to(shared)
+        self.assertEqual(self._cards()["deploy"]["link"], str(shared))
+        done = archive_project_skill(self.config, str(self.repo), "deploy")
+        self.assertTrue(Path(done["path"]).is_symlink())
+        self.assertTrue((shared / "SKILL.md").exists())
+        self.assertTrue(restore_project_skill(self.config, str(self.repo), "deploy")["ok"])
+        self.assertTrue(link.is_symlink())
+
+    def test_a_project_folder_that_is_gone_lists_no_skills_and_restores_nothing(self):
+        from skill_plus_plus.web import archive_project_skill, restore_project_skill
+        self._skill("deploy")
+        archive_project_skill(self.config, str(self.repo), "deploy")
+        shutil.rmtree(self.repo)
+        gallery = self._gallery()
+        self.assertEqual((gallery["exists"], gallery["skills"], len(gallery["archived"])),
+                         (False, [], 1))
+        done = restore_project_skill(self.config, str(self.repo), "deploy")
+        self.assertFalse(done["ok"])
+        self.assertIn("gone", done["error"])
+
+    def test_loading_the_page_with_project_skills_runs_nothing(self):
+        import subprocess
+        self._skill("deploy", files={"scripts/run.sh": "echo\n"})
+
+        def refuse(*a, **k):
+            raise AssertionError("loading the page ran a command")
+        with mock.patch.object(subprocess, "run", refuse), \
+                mock.patch.object(subprocess, "Popen", refuse):
+            self.assertIn("deploy", self._cards())

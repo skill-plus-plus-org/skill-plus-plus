@@ -19,6 +19,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -35,7 +36,7 @@ from . import skills
 from .config import Config
 from .ledger import (STATUS_CANDIDATE, STATUS_DISMISSED, STATUS_PROMOTED,
                      Ledger)
-from .lifecycle import parse_frontmatter
+from .lifecycle import load_usage, parse_frontmatter
 from .normalize import parameterize
 from .summary import cached_summary, load_summaries, summaries_path
 from .sanitize import scrub
@@ -56,7 +57,9 @@ _jobs: dict[str, threading.Thread] = {}
 # no longer the one serving died with it, so it is shown as failed at once
 # instead of spinning until DRAFT_STALE_SECONDS.
 _BOOT = f"{time.time():.6f}-{id(_jobs)}"
-_jobs_lock = threading.Lock()
+# One lock for every job and every change to a project's skills. Re-entrant,
+# because an action that holds it calls helpers that take it too.
+_jobs_lock = threading.RLock()
 
 
 def _run(config: Config, *args: str) -> subprocess.CompletedProcess:
@@ -402,6 +405,20 @@ def summarise(config: Config, entry_id: str) -> dict:
     return {"ok": True, "summary": text}
 
 
+# The ledger entries the page lists. Everything it knows about projects follows
+# from these: the switcher, the galleries and which project a request may name.
+PAGE_STATUSES = (STATUS_CANDIDATE, STATUS_PROMOTED, STATUS_DISMISSED)
+
+
+def _page_entries(config: Config):
+    return (entry for entry in Ledger(config).all() if entry.status in PAGE_STATUSES)
+
+
+def known_projects(config: Config) -> set[str]:
+    """The projects the page lists, and the only ones a request may name."""
+    return {key for entry in _page_entries(config) for key in _projects(entry) if key}
+
+
 def _projects(entry) -> list[str]:
     """The projects an entry belongs to: one, or several for an entry banked
     before candidates were bound to a project (`capture.projects_of`)."""
@@ -436,9 +453,7 @@ def collect_state(config: Config) -> dict:
     threshold = config.recurrence_threshold
     summaries = load_summaries(config)
     rows = []
-    for entry in Ledger(config).all():
-        if entry.status not in (STATUS_CANDIDATE, STATUS_PROMOTED, STATUS_DISMISSED):
-            continue
+    for entry in _page_entries(config):
         rows.append({"id": entry.id, "title": entry.title,
                      "occurrences": entry.occurrences,
                      "ready": entry.occurrences >= threshold or entry.ready(threshold),
@@ -458,10 +473,13 @@ def collect_state(config: Config) -> dict:
                              (r["title"] or "").lower()))
     drafts = list_drafts(config)
     projects = project_list(rows, drafts)
+    installs, usage = skills.install_index(config), load_usage(config)
     return {"threshold": threshold, "ttl": config.candidate_ttl_days,
             "rows": rows, "drafts": drafts, "projects": projects,
             "capture": capture_status([p["path"] for p in projects]),
-            "memory": memory_waiting(config)}
+            "memory": memory_waiting(config),
+            "skills": [skills.list_project(config, p["path"], installs=installs, usage=usage)
+                       for p in projects if p["path"]]}
 
 
 def memory_waiting(config: Config) -> dict:
@@ -685,7 +703,7 @@ def list_drafts(config: Config) -> list[dict]:
         state = row_state(config, entry)
         if state["state"] not in ("drafted", "revising", "installed"):
             continue
-        skill_md = (_drafted_skill(config, entry) if state["state"] == "installed"
+        skill_md = (skills.drafted_skill(config, entry.id) if state["state"] == "installed"
                     else Path(state["path"]))
         if skill_md is None:
             continue                 # installed by hand, with no draft here
@@ -716,13 +734,6 @@ def list_drafts(config: Config) -> list[dict]:
     return drafts
 
 
-def _drafted_skill(config: Config, entry) -> Path | None:
-    """The draft's SKILL.md, wherever its row stands (installed included)."""
-    found = sorted(p for p in skills.draft_dir(config, entry.id).rglob("SKILL.md")
-                   if ".revisions" not in p.parts)
-    return found[0] if found else None
-
-
 def _shippable(config: Config, entry_id: str):
     """(entry, SKILL.md) for a draft that may leave the page, or (None, why).
 
@@ -734,7 +745,7 @@ def _shippable(config: Config, entry_id: str):
         return None, "no such entry"
     if row_state(config, entry)["state"] not in ("drafted", "installed"):
         return None, "there is no finished draft"
-    skill_md = _drafted_skill(config, entry)
+    skill_md = skills.drafted_skill(config, entry.id)
     if skill_md is None:
         return None, "there is no finished draft"
     if split_open_questions(skill_md.read_text(encoding="utf-8"))[0]:
@@ -1035,6 +1046,79 @@ def answer_questions(config: Config, entry_id: str, answers: list) -> dict:
     return revise(config, entry_id, instruction, limit=MAX_ANSWERS + 1000)
 
 
+def _project_skill(config: Config, project: str, name: str):
+    """(project, skill folder) for a request, or (None, why).
+
+    The request names a project the page lists and a skill folder in it; it
+    never supplies a path. A name is one safe folder name, so `..` and `/`
+    cannot reach past the project's `.claude/skills/`.
+    """
+    if project not in known_projects(config):
+        return None, "unknown project"
+    if not skills.SAFE_NAME.match(name):
+        return None, "no such skill"
+    folder = skills.skills_dir(project) / name
+    if not (folder / "SKILL.md").is_file():
+        return None, "no such skill"
+    return project, folder
+
+
+def read_project_skill(config: Config, project: str, name: str) -> dict:
+    """A skill in full, for the viewer."""
+    project, folder = _project_skill(config, project, name)
+    if project is None:
+        return {"ok": False, "error": folder}
+    front, _ = skills.frontmatter(folder)
+    return {"ok": True, "name": folder.name, "skill_name": skills.override_key(folder, front),
+            "path": str(folder), "link": os.readlink(folder) if folder.is_symlink() else "",
+            **skills.read_skill(folder)}
+
+
+def turn_project_skill(config: Config, project: str, name: str, off: bool) -> dict:
+    """Turn Off or Turn on, for this user only: the project's local settings."""
+    project, folder = _project_skill(config, project, name)
+    if project is None:
+        return {"ok": False, "error": folder}
+    front, _ = skills.frontmatter(folder)
+    key = skills.override_key(folder, front)
+    with _jobs_lock:
+        try:
+            done = skills.set_override(config, project, key, "off" if off else None)
+        except (RuntimeError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
+    now = skills.visibility(key, skills.read_overrides(project))
+    note = ""
+    if not off and now["state"] != "on":
+        note = {"team": "It is still off: the project's committed settings turn it off.",
+                "user": "It is still off: your user settings turn it off."}.get(now["source"], "")
+    return {"ok": True, **done, "visibility": now, "note": note}
+
+
+def archive_project_skill(config: Config, project: str, name: str) -> dict:
+    project, folder = _project_skill(config, project, name)
+    if project is None:
+        return {"ok": False, "error": folder}
+    with _jobs_lock:
+        try:
+            done = skills.archive(config, project, folder)
+        except (RuntimeError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
+    return {"ok": True, **done}
+
+
+def restore_project_skill(config: Config, project: str, archive_id: str) -> dict:
+    if project not in known_projects(config):
+        return {"ok": False, "error": "unknown project"}
+    with _jobs_lock:
+        try:
+            done = skills.restore(config, project, archive_id)
+        except (LookupError, RuntimeError, OSError) as exc:
+            return {"ok": False, "error": str(exc.args[0] if exc.args else exc)}
+    note = ("Open Claude Code sessions need /reload-skills: this project had no "
+            ".claude/skills folder until now." if done["reload"] else "")
+    return {"ok": True, **done, "note": note}
+
+
 def make_handler(config: Config, skills_dir: Path | None = None):
     actions = {
         "/api/install": lambda p: install_skill(config, str(p.get("id", "")),
@@ -1052,6 +1136,16 @@ def make_handler(config: Config, skills_dir: Path | None = None):
         "/api/answer": lambda p: answer_questions(config, str(p.get("id", "")),
                                                   p.get("answers") or []),
         "/api/fold-now": lambda p: fold_now(config),
+        "/api/skill/read": lambda p: read_project_skill(config, str(p.get("project", "")),
+                                                        str(p.get("name", ""))),
+        "/api/skill/off": lambda p: turn_project_skill(config, str(p.get("project", "")),
+                                                       str(p.get("name", "")), off=True),
+        "/api/skill/on": lambda p: turn_project_skill(config, str(p.get("project", "")),
+                                                      str(p.get("name", "")), off=False),
+        "/api/skill/archive": lambda p: archive_project_skill(
+            config, str(p.get("project", "")), str(p.get("name", ""))),
+        "/api/skill/restore": lambda p: restore_project_skill(
+            config, str(p.get("project", "")), str(p.get("archive", ""))),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -1139,6 +1233,8 @@ def make_handler(config: Config, skills_dir: Path | None = None):
                 payload = json.loads(self.rfile.read(length) or b"{}")
             except json.JSONDecodeError:
                 return self._send(400, json.dumps({"error": "bad json"}))
+            if not isinstance(payload, dict):
+                payload = {}                        # every action reads named fields
             action = actions.get(self.path)
             if not action:
                 return self._send(404, json.dumps({"error": "not found"}))
