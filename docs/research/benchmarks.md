@@ -697,7 +697,7 @@ the record of how the context, the goal and the span were sized, and several of
 those findings carried over.
 
 The proposal, at the time: replace `is_marker`'s vocabulary of git verbs with a
-local model asked, on every tool call, whether the task ended there. `6ca48a5` above
+local model asked, on every tool call, whether the task ended there. `82b9e78` above
 recorded the first attempt and did not wire it in. This is the second, wired in
 behind `SKILL_PLUS_PLUS_JUDGE` and measured properly.
 
