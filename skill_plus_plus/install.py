@@ -9,6 +9,7 @@ should get by surprise.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,16 +75,36 @@ def _has_marker(entries: list, markers: tuple[str, ...] = MARKERS) -> bool:
     return any(marker in text for marker in markers)
 
 
+def read_settings(settings_path: Path) -> dict:
+    """A Claude Code settings file as a dict, or ``{}`` when there is none.
+
+    A file that exists but cannot be read as a JSON object raises: it is the
+    developer's to fix, and writing over it would lose whatever it held.
+    """
+    if not settings_path.exists():
+        return {}
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+        raise RuntimeError(f"cannot parse {settings_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(f"cannot parse {settings_path}: not a JSON object")
+    return data
+
+
+def write_settings(settings_path: Path, data: dict) -> None:
+    """Write a settings file whole. Claude Code watches these files and reloads
+    them on change, so a reader must never find one half written."""
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = settings_path.with_name(f".{settings_path.name}.skill-plus-plus.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, settings_path)
+
+
 def plan_settings(settings_path: Path, python: str | None = None,
                   package_root: Path | None = None) -> tuple[dict, list[str]]:
     """Return (merged settings, human-readable change list) without writing."""
-    existing: dict = {}
-    if settings_path.exists():
-        try:
-            existing = json.loads(settings_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            raise RuntimeError(f"cannot parse {settings_path}: {exc}") from exc
-
+    existing = read_settings(settings_path)
     merged = json.loads(json.dumps(existing))  # deep copy
     hooks = merged.setdefault("hooks", {})
     changes: list[str] = []
@@ -132,11 +153,7 @@ def plan_removal(settings_path: Path) -> tuple[dict, list[str]]:
     """
     if not settings_path.exists():
         return {}, ["nothing to remove — no settings file"]
-    try:
-        existing = json.loads(settings_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        raise RuntimeError(f"cannot parse {settings_path}: {exc}") from exc
-
+    existing = read_settings(settings_path)
     merged = json.loads(json.dumps(existing))  # deep copy
     hooks = merged.get("hooks")
     changes: list[str] = []
@@ -169,7 +186,7 @@ def apply_settings(settings_path: Path, merged: dict) -> Path | None:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         backup = settings_path.with_suffix(f".json.skill-plus-plus-backup-{stamp}")
         shutil.copy2(settings_path, backup)
-    settings_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+    write_settings(settings_path, merged)
     return backup
 
 

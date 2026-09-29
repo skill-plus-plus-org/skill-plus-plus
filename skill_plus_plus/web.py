@@ -1009,7 +1009,9 @@ MAX_INSTRUCTION = 2000
 
 def _revise_job(config: Config, entry_id: str, instruction: str) -> None:
     try:
-        proc = _run(config, "revise", entry_id, "--instruction", instruction, "--apply")
+        # One argv element, as the draft note is: split in two, an instruction
+        # starting with "-" is read by argparse as an option and the run refused.
+        proc = _run(config, "revise", entry_id, f"--instruction={instruction}", "--apply")
         if proc.returncode != 0:
             _write_status(config, entry_id, state="revise-failed",
                           message=_tail((proc.stderr or "") or (proc.stdout or ""), 2))

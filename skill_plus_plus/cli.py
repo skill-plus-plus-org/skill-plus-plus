@@ -1469,7 +1469,11 @@ def cmd_tier(args: argparse.Namespace) -> int:
     if not matches:
         print(f"No skill named '{args.name}'", file=sys.stderr)
         return 1
-    dest = move_tier(matches[0], args.tier, skills_dir, config)
+    try:
+        dest = move_tier(matches[0], args.tier, skills_dir, config)
+    except FileExistsError as exc:
+        print(f"Not moved: {exc}", file=sys.stderr)
+        return 1
     print(f"{args.name}: {matches[0].tier} → {args.tier}  ({dest})")
     return 0
 

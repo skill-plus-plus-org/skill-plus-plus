@@ -1469,6 +1469,20 @@ class TestLifecycle(TempRoot):
             [s.tier for s in scan(hot, self.config, self.root) if s.name == "alpha"],
             ["cold"])
 
+    def test_moving_a_tier_never_replaces_a_folder_already_there(self):
+        """The cold and archive tiers are shared by every project, so another
+        project's `alpha` may already be there. It used to be deleted to make
+        room for this one."""
+        from skill_plus_plus.lifecycle import move_tier
+        hot = self.root / "skills"
+        self._write_skill(hot, "alpha", body="this project's\n")
+        theirs = self._write_skill(self.config.archive_dir, "alpha", body="another project's\n")
+        ours = [s for s in scan(hot, self.config, self.root) if s.tier == "hot"][0]
+        with self.assertRaises(FileExistsError):
+            move_tier(ours, "archived", hot, self.config)
+        self.assertIn("another project's", theirs.read_text())
+        self.assertTrue((hot / "alpha" / "SKILL.md").exists(), "nothing moved either")
+
     def test_staleness_detects_missing_reference(self):
         hot = self.root / "skills"
         path = self._write_skill(hot, "gamma", "Run `./scripts/gone.sh` to deploy.\n")
@@ -1504,6 +1518,21 @@ class TestInstall(unittest.TestCase):
         self.assertIn("existing.sh", json.dumps(merged["hooks"]["PostToolUse"]))
         self.assertEqual(len(merged["hooks"]["PostToolUse"]), 2)
         self.assertEqual(len(on_disk["hooks"]["PostToolUse"]), 1, "planning must not write")
+
+    def test_settings_that_cannot_be_parsed_raise_and_a_write_is_whole(self):
+        from skill_plus_plus.install import read_settings, write_settings
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".claude" / "settings.local.json"
+            self.assertEqual(read_settings(path), {}, "no file is no settings, not an error")
+            path.parent.mkdir()
+            for bad in ("{not json", "[1, 2]"):
+                path.write_text(bad)
+                with self.assertRaises(RuntimeError, msg=bad):
+                    read_settings(path)
+            write_settings(path, {"skillOverrides": {"deploy": "off"}})
+            self.assertEqual(read_settings(path), {"skillOverrides": {"deploy": "off"}})
+            self.assertEqual([p.name for p in path.parent.iterdir()], ["settings.local.json"],
+                             "no temporary file is left beside it")
 
     def test_bundle_matches_the_plugin_layout_desktop_uses(self):
         from skill_plus_plus.install import build_plugin_bundle
@@ -4564,6 +4593,19 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
         _, data = draft_zip(self.config, "x")
         self.assertEqual(zipfile.ZipFile(io.BytesIO(data)).namelist(),
                          ["add-eval-case/SKILL.md"])
+
+    def test_an_instruction_that_looks_like_an_option_still_reaches_the_agent(self):
+        """Passed as `--instruction` and the text as two arguments, `--shorter`
+        was read by argparse as an unknown option and the revision refused."""
+        from skill_plus_plus.web import collect_state, revise
+        self._agent("d = pathlib.Path(os.environ['SKILL_PLUS_PLUS_DRAFT_DIR']) / 'SKILL.md'\n"
+                    "d.write_text(d.read_text() + '## Traps\\n')\n")
+        self._drafted("x")
+        self.assertTrue(revise(self.config, "x", "--shorter")["ok"])
+        self._wait_for_draft("x")
+        draft = collect_state(self.config)["drafts"][0]
+        self.assertEqual(draft["message"], "")
+        self.assertIn("## Traps", draft["body"])
 
     def test_a_failed_revision_keeps_the_draft_and_says_why(self):
         from skill_plus_plus.web import collect_state, revise
