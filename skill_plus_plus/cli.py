@@ -142,10 +142,10 @@ def _agent_home(entry_id: str) -> Path:
     prompt relies on, `/skill-plus-plus-draft` and `python3 bin/skill-plus-plus`.
 
     An installed package has neither beside it, so the agent cannot run from
-    this checkout: a `pipx` install could draft nothing. The `bin/skill-plus-plus`
-    written here runs whichever skill-plus-plus started the agent. Kept apart from the
-    draft workspace, because everything beside a written SKILL.md is collected
-    into the draft.
+    this checkout: a `pipx` or `uv tool` install could draft nothing. The
+    `bin/skill-plus-plus` written here runs whichever skill-plus-plus started
+    the agent. Kept apart from the draft workspace, because everything beside a
+    written SKILL.md is collected into the draft.
     """
     from .install import COMMANDS
     home = Path(tempfile.mkdtemp(prefix=f"skill-plus-plus-agent-{entry_id[:8]}-"))
@@ -1787,7 +1787,8 @@ def _usable_interpreter(python: str | None) -> str:
 
 def cmd_install(args: argparse.Namespace) -> int:
     from .install import (apply_settings, hook_command, install_command_files,
-                          plan_removal, plan_settings, remove_command_files)
+                          plan_removal, plan_settings, remove_command_files,
+                          temporary_environment)
 
     target = _settings_target(args)
     if target is None:
@@ -1812,8 +1813,11 @@ def cmd_install(args: argparse.Namespace) -> int:
         return 1
 
     print(f"settings file : {settings_path}")
+    temporary = ""
     if not args.remove:
-        print(f"hook command  : {hook_command(args.python)}")
+        command = hook_command(args.python)
+        temporary = temporary_environment(command)
+        print(f"hook command  : {command}")
     print("planned changes:")
     for change in changes:
         print(f"  - {change}")
@@ -1821,13 +1825,22 @@ def cmd_install(args: argparse.Namespace) -> int:
     models = not args.remove and not args.no_models
     if not args.apply:
         print("\nDry run. Nothing was written.")
-        if not args.remove:
+        if temporary:
+            # Copying the block by hand would wire the same short-lived path.
+            print(f"--apply would refuse: {temporary}")
+        elif not args.remove:
             print("Re-run with --apply to install, or copy the hooks block below "
                   "into your settings manually:\n")
             print(json.dumps({"hooks": merged.get("hooks", {})}, indent=2))
         if models:
             _install_models(Config(args.root), apply=False)
         return 0
+
+    # Ahead of the "already in that state" check: hooks wired from uvx before
+    # this refusal existed are no reason to wire them again.
+    if temporary:
+        print(f"\nrefusing to write: {temporary}", file=sys.stderr)
+        return 1
 
     settled = ("no change", "nothing to remove", "skill-plus-plus is not wired")
     if all(change.endswith("no change") or change.startswith(settled[1:])

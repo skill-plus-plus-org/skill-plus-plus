@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,11 +38,11 @@ def hook_command(python: str | None = None, package_root: Path | None = None,
     """The shell command Claude Code will run for each hook event.
 
     From a checkout, ``PYTHONPATH`` makes ``-m skill_plus_plus`` importable without
-    installing the package. Installed (``pipx install``), the console script is
-    used instead: its path survives an upgrade, while a ``PYTHONPATH`` into a
-    venv's ``site-packages`` names the Python version and breaks with it. The
-    ledger root is deliberately *not* passed, so it defaults to
-    ``~/.claude/skill-plus-plus`` rather than landing inside the repo.
+    installing the package. Installed (``pipx install`` or ``uv tool install``),
+    the console script is used instead: its path survives an upgrade, while a
+    ``PYTHONPATH`` into a venv's ``site-packages`` names the Python version and
+    breaks with it. The ledger root is deliberately *not* passed, so it defaults
+    to ``~/.claude/skill-plus-plus`` rather than landing inside the repo.
 
     The interpreter is looked up on PATH rather than pinned. This used to write
     ``sys.executable`` — on the machine this was developed on, that is
@@ -60,6 +61,25 @@ def hook_command(python: str | None = None, package_root: Path | None = None,
             return f"{script} hook"
     interpreter = f'"{python}"' if python else "python3"
     return f'PYTHONPATH="{root}" {interpreter} -m skill_plus_plus hook'
+
+
+# uvx runs a tool from a temporary environment in uv's cache
+# (`~/.cache/uv/archive-v0/<hash>/`), which `uv cache clean` and `uv cache prune`
+# delete. A hook pointing there stops running with nothing said.
+_UV_CACHE = re.compile(r"[/\\]archive-v\d+[/\\]")
+
+
+def temporary_environment(command: str) -> str:
+    """Empty if *command* will still be there tomorrow, else why it may not.
+
+    `uvx skill-plus-plus install` would write hooks into uv's cache; `uv tool
+    install skill-plus-plus` puts the same command where it lasts, like pipx.
+    """
+    if _UV_CACHE.search(command):
+        return ("this copy runs from uvx's temporary environment, which uv deletes "
+                "when it cleans its cache; install it with `uv tool install "
+                "skill-plus-plus` and run `skill-plus-plus install` from there")
+    return ""
 
 
 def desired_hooks(python: str | None = None, package_root: Path | None = None) -> dict:
