@@ -28,7 +28,7 @@ skill-plus-plus web / review / show            web.collect_state, summary
 skill-plus-plus draft                          cli.cmd_draft: your agent, in a temp home,
   │                                            reads `show --json --draft`, writes SKILL.md
   ▼
-~/.claude/skill-plus-plus/drafts/<id>/SKILL.md open questions answered, revised, downloaded
+~/.claude/skill-plus-plus/drafts/<id>/SKILL.md open questions answered, revised, installed
 ```
 
 Nothing that calls a model runs inside a hook: the judge, the embeddings and
@@ -52,6 +52,7 @@ is **held**, not guessed at, and banked by the next `SessionStart`.
 | `cli` | Every command, including `draft`/`revise` and the agent they start. |
 | `install` | Wiring hooks into a settings file and removing them, and copying the slash commands. |
 | `lifecycle` | Tiers (hot, cold, archived) and staleness for installed skills. |
+| `skills` | The skills a project has: the Skills tab's cards, reading a `SKILL.md`, and the agent's edits as proposals to apply, and to undo right after. |
 | `normalize` | Parameterising paths and ids, and the shape of a step used for comparison. |
 | `sanitize` | Scrubbing secrets and addresses from every captured string. |
 | `decisions` | The append-only record of what you promoted and dismissed. |
@@ -89,6 +90,8 @@ the code; reuse it rather than writing a second one.
 | Which hooks are wired here? | `install.installed_events` |
 | What does a session bank? | `capture.fold_session`, which `score.py` calls rather than copying |
 | How are sessions loaded for scoring? | `tests/fixtures/sessions/score.load` (reads `SKILL_PLUS_PLUS_FIXTURES`) |
+| Which projects may a page request name? | `web.known_projects` |
+| Is a candidate's skill installed? | `skills.installed_skill` |
 
 ## Measuring a change
 

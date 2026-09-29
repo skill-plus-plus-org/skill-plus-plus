@@ -372,16 +372,27 @@ def cmd_revise(args: argparse.Namespace) -> int:
     """Have the developer's agent change a draft SKILL.md as instructed.
 
     Only an existing draft under `<root>/drafts/<id>/` is revised, in place. The
-    version before the revision is kept in `.revisions/` beside it, which the
-    web page leaves out of the download. Like `draft`, nothing is installed.
+    version before the revision is kept in `.revisions/` beside it, which is
+    never installed. Like `draft`, nothing is installed. A draft that is
+    installed is not revised: the installed folder is the skill now, and
+    `edit-skill` changes it.
     """
     import hashlib
     import subprocess
+
+    from . import skills
 
     config, _, entry = _entry(args)
     instruction = (args.instruction or "").strip()
     if not instruction:
         print("Say what to change with --instruction.", file=sys.stderr)
+        return 1
+    installed = skills.installed_skill(entry)
+    if installed:
+        folder = installed.parent
+        print(f"{entry.id} is installed in {folder}, and that folder is the skill now. "
+              f"Change it with: skill-plus-plus edit-skill {folder.name} "
+              f"--project={folder.parents[2]} --instruction=\"…\" --apply", file=sys.stderr)
         return 1
     drafted = sorted((config.root / "drafts" / entry.id).rglob("SKILL.md"))
     drafted = [p for p in drafted if ".revisions" not in p.parts]
@@ -461,6 +472,137 @@ def cmd_revise(args: argparse.Namespace) -> int:
     # Moved back by this process. The agent cannot write here itself.
     skill_md.write_bytes(after)
     print(f"\nrevised {skill_md}  (previous version in {history.name}/SKILL.{stamp}.md)")
+    return 0
+
+
+_EDIT_PROMPT = """Change a Claude Code skill. A copy of it is the folder {folder}: SKILL.md and the files beside it.
+
+What the developer wants changed:
+{instruction}
+
+Rules:
+- Change files only inside {folder}. You may add, edit or delete files there; do not write anywhere else.
+- Keep SKILL.md's YAML frontmatter valid, between its two `---` lines. {name_rule} If you change the
+  `description`, keep it one line of at most 200 characters that says when the skill applies.
+- Change what was asked and keep everything else as it is, wording included. When you add, rename or
+  remove a supporting file, update what SKILL.md says about it.
+- The skill belongs to the project at {project}. You may read files there to check a path, command or
+  script the request mentions. Do not change anything there.
+- Do not install, uninstall, rename or turn off the skill, and do not edit any settings file.
+- If the request cannot be done, say why in one line starting with
+  SKILL-PLUS-PLUS-DECLINE: and change nothing."""
+
+
+def cmd_edit_skill(args: argparse.Namespace) -> int:
+    """Have the developer's agent edit a copy of a skill a project has installed.
+
+    The project is never written: the agent edits a copy in a temp folder, and
+    the result is kept under `<root>/edits/` as a proposal, which the review
+    page shows as a diff to apply or discard. A run that changed the project's
+    copy while the agent ran, or that renamed the skill, proposes nothing.
+    """
+    import subprocess
+    from . import skills
+
+    config = Config(args.root)
+    instruction = (args.instruction or "").strip()
+    if not instruction:
+        print("Say what to change with --instruction.", file=sys.stderr)
+        return 1
+    place = skills.project_place(args.project)
+    folder = place.skills / args.folder
+    if not skills.SAFE_NAME.match(args.folder) or not (folder / "SKILL.md").is_file():
+        print(f"No skill {args.folder!r} in {place.skills}", file=sys.stderr)
+        return 1
+    refused = skills.edit_refusal(folder)
+    if refused:
+        print(f"Not edited: {refused}.", file=sys.stderr)
+        return 1
+    front, _ = skills.frontmatter(folder)
+    name = front.get("name") if isinstance(front.get("name"), str) else ""
+    name_rule = (f"Leave `name: {name}` exactly as it is: Claude Code finds and turns off the "
+                 f"skill by that name." if name else
+                 "It has no `name`, so Claude Code names it after its folder; do not add one.")
+    print(f"skill      {folder}")
+    print(f"change     {instruction[:200]}")
+    current = skills.edit_dir(config, place, args.folder)
+    if (current / "proposal").exists():
+        print("An edit of this skill is waiting; apply or discard it first.", file=sys.stderr)
+        return 1
+    work = _agent_workspace(args.folder)
+    copy = work / args.folder
+    prompt = _EDIT_PROMPT.format(folder=copy, instruction=instruction, project=place.key,
+                                 name_rule=name_rule)
+    try:
+        argv = _agent_argv(config, prompt)
+    except ValueError as exc:
+        shutil.rmtree(work, ignore_errors=True)
+        print(f"SKILL_PLUS_PLUS_AGENT is not a valid command: {exc}", file=sys.stderr)
+        return 1
+    if not args.apply:
+        shutil.rmtree(work, ignore_errors=True)
+        print("\nDry run. Re-run with --apply to spend one model call.")
+        return 0
+
+    try:
+        # A failed run before this one left its copy; the page's status stays.
+        if current.exists():
+            for child in current.iterdir():
+                if child.name != "status.json":
+                    shutil.rmtree(child) if child.is_dir() else child.unlink()
+        files = skills.snapshot(folder, current / "base")
+        base = {"project": place.key, "folder": args.folder, "name": name,
+                "had_name": bool(name), "had_front": bool(front), "files": files,
+                "instruction": instruction,
+                "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        skills.write_json(current / "base.json", base)
+        shutil.copytree(current / "base", copy)
+        env = dict(os.environ, SKILL_PLUS_PLUS_INTERNAL="1",
+                   SKILL_PLUS_PLUS_ROOT=str(config.root), SKILL_PLUS_PLUS_EDIT_DIR=str(copy))
+        home = None if args.cwd else _agent_home(args.folder)
+        started = time.time()
+        try:
+            proc = subprocess.run(argv, cwd=args.cwd or home, timeout=args.timeout,
+                                  capture_output=True, text=True, env=env,
+                                  stdin=subprocess.DEVNULL)
+        except FileNotFoundError:
+            _write_agent_log(current, argv, started, "", "agent not found")
+            print(f"No such agent: {argv[0]}. Set SKILL_PLUS_PLUS_AGENT to how yours is "
+                  f"invoked.", file=sys.stderr)
+            return 1
+        except subprocess.TimeoutExpired:
+            _write_agent_log(current, argv, started, "", f"timed out after {args.timeout}s")
+            print(f"The agent did not finish within {args.timeout}s.", file=sys.stderr)
+            return 1
+        finally:
+            if home:
+                shutil.rmtree(home, ignore_errors=True)
+        said = (proc.stdout or "") + (proc.stderr or "")
+        _write_agent_log(current, argv, started, said, f"edit, exit {proc.returncode}")
+        print(said, end="")
+        if proc.returncode != 0:
+            print(f"\nThe agent failed (exit {proc.returncode}).", file=sys.stderr)
+            return proc.returncode or 1
+        for line in said.splitlines():
+            if line.strip().startswith("SKILL-PLUS-PLUS-DECLINE:"):
+                print(f"\nNot changed: {line.split(':', 1)[1].strip()}", file=sys.stderr)
+                return 1
+        if skills.snapshot(folder) != files:
+            print("\nThe skill in the project changed while the agent ran, by you or by the "
+                  "agent writing there. Check `git status` there; nothing was proposed.",
+                  file=sys.stderr)
+            return 1
+        refused = skills.check_proposal(copy, base)
+        if refused:
+            print(f"\nNothing proposed: {refused}.", file=sys.stderr)
+            return 1
+        skills.collect_proposal(copy, current / "proposal")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    print()
+    for item in skills.diff_proposal(current, folder)["files"]:
+        print(f"{item['change']:8} {item['path']}")
+    print("\nProposed. Apply or discard it on the review page: open the skill on the Skills tab.")
     return 0
 
 
@@ -779,19 +921,14 @@ def cmd_fold_pending(args: argparse.Namespace) -> int:
 
 def cmd_web(args: argparse.Namespace) -> int:
     """Serve the ledger as a local page. Loopback only; there is no auth."""
-    from .config import default_skills_dir
     from .web import serve
 
     config = Config(args.root)
     config.ensure_dirs()
-    skills_dir = (Path(args.skills_dir).expanduser() if args.skills_dir
-                  else default_skills_dir())
-    httpd = serve(config, skills_dir, port=args.port,
-                  open_browser=not args.no_browser)
+    httpd = serve(config, port=args.port, open_browser=not args.no_browser)
     url = f"http://127.0.0.1:{httpd.server_port}/"
     print(f"serving  {url}")
     print(f"ledger   {config.root}")
-    print(f"skills   {skills_dir}")
     print("Ctrl-C to stop.")
     try:
         httpd.serve_forever()
@@ -1066,7 +1203,9 @@ def cmd_dictate(args: argparse.Namespace) -> int:
     config = Config(args.root)
     config.ensure_dirs()
     text = args.text if args.text else sys.stdin.read()
-    result = fold_dictation(config, text, args.title or "")
+    # The folder it runs in is the project: `/skill-plus-plus-new` runs it in
+    # the session's own.
+    result = fold_dictation(config, text, args.title or "", cwd=os.getcwd())
     if result["status"] == "empty":
         print("Nothing to work with — describe the workflow in a sentence or two.",
               file=sys.stderr)
@@ -1469,7 +1608,11 @@ def cmd_tier(args: argparse.Namespace) -> int:
     if not matches:
         print(f"No skill named '{args.name}'", file=sys.stderr)
         return 1
-    dest = move_tier(matches[0], args.tier, skills_dir, config)
+    try:
+        dest = move_tier(matches[0], args.tier, skills_dir, config)
+    except FileExistsError as exc:
+        print(f"Not moved: {exc}", file=sys.stderr)
+        return 1
     print(f"{args.name}: {matches[0].tier} → {args.tier}  ({dest})")
     return 0
 
@@ -1762,6 +1905,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=900)
     p.set_defaults(func=cmd_revise)
 
+    p = sub.add_parser("edit-skill",
+                       help="have your own agent edit a copy of a skill a project has "
+                            "installed; the review page shows the change to apply")
+    p.add_argument("folder", help="the skill's folder in <project>/.claude/skills/")
+    p.add_argument("--project", required=True, help="the project the skill is in")
+    p.add_argument("--instruction", required=True, help="what to change")
+    p.add_argument("--apply", action="store_true",
+                   help="actually invoke the agent; one model call")
+    p.add_argument("--cwd", help="run the agent from here")
+    p.add_argument("--timeout", type=int, default=900)
+    p.set_defaults(func=cmd_edit_skill)
+
     p = sub.add_parser("name",
                        help="give a candidate a task-shaped title and a "
                             "description of when it applies")
@@ -1810,7 +1965,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("web", help="browse the ledger in a local page")
     p.add_argument("--port", type=int, default=8765)
-    p.add_argument("--skills-dir")
     p.add_argument("--no-browser", action="store_true",
                    help="do not open a browser window")
     p.set_defaults(func=cmd_web)

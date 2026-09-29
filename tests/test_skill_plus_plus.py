@@ -245,6 +245,13 @@ def segment(steps, *args, **kwargs):
 
 class TempRoot(unittest.TestCase):
     def setUp(self) -> None:
+        # A test that starts an agent without stubbing one fails at once, rather
+        # than running `claude -p` on the developer's account. Same shape as the
+        # real command, so the prompt is still the third argument.
+        agent = mock.patch.dict(os.environ, {"SKILL_PLUS_PLUS_AGENT":
+                                             "skill-plus-plus-tests-have-no-agent -p {PROMPT}"})
+        agent.start()
+        self.addCleanup(agent.stop)
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.config = Config(self.root / "skill-plus-plus")
@@ -1105,10 +1112,16 @@ class TestDictation(TempRoot):
     EXAMPLE = ("I give you information, you search online about the facts "
                "-> give me in this format")
 
-    def dictate(self, text, title=""):
+    def dictate(self, text, title="", cwd="/w/app"):
         from skill_plus_plus.capture import fold_dictation
-        result = fold_dictation(self.config, text, title)
+        result = fold_dictation(self.config, text, title, cwd=cwd)
         return Ledger(self.config).get(result["id"]), result
+
+    def test_a_dictated_candidate_belongs_to_the_project_it_was_typed_in(self):
+        entry, _ = self.dictate(self.EXAMPLE)
+        self.assertEqual(entry.projects, ["/w/app"])
+        _, elsewhere = self.dictate(self.EXAMPLE, cwd="/w/site")
+        self.assertEqual(elsewhere["status"], "created", "another project, another candidate")
 
     def test_parses_into_ordered_steps(self):
         entry, _ = self.dictate(self.EXAMPLE)
@@ -1469,6 +1482,20 @@ class TestLifecycle(TempRoot):
             [s.tier for s in scan(hot, self.config, self.root) if s.name == "alpha"],
             ["cold"])
 
+    def test_moving_a_tier_never_replaces_a_folder_already_there(self):
+        """The cold and archive tiers are shared by every project, so another
+        project's `alpha` may already be there. It used to be deleted to make
+        room for this one."""
+        from skill_plus_plus.lifecycle import move_tier
+        hot = self.root / "skills"
+        self._write_skill(hot, "alpha", body="this project's\n")
+        theirs = self._write_skill(self.config.archive_dir, "alpha", body="another project's\n")
+        ours = [s for s in scan(hot, self.config, self.root) if s.tier == "hot"][0]
+        with self.assertRaises(FileExistsError):
+            move_tier(ours, "archived", hot, self.config)
+        self.assertIn("another project's", theirs.read_text())
+        self.assertTrue((hot / "alpha" / "SKILL.md").exists(), "nothing moved either")
+
     def test_staleness_detects_missing_reference(self):
         hot = self.root / "skills"
         path = self._write_skill(hot, "gamma", "Run `./scripts/gone.sh` to deploy.\n")
@@ -1504,6 +1531,21 @@ class TestInstall(unittest.TestCase):
         self.assertIn("existing.sh", json.dumps(merged["hooks"]["PostToolUse"]))
         self.assertEqual(len(merged["hooks"]["PostToolUse"]), 2)
         self.assertEqual(len(on_disk["hooks"]["PostToolUse"]), 1, "planning must not write")
+
+    def test_settings_that_cannot_be_parsed_raise_and_a_write_is_whole(self):
+        from skill_plus_plus.install import read_settings, write_settings
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".claude" / "settings.local.json"
+            self.assertEqual(read_settings(path), {}, "no file is no settings, not an error")
+            path.parent.mkdir()
+            for bad in ("{not json", "[1, 2]"):
+                path.write_text(bad)
+                with self.assertRaises(RuntimeError, msg=bad):
+                    read_settings(path)
+            write_settings(path, {"skillOverrides": {"deploy": "off"}})
+            self.assertEqual(read_settings(path), {"skillOverrides": {"deploy": "off"}})
+            self.assertEqual([p.name for p in path.parent.iterdir()], ["settings.local.json"],
+                             "no temporary file is left beside it")
 
     def test_bundle_matches_the_plugin_layout_desktop_uses(self):
         from skill_plus_plus.install import build_plugin_bundle
@@ -2754,7 +2796,9 @@ class TestDraftCommand(TempRoot):
         """A space inside --allowed-tools once split it into two broken args."""
         from skill_plus_plus.cli import cmd_draft
         seen = self._spy()
-        cmd_draft(self._args(apply=True))
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SKILL_PLUS_PLUS_AGENT")        # the real command, spied on
+            cmd_draft(self._args(apply=True))
         argv = seen["argv"]
         # One argv element carrying id and destination, both literal.
         prompt = next(a for a in argv if a.startswith("/skill-plus-plus-draft"))
@@ -3957,6 +4001,7 @@ class TestWeb(TempRoot):
         self.ledger = Ledger(self.config)
 
     def _save(self, eid, occurrences=3, **kw):
+        kw.setdefault("projects", [str(self.root / "repo")])
         entry = Entry(id=eid, title=f"work {eid}", occurrences=occurrences,
                       sessions=[f"s{n}" for n in range(occurrences)],
                       steps=[{"tool": "Bash", "input": {"command": "npm test"}}],
@@ -4090,25 +4135,25 @@ class TestWeb(TempRoot):
         from skill_plus_plus.web import accept, collect_state, decline, reinstate
         self._drafted("x")
         self.assertTrue(decline(self.config, "x")["ok"])
-        self.assertEqual(collect_state(self.config)["drafts"], [], "ignored: not under Drafts")
+        self.assertEqual(collect_state(self.config)["drafts"], [], "ignored: not on the Skills tab")
         self.assertTrue((self.config.root / "drafts" / "x" / "SKILL.md").exists(), "but kept")
         self.assertTrue(reinstate(self.config, "x")["ok"])
         self.assertEqual(self._rows()["x"]["state"], "undecided", "back to deciding")
         self.assertTrue(accept(self.config, "x")["ok"])
         self.assertEqual(self._rows()["x"]["state"], "drafted")
 
-    def test_an_installed_skill_is_uninstalled_before_it_is_ignored(self):
+    def test_an_installed_skill_is_removed_by_hand_before_it_is_ignored(self):
         """Otherwise the skill stays in its skills folder while the page calls
-        it ignored."""
+        it ignored. The page has no Uninstall: its folder is removed by hand."""
         from skill_plus_plus.ledger import STATUS_PROMOTED
-        from skill_plus_plus.web import decline, install_skill, uninstall_skill
-        self._in_repo("i")
-        self.assertTrue(install_skill(self.config, "i", "project")["ok"])
+        from skill_plus_plus.web import decline, install_skill
+        repo = self._in_repo("i")
+        self.assertTrue(install_skill(self.config, "i")["ok"])
         refused = decline(self.config, "i")
         self.assertFalse(refused["ok"])
-        self.assertIn("Uninstall", refused["error"])
+        self.assertIn("remove its folder", refused["error"])
         self.assertEqual(Ledger(self.config).get("i").status, STATUS_PROMOTED)
-        self.assertTrue(uninstall_skill(self.config, "i")["ok"])
+        shutil.rmtree(repo / ".claude" / "skills" / "add-eval-case")
         self.assertTrue(decline(self.config, "i")["ok"])
 
     def test_a_draft_being_written_cannot_be_ignored(self):
@@ -4261,7 +4306,8 @@ process.stdout.write(JSON.stringify(out));"""
         self.assertEqual(self._rows()["i"]["state"], "installed")
 
     def test_the_page_lists_each_project_with_its_counts(self):
-        """The switcher's menu: every project on the page, "No project" last."""
+        """The switcher's menu: every project on the page. An entry recorded
+        without a folder belongs to none, and is not on the page at all."""
         from skill_plus_plus.web import collect_state
         a, b = self.root / "repo-a", self.root / "repo-b"
         for repo in (a, b):
@@ -4269,13 +4315,13 @@ process.stdout.write(JSON.stringify(out));"""
         self._save("x", projects=[str(a)])
         self._save("y", projects=[str(a / "web")])          # a subfolder: still repo-a
         self._save("z", projects=[str(b)])
-        self._save("w")                                     # recorded without a folder
+        self._save("w", projects=[])                        # recorded without a folder
         state = collect_state(self.config)
         self.assertEqual([(p["name"], p["candidates"]) for p in state["projects"]],
-                         [("repo-a", 2), ("repo-b", 1), ("No project", 1)])
+                         [("repo-a", 2), ("repo-b", 1)])
         rows = {r["id"]: r["projects"] for r in state["rows"]}
         self.assertEqual(rows["y"], [str(a)])
-        self.assertEqual(rows["w"], [""])
+        self.assertNotIn("w", rows)
 
     def test_a_draft_carries_its_project(self):
         from skill_plus_plus.web import collect_state
@@ -4291,26 +4337,26 @@ process.stdout.write(JSON.stringify(out));"""
 
     @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
     def test_the_page_filters_by_the_chosen_project(self):
-        """All projects, one project, and the entries with none."""
+        """One project at a time; an entry seen in several is in each."""
         import json, subprocess
         from skill_plus_plus.web import PAGE
         script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
         state = {"rows": [{"id": "a", "projects": ["/r/a"]}, {"id": "b", "projects": ["/r/b"]},
-                          {"id": "n", "projects": [""]}, {"id": "old", "projects": ["/r/a", "/r/b"]}],
+                          {"id": "old", "projects": ["/r/a", "/r/b"]}],
                  "drafts": [{"id": "a", "projects": ["/r/a"]}], "projects": []}
         program = script + f"""
 ALL = {json.dumps(state)};
-const shown = p => {{ project = p; applyProject(); return S.rows.map(r => r.id).join(","); }};
-process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.drafts.length]));"""
+const shown = p => {{ project = p; applyProject(); return [S.rows.map(r => r.id).join(","), S.drafts.length]; }};
+process.stdout.write(JSON.stringify([shown("/r/a"), shown("/r/b"), shown(null)]));"""
         out = json.loads(subprocess.run(["node", "-e", program], capture_output=True,
                                         text=True, check=True).stdout)
-        self.assertEqual(out, ["a,b,n,old", "a,old", "n", 0])
+        self.assertEqual(out, [["a,old", 1], ["b,old", 0], ["", 0]])
 
     @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
-    def test_the_project_menu_shows_even_with_one_project(self):
+    def test_the_project_menu_lists_each_project_and_never_all_of_them(self):
         """Candidates and skills belong to one project each, and the menu is
-        where the page says which. Hidden with a single project, the page gave
-        no sign that it was scoped at all."""
+        where the page says which: one is always chosen, even when it is the
+        only one. There is no page for all projects at once."""
         import json, subprocess
         from skill_plus_plus.web import PAGE
         script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
@@ -4319,20 +4365,38 @@ process.stdout.write(JSON.stringify([shown(null), shown("/r/a"), shown(""), S.dr
         program = script + f"""
 const sel = {{hidden: true, innerHTML: "", value: ""}};
 globalThis.document = {{getElementById: () => sel}};
-const menu = list => {{ ALL = {{rows: [], drafts: [], projects: list}}; project = null; renderProjects();
-  return [sel.hidden, (sel.innerHTML.match(/<option/g) || []).length, sel.value]; }};
-process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(two)}), menu([])]));"""
+const menu = (list, chosen = null, here = "") => {{
+  ALL = {{rows: [], drafts: [], projects: list, here}}; project = chosen;
+  pickProject(); renderProjects();
+  return [sel.hidden, (sel.innerHTML.match(/<option/g) || []).length, sel.value, sel.innerHTML]; }};
+process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(two)}),
+  menu({json.dumps(two)}, "/r/app"), menu({json.dumps(two)}, "/r/gone", "/r/app"),
+  menu({json.dumps(two)}, null, "/r/elsewhere"), menu([])]));"""
         out = json.loads(subprocess.run(["node", "-e", program], capture_output=True,
                                         text=True, check=True).stdout)
-        self.assertEqual(out[0], [False, 1, "/r/decks"], "one project: shown, by its name")
-        self.assertEqual(out[1], [False, 3, "*"], "several: all of them, and each")
-        self.assertTrue(out[2][0], "no project at all: nothing to show")
+        self.assertEqual(out[0][:3], [False, 1, "/r/decks"], "one project: shown, and chosen")
+        self.assertEqual(out[1][:3], [False, 2, "/r/decks"], "several: each, the first chosen")
+        self.assertNotIn("All projects", out[1][3])
+        self.assertEqual(out[2][2], "/r/app", "the one chosen last")
+        self.assertEqual(out[3][2], "/r/app", "one gone since: the one the page was started in")
+        self.assertEqual(out[4][2], "/r/decks", "started outside every project: the first")
+        self.assertTrue(out[5][0], "no project at all: nothing to show")
 
-    def _in_repo(self, eid):
+    def test_the_page_opens_on_the_project_the_server_was_started_in(self):
+        from skill_plus_plus.web import _started_in
+        repo = self.root / "app"
+        (repo / ".git").mkdir(parents=True)
+        (repo / "src").mkdir()
+        cwd = os.getcwd()
+        os.chdir(repo / "src")
+        self.addCleanup(os.chdir, cwd)
+        self.assertEqual(os.path.realpath(_started_in()), os.path.realpath(repo))
+
+    def _in_repo(self, eid, name="add-eval-case", extra=None):
         """A finished draft whose candidate belongs to a scratch repo."""
         repo = self.root / "repo"
         (repo / ".git").mkdir(parents=True, exist_ok=True)
-        self._drafted(eid, extra={"references/notes.md": "n"})
+        self._drafted(eid, name=name, extra={"references/notes.md": "n", **(extra or {})})
         entry = self.ledger.get(eid)
         entry.projects = [str(repo)]
         self.ledger.save(entry)
@@ -4341,29 +4405,35 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
     def test_install_puts_the_skill_in_its_projects_skills_folder(self):
         from skill_plus_plus.web import collect_state, install_skill
         repo = self._in_repo("x")
-        result = install_skill(self.config, "x", "project")
+        result = install_skill(self.config, "x")
         skill = repo / ".claude" / "skills" / "add-eval-case"
         self.assertTrue(result["ok"], result)
         self.assertTrue((skill / "SKILL.md").exists())
         self.assertTrue((skill / "references" / "notes.md").exists())
         self.assertFalse((skill / "installed.json").exists(), "bookkeeping is not the skill")
-        draft = collect_state(self.config)["drafts"][0]
-        self.assertEqual((draft["installed"], draft["installed_target"]), (str(skill), "project"))
+        self.assertFalse((self.config.root / "drafts" / "x" / "installed.json").exists(),
+                         "and none is kept: the folder is the skill now")
+        self.assertEqual(collect_state(self.config)["drafts"][0]["installed"], str(skill))
         self.assertEqual(self.ledger.get("x").skill_path, str(skill / "SKILL.md"))
 
-    def test_install_just_for_me_uses_the_personal_folder(self):
-        from skill_plus_plus.web import install_skill
-        self._in_repo("x")
-        personal = self.root / "home-skills"
-        self.assertTrue(install_skill(self.config, "x", "personal", personal)["ok"])
-        self.assertTrue((personal / "add-eval-case" / "SKILL.md").exists())
+    def test_a_skill_folder_removed_by_hand_puts_its_draft_back_to_review(self):
+        """With no Uninstall on the page, removing the folder is how a skill
+        goes: its draft comes back to review instead of going with it."""
+        from skill_plus_plus.web import collect_state, install_skill
+        repo = self._in_repo("x")
+        install_skill(self.config, "x")
+        skill = repo / ".claude" / "skills" / "add-eval-case"
+        shutil.rmtree(skill)
+        self.assertEqual(collect_state(self.config)["drafts"][0]["installed"], "")
+        self.assertTrue(install_skill(self.config, "x")["ok"], "and Install puts it back")
+        self.assertTrue((skill / "SKILL.md").exists())
 
     def test_a_draft_with_open_questions_is_not_installed(self):
         from skill_plus_plus.web import install_skill
         repo = self._in_repo("x")
         skill = self.config.root / "drafts" / "x" / "SKILL.md"
         skill.write_text(skill.read_text() + "\n## Open questions\n\n- Which topics?\n")
-        result = install_skill(self.config, "x", "project")
+        result = install_skill(self.config, "x")
         self.assertFalse(result["ok"])
         self.assertFalse((repo / ".claude").exists())
 
@@ -4373,64 +4443,46 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
         theirs = repo / ".claude" / "skills" / "add-eval-case"
         theirs.mkdir(parents=True)
         (theirs / "SKILL.md").write_text("someone else's")
-        self.assertFalse(install_skill(self.config, "x", "project")["ok"])
+        self.assertFalse(install_skill(self.config, "x")["ok"])
         self.assertEqual((theirs / "SKILL.md").read_text(), "someone else's")
 
-    def test_a_revision_reaches_the_installed_skill_through_update(self):
-        from skill_plus_plus.web import collect_state, install_skill
-        repo = self._in_repo("x")
-        install_skill(self.config, "x", "project")
+    def test_an_installed_draft_is_not_revised(self):
+        """Its folder is the skill now: a revision of the draft would reach
+        nothing. The message says how to change the skill instead."""
+        import contextlib, io
+        from skill_plus_plus.cli import main
+        from skill_plus_plus.web import install_skill
+        self._in_repo("x")
+        install_skill(self.config, "x")
         draft = self.config.root / "drafts" / "x" / "SKILL.md"
-        draft.write_text(draft.read_text() + "\n## Traps\n")
-        self.assertTrue(collect_state(self.config)["drafts"][0]["install_stale"])
-        self.assertTrue(install_skill(self.config, "x", "project")["ok"])
-        installed = repo / ".claude" / "skills" / "add-eval-case" / "SKILL.md"
-        self.assertIn("## Traps", installed.read_text())
-        self.assertFalse(collect_state(self.config)["drafts"][0]["install_stale"])
+        before = draft.read_text()
+        said = io.StringIO()
+        with contextlib.redirect_stderr(said):
+            code = main(["--root", str(self.config.root), "revise", "x",
+                         "--instruction=add a traps section", "--apply"])
+        self.assertEqual(code, 1)
+        self.assertIn("skill-plus-plus edit-skill add-eval-case", said.getvalue())
+        self.assertEqual(draft.read_text(), before)
 
-    def test_uninstall_removes_only_what_it_installed(self):
-        from skill_plus_plus.web import install_skill, uninstall_skill
-        repo = self._in_repo("x")
-        install_skill(self.config, "x", "project")
-        skill = repo / ".claude" / "skills" / "add-eval-case"
-        (skill / "mine.md").write_text("added by hand")
-        self.assertTrue(uninstall_skill(self.config, "x")["ok"])
-        self.assertFalse((skill / "SKILL.md").exists())
-        self.assertFalse((skill / "references").exists())
-        self.assertEqual((skill / "mine.md").read_text(), "added by hand")
-        self.assertEqual(self.ledger.get("x").skill_path, "")
-
-    def test_uninstall_leaves_no_empty_skills_folder_behind(self):
-        from skill_plus_plus.web import install_skill, uninstall_skill
-        repo = self._in_repo("x")
-        install_skill(self.config, "x", "project")
-        uninstall_skill(self.config, "x")
-        self.assertFalse((repo / ".claude" / "skills").exists())
-
-    def test_uninstall_leaves_a_skill_edited_after_install(self):
-        from skill_plus_plus.web import install_skill, uninstall_skill
-        repo = self._in_repo("x")
-        install_skill(self.config, "x", "project")
-        installed = repo / ".claude" / "skills" / "add-eval-case" / "SKILL.md"
-        installed.write_text(installed.read_text() + "\nmy own step\n")
-        self.assertFalse(uninstall_skill(self.config, "x")["ok"])
-        self.assertIn("my own step", installed.read_text())
-
-    def test_without_a_project_folder_it_installs_only_for_you(self):
+    def test_a_draft_without_a_project_is_not_on_the_page_and_not_installed(self):
         from skill_plus_plus.web import collect_state, install_skill
         self._drafted("x")
-        self.assertEqual(collect_state(self.config)["drafts"][0]["project_name"], "")
-        self.assertFalse(install_skill(self.config, "x", "project")["ok"])
+        entry = self.ledger.get("x")
+        entry.projects = []
+        self.ledger.save(entry)
+        self.assertEqual(collect_state(self.config)["drafts"], [])
+        self.assertFalse(install_skill(self.config, "x")["ok"])
 
     def test_an_install_request_cannot_choose_the_folder(self):
-        """The folder comes from the ledger; a path in the request is ignored,
-        and an unknown target is refused."""
+        """A request names a draft, looked up in the ledger, and the folder
+        comes from its entry's project. An id that is a path is no draft."""
         from skill_plus_plus.web import install_skill
         repo = self._in_repo("x")
         elsewhere = self.root / "elsewhere"
-        self.assertFalse(install_skill(self.config, "x", str(elsewhere))["ok"])
+        for eid in (str(elsewhere), "../x", "../../etc"):
+            self.assertFalse(install_skill(self.config, eid)["ok"], eid)
         self.assertFalse(elsewhere.exists())
-        self.assertTrue(install_skill(self.config, "x", "project")["ok"])
+        self.assertTrue(install_skill(self.config, "x")["ok"])
         self.assertTrue((repo / ".claude" / "skills" / "add-eval-case").exists())
 
     def test_loading_the_page_runs_nothing(self):
@@ -4480,42 +4532,17 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
         self.assertEqual([d["id"] for d in drafts], ["new", "old"])
         self.assertEqual(drafts[1]["drafted_at"], "1970-01-12T13:46:40+00:00")
 
-    def test_a_draft_downloads_as_a_folder_ready_for_the_skills_directory(self):
-        import io, zipfile
-        from skill_plus_plus.web import draft_zip
-        self._drafted("x", extra={"references/notes.md": "n"})
-        filename, data = draft_zip(self.config, "x")
-        self.assertEqual(filename, "add-eval-case.zip")
-        names = zipfile.ZipFile(io.BytesIO(data)).namelist()
-        self.assertEqual(sorted(names), ["add-eval-case/SKILL.md",
-                                         "add-eval-case/references/notes.md"])
-
-    def test_a_downloaded_draft_is_listed_as_downloaded_until_it_changes(self):
-        import io, zipfile
-        from skill_plus_plus.web import collect_state, draft_zip, record_download
-        self._drafted("x")
-        self.assertEqual(collect_state(self.config)["drafts"][0]["downloaded_at"], "")
-        record_download(self.config, "x")
-        self.assertNotEqual(collect_state(self.config)["drafts"][0]["downloaded_at"], "")
-        _, data = draft_zip(self.config, "x")
-        self.assertEqual(zipfile.ZipFile(io.BytesIO(data)).namelist(),
-                         ["add-eval-case/SKILL.md"], "the record is not part of the skill")
-        skill = self.config.root / "drafts" / "x" / "SKILL.md"
-        skill.write_text(skill.read_text() + "\n## Traps\n")
-        self.assertEqual(collect_state(self.config)["drafts"][0]["downloaded_at"], "",
-                         "a revised draft is back to review")
-
-    def test_only_a_finished_draft_of_a_known_entry_downloads(self):
-        from skill_plus_plus.web import draft_zip
+    def test_only_a_finished_draft_installs(self):
+        from skill_plus_plus.web import install_skill
         self._save("u")
-        self.assertIsNone(draft_zip(self.config, "u"))
-        self.assertIsNone(draft_zip(self.config, "../../etc"))
+        self.assertFalse(install_skill(self.config, "u")["ok"])
 
-    def test_an_unsafe_skill_name_falls_back_to_the_id(self):
-        from skill_plus_plus.web import draft_zip
-        self._drafted("x", name="../escape")
-        filename, _ = draft_zip(self.config, "x")
-        self.assertEqual(filename, "x.zip")
+    def test_an_unsafe_skill_name_installs_under_the_id(self):
+        from skill_plus_plus.web import install_skill
+        repo = self._in_repo("x", name="../escape")
+        self.assertTrue(install_skill(self.config, "x")["ok"])
+        self.assertTrue((repo / ".claude" / "skills" / "x" / "SKILL.md").exists())
+        self.assertFalse((repo / ".claude" / "escape").exists())
 
     @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
     def test_a_draft_renders_as_markdown_and_never_as_raw_html(self):
@@ -4548,22 +4575,35 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
         self._drafted("x")
         self.assertFalse(revise(self.config, "x", "   ")["ok"])
 
-    def test_revise_changes_the_draft_and_keeps_history_out_of_the_download(self):
-        import io, zipfile
-        from skill_plus_plus.web import collect_state, draft_zip, revise
+    def test_revise_changes_the_draft_and_keeps_history_out_of_the_install(self):
+        from skill_plus_plus.web import collect_state, install_skill, revise
         self._agent("d = pathlib.Path(os.environ['SKILL_PLUS_PLUS_DRAFT_DIR']) / 'SKILL.md'\n"
                     "d.write_text(d.read_text() + '## Traps\\n')\n")
-        self._drafted("x")
+        repo = self._in_repo("x")
         self.assertTrue(revise(self.config, "x", "add a traps section")["ok"])
         self._wait_for_draft("x")
         draft = collect_state(self.config)["drafts"][0]
         self.assertIn("## Traps", draft["body"])
         self.assertFalse(draft["revising"])
         self.assertEqual(draft["message"], "")
-        self.assertEqual(draft["files"], ["SKILL.md"])
-        _, data = draft_zip(self.config, "x")
-        self.assertEqual(zipfile.ZipFile(io.BytesIO(data)).namelist(),
-                         ["add-eval-case/SKILL.md"])
+        self.assertEqual(draft["files"], ["SKILL.md", "references/notes.md"])
+        self.assertTrue(install_skill(self.config, "x")["ok"])
+        skill = repo / ".claude" / "skills" / "add-eval-case"
+        self.assertEqual(sorted(p.relative_to(skill).as_posix() for p in skill.rglob("*") if p.is_file()),
+                         ["SKILL.md", "references/notes.md"])
+
+    def test_an_instruction_that_looks_like_an_option_still_reaches_the_agent(self):
+        """Passed as `--instruction` and the text as two arguments, `--shorter`
+        was read by argparse as an unknown option and the revision refused."""
+        from skill_plus_plus.web import collect_state, revise
+        self._agent("d = pathlib.Path(os.environ['SKILL_PLUS_PLUS_DRAFT_DIR']) / 'SKILL.md'\n"
+                    "d.write_text(d.read_text() + '## Traps\\n')\n")
+        self._drafted("x")
+        self.assertTrue(revise(self.config, "x", "--shorter")["ok"])
+        self._wait_for_draft("x")
+        draft = collect_state(self.config)["drafts"][0]
+        self.assertEqual(draft["message"], "")
+        self.assertIn("## Traps", draft["body"])
 
     def test_a_failed_revision_keeps_the_draft_and_says_why(self):
         from skill_plus_plus.web import collect_state, revise
@@ -4596,14 +4636,14 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
     def test_the_scaffolds_old_heading_is_read_as_questions_too(self):
         """`## Known gaps` was the scaffold's name for the same section and
         nothing read it, so two real drafts carried four unanswered questions,
-        showed no answer fields and downloaded freely."""
-        from skill_plus_plus.web import draft_zip, split_open_questions
+        showed no answer fields and could be shipped as they were."""
+        from skill_plus_plus.web import install_skill, split_open_questions
         questions, rest = split_open_questions(self.GAPS)
         self.assertEqual([q["question"] for q in questions], ["Is it always `x`?"])
         self.assertNotIn("Known gaps", rest)
-        self._drafted("x", extra={"SKILL.md": self.GAPS})
-        self.assertIsNone(draft_zip(self.config, "x"),
-                          "a draft with unanswered gaps downloaded")
+        self._in_repo("x", extra={"SKILL.md": self.GAPS})
+        self.assertFalse(install_skill(self.config, "x")["ok"],
+                         "a draft with unanswered gaps installed")
 
     def test_open_questions_are_read_out_of_the_draft(self):
         from skill_plus_plus.web import split_open_questions
@@ -4631,18 +4671,17 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
             {"question": "Which runner?", "options": []}])
         self.assertNotIn("Clamp", rest)
 
-    def test_a_draft_with_open_questions_shows_them_and_will_not_download(self):
-        from skill_plus_plus.web import collect_state, draft_zip
+    def test_a_draft_with_open_questions_shows_them(self):
+        from skill_plus_plus.web import collect_state
         self._drafted("x")
         skill = self.config.root / "drafts" / "x" / "SKILL.md"
         skill.write_text(skill.read_text() + "\n" + self.QUESTIONS)
         draft = collect_state(self.config)["drafts"][0]
         self.assertEqual(len(draft["questions"]), 2)
         self.assertNotIn("Open questions", draft["body"])
-        self.assertIsNone(draft_zip(self.config, "x"))
 
-    def test_answers_revise_the_draft_until_it_downloads(self):
-        from skill_plus_plus.web import answer_questions, collect_state, draft_zip
+    def test_answers_revise_the_draft_until_it_installs(self):
+        from skill_plus_plus.web import answer_questions, collect_state, install_skill
         self._agent(
             "import re\n"
             "d = pathlib.Path(os.environ['SKILL_PLUS_PLUS_DRAFT_DIR']) / 'SKILL.md'\n"
@@ -4650,7 +4689,7 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
             "assert 'A: always x' in prompt, prompt\n"
             "t = re.sub(r'## Open questions[\\s\\S]*?(?=\\n---)', '', d.read_text())\n"
             "d.write_text(t.replace('# Body', '# Body\\n\\nIt is always x.'))\n")
-        self._drafted("x")
+        self._in_repo("x")
         skill = self.config.root / "drafts" / "x" / "SKILL.md"
         skill.write_text(skill.read_text() + "\n" + self.QUESTIONS)
         self.assertFalse(answer_questions(self.config, "x", [
@@ -4662,7 +4701,7 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
         draft = collect_state(self.config)["drafts"][0]
         self.assertEqual(draft["questions"], [], draft["message"])
         self.assertIn("It is always x.", draft["body"])
-        self.assertIsNotNone(draft_zip(self.config, "x"))
+        self.assertTrue(install_skill(self.config, "x")["ok"])
 
     def test_the_outline_uses_the_agents_own_step_descriptions(self):
         from skill_plus_plus.web import step_outline
@@ -4748,7 +4787,8 @@ process.stdout.write(JSON.stringify([menu({json.dumps(one)}), menu({json.dumps(t
         button, because both states were called "declined"."""
         from skill_plus_plus.web import PAGE
         for state in ("collecting", "undecided", "accepted", "creating", "drafted", "revising",
-                      "installed", "failed", "declined", "dismissed"):
+                      "installed", "failed", "declined", "dismissed",
+                      "editing", "edit-ready", "edit-failed"):
             self.assertIn(f'"{state}"', PAGE)
 
     def test_the_page_carries_no_external_references(self):
@@ -7608,3 +7648,719 @@ class TestMemoryGuardAcrossProcesses(TempRoot):
                                   asked.append(payload["model"]) or {}):
             memory.unload(self.config, ["gemma4:e4b"], linger=20.0)
         self.assertEqual(asked, ["gemma4:e4b", "gemma4:e4b"])
+
+
+class ProjectSkillsCase(TempRoot):
+    """Scratch projects with skills in them, for the Skills tab tests."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.ledger = Ledger(self.config)
+        self.home = self.root / "home"
+        home = mock.patch("pathlib.Path.home", return_value=self.home)
+        home.start()
+        self.addCleanup(home.stop)
+        from skill_plus_plus import web
+        web._undo.clear()                         # one per server, and each test is one
+        self.addCleanup(web._undo.clear)
+        self.repo = self._project("repo")
+
+    def _project(self, name, eid=None):
+        repo = self.root / name
+        (repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
+        self.ledger.save(Entry(id=eid or f"e-{name}", title=f"work in {name}", occurrences=3,
+                               sessions=["s0", "s1", "s2"],
+                               steps=[{"tool": "Bash", "input": {"command": "npm test"}}],
+                               projects=[str(repo)]))
+        return repo
+
+    def _skill(self, folder, name="", description="Use when testing.", files=None, repo=None,
+               metadata=""):
+        root = (repo or self.repo) / ".claude" / "skills" / folder
+        root.mkdir(parents=True, exist_ok=True)
+        head = f"name: {name or folder}\n" if name is not None else ""
+        (root / "SKILL.md").write_text(
+            f"---\n{head}description: \"{description}\"\n{metadata}---\n# Steps\n")
+        for rel, data in (files or {}).items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_bytes(data if isinstance(data, bytes) else data.encode())
+        return root
+
+    def _gallery(self, repo=None):
+        from skill_plus_plus.web import collect_state
+        galleries = {g["project"]: g for g in collect_state(self.config)["skills"]}
+        return galleries[str(repo or self.repo)]
+
+    def _cards(self, repo=None):
+        return {c["name"]: c for c in self._gallery(repo)["skills"]}
+
+    def _drafted_and_installed(self, eid="x", name="add-eval-case"):
+        from skill_plus_plus.ledger import STATUS_PROMOTED
+        from skill_plus_plus.web import _write_status, install_skill
+        entry = self.ledger.get(f"e-{self.repo.name}")
+        self.ledger.save(Entry(id=eid, title="add a case", occurrences=3, status=STATUS_PROMOTED,
+                               sessions=["s0", "s1", "s2"], steps=entry.steps,
+                               projects=[str(self.repo)]))
+        folder = self.config.root / "drafts" / eid
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: \"Use when adding a case.\"\n---\n# Body\n")
+        _write_status(self.config, eid, state="ready")
+        self.assertTrue(install_skill(self.config, eid)["ok"])
+        return self.repo / ".claude" / "skills" / name
+
+    def _tree(self, folder):
+        return {p.relative_to(folder).as_posix(): p.read_bytes()
+                for p in sorted(folder.rglob("*")) if p.is_file()}
+
+    def _agent(self, body):
+        import shlex
+        script = self.root / "agent.py"
+        script.write_text("import os, pathlib, sys\n"
+                          "copy = pathlib.Path(os.environ['SKILL_PLUS_PLUS_EDIT_DIR'])\n" + body,
+                          encoding="utf-8")
+        agent = mock.patch.dict(os.environ, {"SKILL_PLUS_PLUS_AGENT": (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{PROMPT}}")})
+        agent.start()
+        self.addCleanup(agent.stop)
+
+    ADD_STEP = ("md = copy / 'SKILL.md'\n"
+                "md.write_text(md.read_text() + '2. Run the tests.\\n')\n")
+
+
+
+class TestProjectSkills(ProjectSkillsCase):
+    """The Skills tab's galleries: every skill a project has in
+    `.claude/skills/`, whoever made it, and what the page does with one
+    without an agent: show its SKILL.md, turn it off or on for this user."""
+
+    def test_every_folder_with_a_skill_md_is_listed_whoever_made_it(self):
+        self._skill("deploy", files={"scripts/run.sh": "#!/bin/sh\necho hi\n"})
+        self._skill("made", metadata="metadata:\n  source: \"skill-plus-plus\"\n")
+        (self.repo / ".claude" / "skills" / "notes").mkdir()          # no SKILL.md
+        self._skill(".hidden")
+        cards = self._cards()
+        self.assertEqual(list(cards), ["deploy", "made"])
+        self.assertEqual(cards["deploy"], {
+            "name": "deploy", "description": "Use when testing.", "edit_block": "", "edit": {}},
+            "a card is the skill: no path, file list, size or usage")
+
+    def test_a_description_written_as_a_yaml_block_reads_as_one_line(self):
+        root = self._skill("deploy")
+        (root / "SKILL.md").write_text("---\nname: deploy\ndescription: >\n  Use when shipping\n"
+                                       "  to production.\n---\n# Steps\n")
+        self.assertEqual(self._cards()["deploy"]["description"], "Use when shipping to production.")
+
+    def test_an_opened_skill_shows_its_skill_md_and_never_reads_through_a_link(self):
+        from skill_plus_plus import skills
+        from skill_plus_plus.web import read_project_skill
+        (self.root / "secret.txt").write_text("TOKEN-123")
+        root = self._skill("deploy", files={"scripts/run.sh": "echo hi\n", ".env": "HIDDEN=1"})
+        read = read_project_skill(self.config, str(self.repo), "deploy")
+        self.assertEqual((read["ok"], read["name"], read["truncated"]), (True, "deploy", False))
+        self.assertIn("# Steps", read["text"])
+        self.assertNotIn("echo hi", json.dumps(read), "SKILL.md only")
+        (root / "SKILL.md").write_text("x" * 1500)
+        with mock.patch.object(skills, "READ_CAP", 1000):
+            read = read_project_skill(self.config, str(self.repo), "deploy")
+        self.assertEqual((read["truncated"], len(read["text"])), (True, 1000))
+        (root / "SKILL.md").unlink()
+        (root / "SKILL.md").symlink_to(self.root / "secret.txt")
+        read = read_project_skill(self.config, str(self.repo), "deploy")
+        self.assertIsNone(read["text"])
+        self.assertNotIn("TOKEN-123", json.dumps(read))
+
+    def test_a_skill_request_cannot_choose_the_folder(self):
+        from skill_plus_plus.web import read_project_skill
+        self._skill("deploy")
+        (self.root / "elsewhere" / ".claude" / "skills" / "deploy").mkdir(parents=True)
+        (self.root / "elsewhere" / ".claude" / "skills" / "deploy" / "SKILL.md").write_text("x")
+        for project, name in ((str(self.root / "elsewhere"), "deploy"), (str(self.repo), "../deploy"),
+                              (str(self.repo), "deploy/../../x"), (str(self.repo), ""),
+                              (str(self.repo), "missing")):
+            self.assertFalse(read_project_skill(self.config, project, name)["ok"], (project, name))
+
+    def test_the_project_key_is_stable_safe_and_tells_same_named_projects_apart(self):
+        from skill_plus_plus.skills import project_key
+        self.assertEqual(project_key("/a/app"), project_key("/a/app/"))
+        self.assertNotEqual(project_key("/a/app"), project_key("/b/app"))
+        for path in ("/a/app", "/x/.hidden", "/tmp/my repo!", "/"):
+            self.assertRegex(project_key(path), r"\A[A-Za-z0-9_][A-Za-z0-9._-]*\Z", path)
+
+    def test_a_linked_skill_folder_is_listed_but_not_edited(self):
+        shared = self.root / "shared" / "deploy"
+        shared.mkdir(parents=True)
+        (shared / "SKILL.md").write_text("---\nname: deploy\ndescription: \"shared\"\n---\n")
+        (self.repo / ".claude" / "skills").mkdir(parents=True)
+        (self.repo / ".claude" / "skills" / "deploy").symlink_to(shared)
+        card = self._cards()["deploy"]
+        self.assertEqual(card["description"], "shared")
+        self.assertIn("link", card["edit_block"])
+
+    def test_a_project_folder_that_is_gone_lists_no_skills(self):
+        self._skill("deploy")
+        shutil.rmtree(self.repo)
+        gallery = self._gallery()
+        self.assertEqual((gallery["exists"], gallery["skills"]), (False, []))
+
+    def test_loading_the_page_with_project_skills_runs_nothing(self):
+        import subprocess
+        self._skill("deploy", files={"scripts/run.sh": "echo\n"})
+
+        def refuse(*a, **k):
+            raise AssertionError("loading the page ran a command")
+        with mock.patch.object(subprocess, "run", refuse), \
+                mock.patch.object(subprocess, "Popen", refuse):
+            self.assertIn("deploy", self._cards())
+
+
+class TestEditSkillCommand(TempRoot):
+    """`skill-plus-plus edit-skill`: the agent edits a copy of a skill a project
+    has installed, and what it made is kept as a proposal. The project is never
+    written.
+
+    No agent is launched: `subprocess.run` is replaced by a function that edits
+    the copy, through SKILL_PLUS_PLUS_EDIT_DIR, the way an agent would.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        import argparse
+        self.argparse = argparse
+        self.repo = self.root / "repo"
+        self.skill = self.repo / ".claude" / "skills" / "deploy"
+        (self.skill / "scripts").mkdir(parents=True)
+        (self.skill / "SKILL.md").write_text(
+            "---\nname: deploy\ndescription: \"Use when shipping.\"\n---\n# Steps\n1. Build.\n")
+        (self.skill / "scripts" / "run.sh").write_text("#!/bin/sh\necho ship\n")
+        self.before = self._tree()
+
+    def _tree(self):
+        return {p.relative_to(self.skill).as_posix(): p.read_bytes()
+                for p in sorted(self.skill.rglob("*")) if p.is_file()}
+
+    def _args(self, **kw):
+        base = dict(root=self.config.root, folder="deploy", project=str(self.repo),
+                    instruction="add a step that runs the tests", apply=True,
+                    cwd=None, timeout=900)
+        base.update(kw)
+        return self.argparse.Namespace(**base)
+
+    def _agent(self, edit=None, exit_code=0, say=""):
+        import subprocess
+        seen = {}
+
+        def fake(argv, **kw):
+            seen["argv"], seen["kw"] = argv, kw
+            if edit:
+                edit(Path(kw["env"]["SKILL_PLUS_PLUS_EDIT_DIR"]))
+            return subprocess.CompletedProcess(argv, exit_code, stdout=say, stderr="")
+        patcher = mock.patch.object(subprocess, "run", fake)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return seen
+
+    def _current(self):
+        from skill_plus_plus.skills import edit_dir, project_place
+        return edit_dir(self.config, project_place(str(self.repo)), "deploy")
+
+    @staticmethod
+    def _add_step(copy):
+        md = copy / "SKILL.md"
+        md.write_text(md.read_text() + "2. Run the tests.\n")
+
+    def test_a_dry_run_launches_nothing_and_copies_nothing(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        seen = self._agent()
+        self.assertEqual(cmd_edit_skill(self._args(apply=False)), 0)
+        self.assertNotIn("argv", seen)
+        self.assertFalse(self._current().exists())
+
+    def test_the_agent_edits_a_copy_and_the_skill_is_untouched_until_applied(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        seen = self._agent(edit=self._add_step)
+        self.assertEqual(cmd_edit_skill(self._args()), 0)
+        self.assertEqual(self._tree(), self.before, "the project is never written")
+        copy = Path(seen["kw"]["env"]["SKILL_PLUS_PLUS_EDIT_DIR"])
+        self.assertNotIn(str(self.repo), str(copy))
+        self.assertIn(str(copy), seen["argv"][2])
+        self.assertIn("add a step that runs the tests", seen["argv"][2])
+        self.assertIn("Leave `name: deploy` exactly as it is", seen["argv"][2])
+        self.assertIn("2. Run the tests.", (self._current() / "proposal" / "SKILL.md").read_text())
+        base = json.loads((self._current() / "base.json").read_text())
+        self.assertEqual(set(base["files"]), {"SKILL.md", "scripts/run.sh"})
+
+    def test_an_instruction_that_looks_like_an_option_still_arrives(self):
+        from skill_plus_plus.cli import main
+        seen = self._agent(edit=self._add_step)
+        self.assertEqual(main(["--root", str(self.config.root), "edit-skill", "deploy",
+                               f"--project={self.repo}", "--instruction=--shorter",
+                               "--apply"]), 0)
+        self.assertIn("--shorter", seen["argv"][2])
+
+    def test_no_change_is_not_a_proposal(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        self._agent(edit=None)
+        self.assertEqual(cmd_edit_skill(self._args()), 1)
+        self.assertFalse((self._current() / "proposal").exists())
+
+    def test_a_stated_decline_leaves_no_proposal(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        self._agent(edit=self._add_step, say="SKILL-PLUS-PLUS-DECLINE: needs the CI config\n")
+        self.assertEqual(cmd_edit_skill(self._args()), 1)
+        self.assertFalse((self._current() / "proposal").exists())
+
+    def test_a_proposal_that_renames_the_skill_is_refused(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+
+        def rename(copy):
+            md = copy / "SKILL.md"
+            md.write_text(md.read_text().replace("name: deploy", "name: ship"))
+        self._agent(edit=rename)
+        self.assertEqual(cmd_edit_skill(self._args()), 1)
+        self.assertFalse((self._current() / "proposal").exists())
+
+    def test_a_failed_run_leaves_no_proposal_and_keeps_what_the_agent_said(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        self._agent(edit=self._add_step, exit_code=2, say="not logged in\n")
+        self.assertEqual(cmd_edit_skill(self._args()), 2)
+        self.assertFalse((self._current() / "proposal").exists())
+        self.assertIn("not logged in", (self._current() / "agent.log").read_text())
+
+    def test_a_linked_skill_is_not_edited(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        shared = self.root / "shared" / "deploy"
+        shared.parent.mkdir()
+        self.skill.rename(shared)
+        self.skill.symlink_to(shared)
+        seen = self._agent(edit=self._add_step)
+        self.assertEqual(cmd_edit_skill(self._args()), 1)
+        self.assertNotIn("argv", seen)
+
+    def test_the_workspace_is_removed_after_the_run(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+        seen = self._agent(edit=self._add_step)
+        cmd_edit_skill(self._args())
+        self.assertFalse(Path(seen["kw"]["env"]["SKILL_PLUS_PLUS_EDIT_DIR"]).parent.exists())
+
+    def test_an_agent_that_writes_into_the_project_is_reported(self):
+        from skill_plus_plus.cli import cmd_edit_skill
+
+        def into_the_project(copy):
+            self._add_step(copy)
+            (self.skill / "SKILL.md").write_text("changed where it should not be\n")
+        self._agent(edit=into_the_project)
+        self.assertEqual(cmd_edit_skill(self._args()), 1)
+        self.assertFalse((self._current() / "proposal").exists())
+
+
+class TestProjectSkillEdits(ProjectSkillsCase):
+    """Edit on the Skills tab, end to end: the page starts
+    `skill-plus-plus edit-skill` in the background, the agent (a stub script)
+    edits a copy, and the change waits as a diff until Apply or Discard."""
+
+    def _edit(self, name="deploy", instruction="add a step that runs the tests"):
+        from skill_plus_plus import web
+        from skill_plus_plus.skills import project_key
+        done = web.edit_project_skill(self.config, str(self.repo), name, instruction)
+        job = web._jobs.get(f"edit:{project_key(str(self.repo))}/{name}")
+        if job:
+            job.join(timeout=60)
+        return done
+
+    def _card(self, name="deploy"):
+        return self._cards()[name]
+
+    def test_an_edit_is_proposed_in_the_background_and_shown_as_a_diff(self):
+        from skill_plus_plus.web import proposal_project_skill
+        root = self._skill("deploy")
+        before = self._tree(root)
+        self._agent(self.ADD_STEP)
+        self.assertTrue(self._edit()["ok"])
+        self.assertEqual(self._card()["edit"]["state"], "edit-ready")
+        self.assertEqual(self._tree(root), before, "nothing in the project changed")
+        shown = proposal_project_skill(self.config, str(self.repo), "deploy")
+        [changed] = shown["files"]
+        self.assertEqual((changed["path"], changed["change"], changed["added"]),
+                         ("SKILL.md", "changed", 1))
+        self.assertIn("+2. Run the tests.", changed["diff"])
+        self.assertFalse(shown["stale"])
+
+    def test_apply_writes_the_proposal_and_undo_puts_the_skill_back(self):
+        from skill_plus_plus.skills import edit_root, project_place
+        from skill_plus_plus.web import apply_project_skill_edit, undo_project_skill_edit
+        root = self._skill("deploy", files={"old.md": "gone soon\n"})
+        before = self._tree(root)
+        self._agent(self.ADD_STEP + "(copy / 'old.md').unlink()\n"
+                    "(copy / 'new.md').write_text('added\\n')\n")
+        self._edit()
+        done = apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(sorted(done["changed"]), ["SKILL.md", "new.md", "old.md"])
+        self.assertIn("2. Run the tests.", (root / "SKILL.md").read_text())
+        self.assertEqual(sorted(self._tree(root)), ["SKILL.md", "new.md"])
+        self.assertEqual(self._card()["edit"], {})
+        undone = undo_project_skill_edit(self.config, str(self.repo), "deploy", done["undo"])
+        self.assertTrue(undone["ok"], undone)
+        self.assertEqual(self._tree(root), before)
+        again = undo_project_skill_edit(self.config, str(self.repo), "deploy", done["undo"])
+        self.assertIn("can't be undone any more", again["error"])
+        self.assertFalse(edit_root(self.config, project_place(str(self.repo)), "deploy").exists(),
+                         "nothing of the edit is kept once it is undone")
+
+    def test_only_the_last_apply_can_be_undone_and_only_with_its_token(self):
+        from skill_plus_plus import web
+        from skill_plus_plus.skills import project_place, undo_dir
+        self._skill("deploy")
+        self._skill("notes")
+        self._agent(self.ADD_STEP)
+        self._edit("deploy")
+        first = web.apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        self._edit("notes")
+        second = web.apply_project_skill_edit(self.config, str(self.repo), "notes")
+        self.assertFalse(web.undo_project_skill_edit(self.config, str(self.repo), "deploy",
+                                                     first["undo"])["ok"], "another Apply came after it")
+        self.assertFalse(undo_dir(self.config, project_place(str(self.repo)), "deploy").exists(),
+                         "and what it kept is gone")
+        for token in ("", "guess", first["undo"]):
+            self.assertFalse(web.undo_project_skill_edit(self.config, str(self.repo), "notes",
+                                                         token)["ok"], token)
+        self.assertTrue(web.undo_project_skill_edit(self.config, str(self.repo), "notes",
+                                                    second["undo"])["ok"])
+
+    def test_undo_is_refused_once_the_skill_changed_after_apply(self):
+        from skill_plus_plus.web import apply_project_skill_edit, undo_project_skill_edit
+        root = self._skill("deploy")
+        self._agent(self.ADD_STEP)
+        self._edit()
+        done = apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        (root / "SKILL.md").write_text("changed by hand after the edit\n")
+        refused = undo_project_skill_edit(self.config, str(self.repo), "deploy", done["undo"])
+        self.assertIn("changed after the edit was applied", refused["error"])
+        self.assertEqual((root / "SKILL.md").read_text(), "changed by hand after the edit\n")
+
+    def test_a_new_server_forgets_what_undo_kept(self):
+        from skill_plus_plus import web
+        from skill_plus_plus.skills import project_place, undo_dir
+        self._skill("deploy")
+        self._agent(self.ADD_STEP)
+        self._edit()
+        done = web.apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        kept = undo_dir(self.config, project_place(str(self.repo)), "deploy")
+        self.assertTrue(kept.is_dir())
+        web._undo.clear()                         # the server that applied it stopped
+        web.serve(self.config, port=0, open_browser=False).server_close()
+        self.assertFalse(kept.exists())
+        self.assertFalse(web.undo_project_skill_edit(self.config, str(self.repo), "deploy",
+                                                     done["undo"])["ok"])
+
+    def test_a_failed_apply_leaves_the_skill_as_it_was_and_the_edit_waiting(self):
+        from skill_plus_plus import skills
+        from skill_plus_plus.web import apply_project_skill_edit
+        root = self._skill("deploy", files={"b.md": "b\n"})
+        before = self._tree(root)
+        self._agent(self.ADD_STEP + "(copy / 'b.md').write_text('changed\\n')\n")
+        self._edit()
+        real, calls = skills._write_into, []
+
+        def flaky(folder, rel, source):
+            calls.append(rel)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            real(folder, rel, source)
+        with mock.patch.object(skills, "_write_into", flaky):
+            done = apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        self.assertFalse(done["ok"])
+        self.assertNotIn("undo", done)
+        self.assertEqual(self._tree(root), before)
+        self.assertEqual(self._card()["edit"]["state"], "edit-ready", "to try again")
+
+    def test_apply_is_refused_when_the_skill_changed_after_the_copy(self):
+        from skill_plus_plus.web import apply_project_skill_edit, proposal_project_skill
+        root = self._skill("deploy")
+        self._agent(self.ADD_STEP)
+        self._edit()
+        (root / "SKILL.md").write_text("edited by hand meanwhile\n")
+        self.assertTrue(proposal_project_skill(self.config, str(self.repo), "deploy")["stale"])
+        done = apply_project_skill_edit(self.config, str(self.repo), "deploy")
+        self.assertFalse(done["ok"])
+        self.assertIn("changed after the agent started", done["error"])
+        self.assertEqual((root / "SKILL.md").read_text(), "edited by hand meanwhile\n")
+
+    def test_discard_changes_nothing_in_the_repo(self):
+        from skill_plus_plus.web import discard_project_skill_edit
+        root = self._skill("deploy")
+        before = self._tree(root)
+        self._agent(self.ADD_STEP)
+        self._edit()
+        self.assertTrue(discard_project_skill_edit(self.config, str(self.repo), "deploy")["ok"])
+        self.assertEqual(self._tree(root), before)
+        self.assertEqual(self._card()["edit"], {})
+
+    def test_a_failed_edit_says_why_and_can_be_asked_again(self):
+        self._skill("deploy")
+        self._agent("print('not logged in'); sys.exit(1)\n")
+        self.assertTrue(self._edit()["ok"])
+        edit = self._card()["edit"]
+        self.assertEqual(edit["state"], "edit-failed")
+        self.assertIn("failed", edit["message"])
+        self._agent(self.ADD_STEP)
+        self.assertTrue(self._edit()["ok"])
+        self.assertEqual(self._card()["edit"]["state"], "edit-ready")
+
+    def test_one_edit_per_skill_at_a_time(self):
+        from skill_plus_plus import skills, web
+        self._skill("deploy")
+        status = skills.edit_dir(self.config, skills.project_place(str(self.repo)),
+                                 "deploy") / "status.json"
+        skills.write_json(status, {"state": "editing", "started": time.time(), "boot": web._BOOT})
+        self.assertIn("already editing", self._edit()["error"])
+        for gone in ({"boot": "another server"}, {"boot": web._BOOT, "started": 0}):
+            skills.write_json(status, {"state": "editing", "started": time.time(), **gone})
+            self.assertEqual(self._card()["edit"]["state"], "edit-failed", gone)
+        self._agent(self.ADD_STEP)
+        self._edit()
+        self.assertIn("apply or discard it first", self._edit()["error"])
+
+    def test_an_edit_changes_the_installed_folder_and_leaves_its_draft_alone(self):
+        from skill_plus_plus.web import apply_project_skill_edit
+        folder = self._drafted_and_installed("x")
+        draft = self.config.root / "drafts" / "x"
+        before = self._tree(draft)
+        self._agent(self.ADD_STEP)
+        self.assertTrue(self._edit(folder.name)["ok"])
+        self.assertTrue(apply_project_skill_edit(self.config, str(self.repo), folder.name)["ok"])
+        self.assertIn("2. Run the tests.", (folder / "SKILL.md").read_text())
+        self.assertEqual(self._tree(draft), before, "the draft was the start; the folder is the skill")
+
+    def test_a_folder_made_again_by_hand_is_not_taken_for_the_install(self):
+        """Deleted by hand and made again under the same name, the folder is
+        someone else's skill: editing it never reaches the old draft."""
+        from skill_plus_plus.web import apply_project_skill_edit
+        folder = self._drafted_and_installed("x")
+        draft = self.config.root / "drafts" / "x"
+        before = self._tree(draft)
+        shutil.rmtree(folder)
+        self._skill(folder.name, description="made by hand")
+        self._agent(self.ADD_STEP)
+        self.assertTrue(self._edit(folder.name)["ok"])
+        self.assertTrue(apply_project_skill_edit(self.config, str(self.repo), folder.name)["ok"])
+        self.assertIn("2. Run the tests.", (folder / "SKILL.md").read_text())
+        self.assertEqual(self._tree(draft), before, "the draft is never written from here")
+
+    def test_a_skill_installed_again_starts_without_the_old_ones_waiting_edit(self):
+        from skill_plus_plus.web import install_skill
+        folder = self._drafted_and_installed("x")
+        self._agent(self.ADD_STEP)
+        self._edit(folder.name)
+        self.assertEqual(self._card(folder.name)["edit"]["state"], "edit-ready")
+        shutil.rmtree(folder)
+        self.assertTrue(install_skill(self.config, "x")["ok"])
+        self.assertEqual(self._card(folder.name)["edit"], {})
+
+    def test_the_diff_warns_about_a_long_description_and_keys_uploads_refuse(self):
+        from skill_plus_plus.web import proposal_project_skill
+        self._skill("deploy")
+        self._agent("md = copy / 'SKILL.md'\n"
+                    "md.write_text(md.read_text().replace('description: \"Use when testing.\"', "
+                    "'description: \"Use when ' + 'x' * 210 + '\"\\ndisable-model-invocation: true'))\n")
+        self._edit()
+        warnings = proposal_project_skill(self.config, str(self.repo), "deploy")["warnings"]
+        self.assertTrue(any("characters" in w for w in warnings), warnings)
+        self.assertTrue(any("disable-model-invocation" in w for w in warnings), warnings)
+
+
+class PageScriptCase(unittest.TestCase):
+    """Runs the page's script in node and returns what an expression gives."""
+
+    def _run(self, expression):
+        import subprocess
+        from skill_plus_plus.web import PAGE
+        script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
+        return json.loads(subprocess.run(
+            ["node", "-e", script + f"\nprocess.stdout.write(JSON.stringify({expression}))"],
+            capture_output=True, text=True, check=True).stdout)
+
+    def _run_async(self, script, body):
+        """What *body* returns, run as an async function after *script*."""
+        import subprocess
+        program = script + "\n(async () => {" + body + "})().then(v => process.stdout.write(JSON.stringify(v)));"
+        return json.loads(subprocess.run(["node", "-e", program], capture_output=True,
+                                         text=True, check=True).stdout)
+
+
+class TestProjectSkillsPage(PageScriptCase):
+    """The Skills tab, run in node on made-up state: each project apart, its
+    drafts to review above its skills, and a skill opened from its card."""
+
+    CARD = {"name": "deploy", "description": "Use when shipping.", "edit_block": "", "edit": {}}
+
+    DRAFT = {"title": "t", "description": "d", "body": "# B", "questions": [], "files": ["SKILL.md"],
+             "revising": False, "since": None, "message": "", "installed": "",
+             "drafted_at": "2026-01-01T00:00:00+00:00", "projects": ["/w/app"], "project_name": "app"}
+
+    def _gallery(self, project, cards, **kw):
+        return {"project": project, "name": project.rsplit("/", 1)[-1], "exists": True,
+                "skills": cards, **kw}
+
+    def _cards(self, cards):
+        return self._run(f"{json.dumps(cards)}.map(c => skillCard("
+                         f"{json.dumps(self._gallery('/w/app', []))}, c))")
+
+    def _opened(self, card, editing=False, **gallery):
+        """What an opened skill shows above its SKILL.md: its head, and its edit."""
+        state = {"skills": [self._gallery("/w/app", [card], **gallery)]}
+        opened = {"project": "/w/app", "name": card["name"], "editing": editing, "proposal": None}
+        return self._run(f"(ALL = {json.dumps(state)}, "
+                         f"{{head: viewerHeadHTML({json.dumps(opened)}), edit: editHTML({json.dumps(opened)})}})")
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_each_project_is_apart_with_its_drafts_to_review_above_its_skills(self):
+        from skill_plus_plus.web import PAGE
+        self.assertIn(".gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))", PAGE)
+        galleries = [self._gallery("/w/app", [self.CARD, {**self.CARD, "name": "notes"}]),
+                     self._gallery("/w/site", [self.CARD])]
+        drafts = [{**self.DRAFT, "id": "a", "name": "waiting-draft"},
+                  {**self.DRAFT, "id": "b", "name": "installed-one", "installed": "/w/app/.claude/skills/x"}]
+        html = self._run(f"(S = {{rows: [], drafts: {json.dumps(drafts)}, skills: {json.dumps(galleries)}}}, "
+                         f"skillsTabHTML())")
+        app, site = html.split('<section class="project">')[1:]
+        self.assertIn("<h2>app</h2>", app)
+        self.assertLess(app.index("To review"), app.index("waiting-draft"))
+        self.assertLess(app.index("waiting-draft"), app.index('class="gallery"'))
+        self.assertIn("Install in app", app)
+        self.assertEqual(app.count("data-open-skill"), 2)
+        self.assertNotIn("installed-one", html, "an installed draft is its skill's card")
+        self.assertIn('data-ignore="a"', app, "a draft to review can be ignored")
+        self.assertIn("<h2>site</h2>", site)
+        self.assertNotIn("To review", site)
+        self.assertEqual(site.count("data-open-skill"), 1)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_a_card_is_the_skill_alone_and_opens_when_clicked(self):
+        [card] = self._cards([{**self.CARD, "description": "Use when <b>shipping</b>."}])
+        self.assertTrue(card.startswith("<button"), "the whole card is what is clicked")
+        self.assertEqual(card.count("<button"), 1, "no buttons of its own")
+        self.assertIn('data-open-skill data-project="/w/app" data-name="deploy"', card)
+        self.assertIn("Use when &lt;b&gt;shipping&lt;/b&gt;.", card)
+        for gone in ("textarea", ".claude/skills", "files", "not used"):
+            self.assertNotIn(gone, card)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_edit_is_a_button_in_the_opened_skill_and_its_box_shows_only_after_it(self):
+        closed = self._opened(self.CARD)
+        self.assertIn("data-vedit", closed["head"])
+        self.assertEqual(closed["edit"], "")
+        opened = self._opened(self.CARD, editing=True)
+        self.assertNotIn("data-vedit", opened["head"])
+        self.assertIn("What should change?", opened["edit"])
+        self.assertIn('data-edit-project="/w/app" data-edit-name="deploy"', opened["edit"])
+        linked = self._opened({**self.CARD, "edit_block": "the skill folder is a link; edit it where it lives"})
+        self.assertIn("data-vedit disabled title=\"It can't be edited from here: the skill folder is a link",
+                      linked["head"])
+        ready = self._opened({**self.CARD, "edit": {"state": "edit-ready", "instruction": "x"}})
+        self.assertNotIn("data-vedit", ready["head"])
+        self.assertIn("Edit ready", ready["head"])
+        self.assertIn("Loading the proposed change", ready["edit"])
+        failed = self._opened({**self.CARD, "edit": {"state": "edit-failed", "message": "not logged in"}})
+        self.assertIn("Last edit failed: not logged in", failed["edit"])
+        self.assertIn("data-edit-dismiss", failed["edit"], "a failure can be cleared")
+        self.assertIn("data-vedit", failed["head"], "and the edit asked again")
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_undo_shows_right_after_apply_and_goes_with_the_next_action(self):
+        from skill_plus_plus.web import PAGE
+        script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
+        state = {"skills": [self._gallery("/w/app", [self.CARD])]}
+        opened = {"project": "/w/app", "name": "deploy", "editing": False, "proposal": None}
+        none, shown, other, after_read, after_action = self._run_async(script, f"""
+ALL = {json.dumps(state)};
+globalThis.fetch = async () => ({{json: async () => ({{ok: true}})}});
+const v = {json.dumps(opened)};
+const none = editHTML(v);
+justApplied = {{project: "/w/app", name: "deploy", token: "t"}};
+const shown = editHTML(v), other = editHTML({{...v, name: "notes"}});
+await send("/api/skill/read", {{}});
+const afterRead = justApplied !== null;
+await post("/api/install", {{}});
+return [none, shown, other, afterRead, justApplied];""")
+        self.assertEqual(none, "")
+        self.assertIn("The edit is applied.", shown)
+        self.assertIn("data-edit-undo", shown)
+        self.assertEqual(other, "", "only on the skill it changed")
+        self.assertTrue(after_read, "opening or reading a skill is no action")
+        self.assertIsNone(after_action, "any action ends it")
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_a_proposal_diff_is_escaped(self):
+        change = {"path": "SKILL.md", "change": "changed", "added": 1, "removed": 0,
+                  "binary": False, "truncated": False,
+                  "diff": "--- a/SKILL.md\n+++ b/SKILL.md\n@@ -1 +1,2 @@\n <b>x</b>\n"
+                          "+<script>alert(1)</script>\n"}
+        html = self._run(f"diffHTML({json.dumps(change)})")
+        self.assertNotIn("<script>", html)
+        self.assertNotIn("<b>x</b>", html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+        self.assertIn('class="l add"', html)
+        self.assertIn('class="l hunk"', html)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_an_opened_skill_shows_its_skill_md_as_markdown_and_nothing_else(self):
+        text = "---\nname: deploy\n---\n# Deploy\n\n<script>alert(1)</script>\n"
+        html = self._run(f"viewerHTML({{project: '/w/app', name: 'deploy', "
+                         f"data: {{text: {json.dumps(text)}, truncated: false, error: ''}}}})")
+        self.assertIn("<h1>Deploy</h1>", html)
+        self.assertIn('class="fm"', html, "the frontmatter as a table")
+        self.assertNotIn("<script>", html)
+        for gone in ("vfiles", "Source", ".claude/skills"):
+            self.assertNotIn(gone, html)
+        unreadable = self._run("viewerHTML({project: '/w/app', name: 'deploy', "
+                               "data: {text: null, truncated: false, error: 'Too many levels of symbolic links'}})")
+        self.assertIn("Too many levels of symbolic links", unreadable)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+    def test_questions_and_messages_open_in_the_pages_own_pop_up(self):
+        """Claude's in-app browser switches the browser's confirm and alert
+        boxes off: a question answered no without being shown, so Ignore did
+        nothing. The page's own <dialog> is never blocked."""
+        from skill_plus_plus.web import PAGE
+        script = PAGE[PAGE.index("<script>") + len("<script>"):PAGE.rindex("load();")]
+        self.assertNotRegex(script, r"(?<![\w.])(confirm|alert)\(")
+        self.assertIn('<dialog id="ask" aria-labelledby="ask-title">', PAGE)
+        answers, first, replaced = self._run_async(script, """
+const on = {};
+const dlg = {open: false, returnValue: "", innerHTML: "",
+  addEventListener(type, fn){ on[type] = fn; },
+  showModal(){ this.open = true; },
+  close(value){ this.open = false; if(value !== undefined) this.returnValue = value; on.close(); }};
+globalThis.document = {getElementById: () => dlg};
+const answers = [];
+let asked = ask(ignoreWarning("Deck", true), "Ignore");
+const first = dlg.innerHTML;
+dlg.close("yes"); answers.push(await asked);
+asked = ask("Discard it?", "Discard"); dlg.close(""); answers.push(await asked);
+asked = ask("Discard it?", "Discard"); dlg.close(); answers.push(await asked);
+asked = ask("Discard it?", "Discard");
+const told = tell("<b>install failed</b>");
+answers.push(await asked);
+const replaced = dlg.innerHTML;
+dlg.close("ok"); answers.push(await told);
+return [answers, first, replaced];""")
+        self.assertEqual(answers, [True, False, False, False, "ok"],
+                         "yes; Cancel; Esc; replaced by a newer pop-up; read")
+        self.assertIn('<h2 id="ask-title">Ignore &quot;Deck&quot;?</h2>', first)
+        self.assertIn("<p>Skill++ keeps recognising this procedure", first)
+        self.assertIn('<button value="">Cancel</button><button value="yes" class="danger">Ignore</button>', first)
+        self.assertIn("&lt;b&gt;install failed&lt;/b&gt;", replaced)
+
+    def test_the_page_has_no_uninstall_download_archive_or_just_for_you(self):
+        """Removed on purpose: a skill belongs to its project and lives in its
+        folder there. Kept out of a rebase that would bring them back."""
+        from skill_plus_plus import web
+        for gone in ("Uninstall", "/api/uninstall", "draft.zip", "Download", "Archive",
+                     "/api/skill/archive", "Just for"):
+            self.assertNotIn(gone, web.PAGE, gone)
+        for gone in ("uninstall_skill", "draft_zip", "record_download",
+                     "archive_project_skill", "restore_project_skill"):
+            self.assertFalse(hasattr(web, gone), gone)
+        self.assertIn('["skills","Skills"', web.PAGE)

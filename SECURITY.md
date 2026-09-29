@@ -25,9 +25,17 @@ Useful context for judging whether something is a vulnerability:
   request whose `Host` is not that address, and a POST that is not JSON or comes
   from another page's `Origin`, because a POST can start your agent or write a
   skill into a repository. **Install** writes one folder, the skill's, into the
-  project the candidate belongs to or into your own skills folder; that path is
-  built from the ledger, never from the request. **Uninstall** removes only the
-  files it recorded installing.
+  project the candidate belongs to, and never over a folder already there;
+  that path is built from the ledger, never from the request.
+- **The Skills tab** changes skills already in a project, named by project and
+  folder, never by a path from the request. Opening one reads its `SKILL.md`
+  only, and never through a link. **Edit** runs the same agent as drafting,
+  on a copy of the skill in a temporary folder, and writes the result into the
+  skill only on **Apply**, after checking that the skill did not change
+  meanwhile. A change to the project's copy while the agent runs is detected,
+  and then nothing is proposed. **Undo** writes back the copy the edit was
+  made on: only for the last Apply, with the token that Apply gave the page,
+  and only while the skill holds exactly what it wrote.
 - **The drafting agent** (`skill-plus-plus draft`, **Draft Skill**) is whatever
   `SKILL_PLUS_PLUS_AGENT` names, by default `claude -p` allowed `Read`, `Write`, `Edit`
   and `python3 bin/skill-plus-plus`. It runs in a temporary folder and reads one

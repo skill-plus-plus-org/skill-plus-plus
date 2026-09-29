@@ -115,7 +115,7 @@ about how you work changes.
    your own agent (`claude -p` by default), with a note from you if you like.
    The agent writes the procedure in its own words, and anything it could not
    tell from the run becomes an open question. Answer them, then install the
-   skill into the project or just for you.
+   skill into the project it came from.
 
 ---
 
@@ -180,14 +180,17 @@ new Code session in the desktop app) and work as usual.
    runs, a candidate can be promoted or ignored.
 5. **Promote** it, then press **Draft Skill**. The optional note tells the agent
    what the later runs taught you: it reads only the first.
-6. **Answer its open questions** on the Drafts tab: pick a suggested answer or
-   write your own. Each answer is folded back into the skill; **Revise** sends
-   any other instruction.
+6. **Answer its open questions** on the Skills tab, where the draft waits under
+   its project: pick a suggested answer or write your own. Each answer is
+   folded back into the skill; **Revise** sends any other instruction.
 
-   <img src="docs/images/draft-questions.png" alt="A draft on the Drafts tab: its first open question with three suggested answers and a field for your own, the first answer picked">
+   <img src="docs/images/draft-questions.png" alt="A draft to review: its first open question with three suggested answers and a field for your own, the first answer picked">
 
-7. **Install in your project** (commit `.claude/skills/` to share it), or **just
-   for you** (③ above). A later revision reaches it with **Update**.
+7. **Install in your project** (③ above; commit `.claude/skills/` to share it).
+   From then on the folder is the skill.
+8. **Keep it current** on the same tab: every skill in the project, three to a
+   row. Click one to read it, or have your agent edit it: you see the change as
+   a diff before anything is written, and can undo it right after.
 
 **Faster than three repeats:** `SKILL_PLUS_PLUS_RECURRENCE=1` makes a candidate ready the
 first time it is seen.

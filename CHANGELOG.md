@@ -21,9 +21,25 @@ All notable changes to Skill++. The format follows
   when a fold waits or is stopped, and `doctor` and `stats` show the figures.
   `SKILL_PLUS_PLUS_MEMORY_GUARD`, `SKILL_PLUS_PLUS_MEMORY_RESERVE_GB`,
   `SKILL_PLUS_PLUS_IDLE_MINUTES` and `SKILL_PLUS_PLUS_NOTIFY` configure it.
+- The skills a project has, on the review page. The **Drafts** tab is now
+  **Skills** and shows the project's drafts to review first, then every skill
+  in its `.claude/skills/`, whoever made it, three to a row.
+  Click a skill to read its `SKILL.md`. **Edit** has your agent change a copy
+  and shows the change as a diff to **Apply** or **Discard**;
+  `skill-plus-plus edit-skill` does the same from the terminal. Right after
+  **Apply**, **Undo** puts the skill back as it was, until your next action or
+  a reload of the page.
 
 ### Changed
 
+- Nothing is recorded without a project. A dictated candidate
+  (`/skill-plus-plus-new`) belongs to the project it was run in, and is
+  compared only with that project's; before, it belonged to none. The review
+  page shows only candidates that belong to a project, so its project menu has
+  no "No project" any more, nor the Skills tab a block for one.
+- The review page shows one project at a time, always: its project menu has no
+  **All projects** any more. It opens on the project chosen last, or on the one
+  `skill-plus-plus web` was started in.
 - The local model is `gemma4:e4b-it-qat`, a build of `gemma4:e4b` trained to
   run at 4 bits: about 6 GB to download instead of 10, and cutting a session
   needs about 7 GB of free memory instead of 12. On every recorded session it
@@ -48,7 +64,32 @@ All notable changes to Skill++. The format follows
 - A promoted or drafted candidate can be ignored from the page, after a
   confirmation; before, only the command line could. Its draft is kept, and
   returns if the candidate is brought back and promoted again. An installed
-  skill is uninstalled first.
+  skill's folder is removed from `.claude/skills/` first.
+
+### Removed
+
+- **Uninstall**, **Just for me**, **Download** and **Update** on the review
+  page, and `web --skills-dir`. A skill belongs to the project it was made
+  from: it is installed there, and from then on its folder is the skill,
+  changed with **Edit**. Nothing else is kept of the install, so deleting the
+  folder takes the skill out, and its draft comes back to review.
+  `skill-plus-plus revise` refuses a draft that is installed and names the
+  `edit-skill` command instead. `skill-plus-plus bundle` still writes a skill's
+  zip for uploading.
+
+### Fixed
+
+- `skill-plus-plus tier` no longer deletes a skill already in the target tier
+  to make room. The cold and archive tiers are shared by every project, so it
+  was another project's skill; now it says so and moves nothing.
+- A revision whose instruction starts with `-`, such as `--shorter`, reaches
+  the agent instead of being refused as an unknown option.
+- Revise is no longer offered on a draft that is installed, where it always
+  failed: an installed skill is edited from its card on the Skills tab.
+- The review page shows its errors, and asks before Ignore and Discard, in a
+  pop-up of its own. It used the browser's alert and confirm boxes, which a
+  browser can switch off; Claude's in-app browser does, and there a failed
+  action said nothing and a question was answered "no" without being shown.
 
 ## [0.1.1] - 2026-09-27
 

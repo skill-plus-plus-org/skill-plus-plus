@@ -16,21 +16,22 @@ Dependency-free on purpose: `http.server` and one self-contained page.
 
 from __future__ import annotations
 
-import io
+import functools
 import json
 import math
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 import threading
 import time
 import webbrowser
-import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
+from . import skills
 from .config import Config
 from .ledger import (STATUS_CANDIDATE, STATUS_DISMISSED, STATUS_PROMOTED,
                      Ledger)
@@ -50,19 +51,32 @@ _SAFE_SESSION = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 # running well past that died with the server that started it.
 DRAFT_STALE_SECONDS = 1200
 
-_SAFE_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
-# Written by this page or by the agent's editor, never part of the skill.
-# Bookkeeping beside a draft, never part of the skill. `agent.log` is the drafting
-# agent's transcript: it names local paths and it is not a file anyone who
-# installs the skill should receive.
-_NOT_SKILL_FILES = ("status.json", "downloaded.json", "installed.json", "agent.log")
-
 _jobs: dict[str, threading.Thread] = {}
 # Which server process started a run. A run marked running by a server that is
 # no longer the one serving died with it, so it is shown as failed at once
 # instead of spinning until DRAFT_STALE_SECONDS.
 _BOOT = f"{time.time():.6f}-{id(_jobs)}"
-_jobs_lock = threading.Lock()
+# One lock for every job and every change to a project's skills. Re-entrant,
+# because an action that holds it calls helpers that take it too.
+_jobs_lock = threading.RLock()
+
+
+def _locked(action):
+    """Run *action* holding `_jobs_lock`: changes to a project's skills, and
+    the jobs that make them, happen one at a time."""
+    @functools.wraps(action)
+    def run(*args, **kwargs):
+        with _jobs_lock:
+            return action(*args, **kwargs)
+    return run
+
+
+def _job_fresh(status: dict) -> tuple[bool, bool]:
+    """(fresh, orphaned) for a background job's status: still running as far as
+    anyone can tell, or started by a server that is no longer the one serving."""
+    orphaned = status.get("boot") not in (None, _BOOT)
+    fresh = time.time() - status.get("started", 0) < DRAFT_STALE_SECONDS and not orphaned
+    return fresh, orphaned
 
 
 def _run(config: Config, *args: str) -> subprocess.CompletedProcess:
@@ -71,12 +85,8 @@ def _run(config: Config, *args: str) -> subprocess.CompletedProcess:
                           stdin=subprocess.DEVNULL)
 
 
-def _draft_dir(config: Config, entry_id: str) -> Path:
-    return config.root / "drafts" / entry_id
-
-
 def _status_path(config: Config, entry_id: str) -> Path:
-    return _draft_dir(config, entry_id) / "status.json"
+    return skills.draft_dir(config, entry_id) / "status.json"
 
 
 def _write_status(config: Config, entry_id: str, **status) -> None:
@@ -110,13 +120,11 @@ def row_state(config: Config, entry) -> dict:
         if not entry.ready(config.recurrence_threshold):
             return {"state": "collecting"}
         return {"state": "undecided"}
-    if entry.skill_path and Path(entry.skill_path).expanduser().exists():
+    if skills.installed_skill(entry):
         return {"state": "installed", "path": entry.skill_path}
     status = _read_status(config, entry.id)
-    orphaned = status.get("boot") not in (None, _BOOT)
-    fresh = (time.time() - status.get("started", 0) < DRAFT_STALE_SECONDS
-             and not orphaned)
-    drafted = sorted(p for p in _draft_dir(config, entry.id).rglob("SKILL.md")
+    fresh, orphaned = _job_fresh(status)
+    drafted = sorted(p for p in skills.draft_dir(config, entry.id).rglob("SKILL.md")
                      if ".revisions" not in p.parts)
     if status.get("state") == "running":
         if fresh:
@@ -412,6 +420,24 @@ def summarise(config: Config, entry_id: str) -> dict:
     return {"ok": True, "summary": text}
 
 
+# The ledger entries the page lists. Everything it knows about projects follows
+# from these: the switcher, the galleries and which project a request may name.
+PAGE_STATUSES = (STATUS_CANDIDATE, STATUS_PROMOTED, STATUS_DISMISSED)
+
+
+def _page_entries(config: Config):
+    """What the page is made of: the candidates that belong to a project. One
+    recorded without a folder, as dictation did before it took the folder it
+    runs in, belongs to none, and no skill made from it could be installed."""
+    return (entry for entry in Ledger(config).all()
+            if entry.status in PAGE_STATUSES and any(_projects(entry)))
+
+
+def known_projects(config: Config) -> set[str]:
+    """The projects the page lists, and the only ones a request may name."""
+    return {key for entry in _page_entries(config) for key in _projects(entry)}
+
+
 def _projects(entry) -> list[str]:
     """The projects an entry belongs to: one, or several for an entry banked
     before candidates were bound to a project (`capture.projects_of`)."""
@@ -421,16 +447,15 @@ def _projects(entry) -> list[str]:
 
 def project_list(rows: list[dict], drafts: list[dict]) -> list[dict]:
     """Every project on the page, for the switcher: its folder name, its path,
-    and how many candidates and drafts it holds. "No project" last."""
+    and how many candidates and drafts it holds."""
     counts: dict[str, dict] = {}
     for kind, items in (("candidates", rows), ("drafts", drafts)):
         for item in items:
             for key in item["projects"]:
                 cell = counts.setdefault(key, {"candidates": 0, "drafts": 0})
                 cell[kind] += 1
-    return [{"key": key, "name": Path(key).name if key else "No project", "path": key, **cell}
-            for key, cell in sorted(counts.items(),
-                                    key=lambda kv: (kv[0] == "", Path(kv[0]).name.lower(), kv[0]))]
+    return [{"key": key, "name": Path(key).name, "path": key, **cell}
+            for key, cell in sorted(counts.items(), key=lambda kv: (Path(kv[0]).name.lower(), kv[0]))]
 
 
 def collect_state(config: Config) -> dict:
@@ -446,9 +471,7 @@ def collect_state(config: Config) -> dict:
     threshold = config.recurrence_threshold
     summaries = load_summaries(config)
     rows = []
-    for entry in Ledger(config).all():
-        if entry.status not in (STATUS_CANDIDATE, STATUS_PROMOTED, STATUS_DISMISSED):
-            continue
+    for entry in _page_entries(config):
         rows.append({"id": entry.id, "title": entry.title,
                      "occurrences": entry.occurrences,
                      "ready": entry.occurrences >= threshold or entry.ready(threshold),
@@ -468,10 +491,19 @@ def collect_state(config: Config) -> dict:
                              (r["title"] or "").lower()))
     drafts = list_drafts(config)
     projects = project_list(rows, drafts)
+    places = [skills.project_place(p["path"]) for p in projects]
     return {"threshold": threshold, "ttl": config.candidate_ttl_days,
             "rows": rows, "drafts": drafts, "projects": projects,
             "capture": capture_status([p["path"] for p in projects]),
-            "memory": memory_waiting(config)}
+            "memory": memory_waiting(config),
+            "skills": [_with_edits(config, place, skills.list_place(place)) for place in places]}
+
+
+def _with_edits(config: Config, place, gallery: dict) -> dict:
+    """Each card's edit, if one is running, waiting or failed."""
+    for card in gallery["skills"]:
+        card["edit"] = edit_state(config, place, card["name"])
+    return gallery
 
 
 def memory_waiting(config: Config) -> dict:
@@ -597,21 +629,12 @@ def transcript(config: Config, session_id: str) -> dict:
 def _skill_name(entry, skill_md: Path) -> str:
     """The folder name the skill unpacks to: its frontmatter name, if safe."""
     name = str(parse_frontmatter(skill_md.read_text(encoding="utf-8")).get("name") or "")
-    return name if _SAFE_NAME.match(name) else entry.id
-
-
-def _draft_files(config: Config, entry_id: str) -> list[Path]:
-    root = _draft_dir(config, entry_id)
-    return sorted(p for p in root.rglob("*")
-                  if p.is_file() and p.name not in _NOT_SKILL_FILES
-                  and not p.name.endswith(".tmp")
-                  # `.revisions/` holds the versions before each revision.
-                  and not any(part.startswith(".") for part in p.relative_to(root).parts))
+    return name if skills.SAFE_NAME.match(name) else entry.id
 
 
 # `## Known gaps` was the scaffold's name for the same section and nothing read
 # it, so a draft carrying four unanswered questions rendered no answer fields
-# and downloaded freely. One name now — the old one stays matchable for drafts
+# and could leave the page. One name now — the old one stays matchable for drafts
 # written before the rename.
 _QUESTIONS_HEADING = re.compile(r"^##\s+(?:Open questions|Known gaps)\s*$",
                                 re.IGNORECASE)
@@ -626,7 +649,7 @@ def split_open_questions(text: str) -> tuple[list[dict], str]:
     The drafting agent cannot ask, so it writes what it could not tell from the
     runs there (`skill_plus_plus/commands/skill-plus-plus-draft.md`, *Ask through open questions*). Those are gaps in the
     skill, not part of it: the page shows them as answer fields, hides the
-    section from the rendered draft, and refuses the download while any remain.
+    section from the rendered draft, and refuses the install while any remain.
     The section ends at the next heading or horizontal rule.
 
     Each question is `{"question", "options"}`: the answers suggested under it,
@@ -658,47 +681,14 @@ def split_open_questions(text: str) -> tuple[list[dict], str]:
     return [q for q in questions if q["question"]], remaining
 
 
-def _skill_digest(skill_md: Path) -> str:
-    import hashlib
-    return hashlib.sha256(skill_md.read_bytes()).hexdigest()
-
-
-def record_download(config: Config, entry_id: str) -> None:
-    """Remember that this version of the draft was downloaded.
-
-    Kept as a digest of SKILL.md, so a draft revised after its download counts
-    as not downloaded again: the copy someone has is no longer this one.
-    """
-    from datetime import datetime, timezone
-    entry = Ledger(config).get(entry_id)
-    if not entry:
-        return
-    skill_md = Path(row_state(config, entry)["path"])
-    path = _draft_dir(config, entry.id) / "downloaded.json"
-    path.write_text(json.dumps({
-        "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "sha256": _skill_digest(skill_md)}), encoding="utf-8")
-
-
-def _downloaded_at(config: Config, entry_id: str, skill_md: Path) -> str:
-    try:
-        record = json.loads((_draft_dir(config, entry_id) / "downloaded.json")
-                            .read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
-    return record.get("at", "") if record.get("sha256") == _skill_digest(skill_md) else ""
-
-
-def _install_fields(config: Config, entry, skill_md: Path) -> dict:
-    """What the card shows about installing: where it went, whether the draft
-    changed since (a revision to pass on), and the project it would go to."""
+def _install_fields(entry, installed: bool) -> dict:
+    """Where the draft went, if it is installed (it is then a card in its
+    project's gallery, not a draft to review), and the project it would be
+    installed into. A skill whose folder was removed by hand is not installed
+    any more: its draft is back to review, and Install puts it in again."""
     from .capture import project_of
-    record = _install_record(config, entry.id)
     home = project_of(entry.projects[0]) if entry.projects else ""
-    return {"installed": record.get("path", "") if entry.skill_path else "",
-            "installed_target": record.get("target", ""),
-            "install_stale": bool(record) and record.get("files", {}).get("SKILL.md")
-                             not in (None, _skill_digest(skill_md)),
+    return {"installed": str(Path(entry.skill_path).expanduser().parent) if installed else "",
             "project_name": Path(home).name if home else ""}
 
 
@@ -706,11 +696,11 @@ def list_drafts(config: Config) -> list[dict]:
     """Every finished draft, with the SKILL.md text to review."""
     from datetime import datetime, timezone
     drafts = []
-    for entry in Ledger(config).all():
+    for entry in _page_entries(config):
         state = row_state(config, entry)
         if state["state"] not in ("drafted", "revising", "installed"):
             continue
-        skill_md = (_drafted_skill(config, entry) if state["state"] == "installed"
+        skill_md = (skills.drafted_skill(config, entry.id) if state["state"] == "installed"
                     else Path(state["path"]))
         if skill_md is None:
             continue                 # installed by hand, with no draft here
@@ -723,43 +713,38 @@ def list_drafts(config: Config) -> list[dict]:
             "description": str(front.get("description") or ""),
             "body": shown,
             "questions": questions,
-            "files": [str(p.relative_to(_draft_dir(config, entry.id)))
-                      for p in _draft_files(config, entry.id)],
+            "files": [str(p.relative_to(skills.draft_dir(config, entry.id)))
+                      for p in skills.draft_files(config, entry.id)],
             "revising": state["state"] == "revising",
             "since": state.get("since"),
             "message": state.get("message", ""),
-            "downloaded_at": _downloaded_at(config, entry.id, skill_md),
             # When SKILL.md was last written, by the draft or a revision. Drafts
             # are listed newest first: the one just asked for is the one looked
             # for, and a name alone did not tell drafts apart.
             "drafted_at": datetime.fromtimestamp(
                 skill_md.stat().st_mtime, timezone.utc).isoformat(),
             "projects": _projects(entry),
-            **_install_fields(config, entry, skill_md),
+            **_install_fields(entry, state["state"] == "installed"),
         })
     drafts.sort(key=lambda d: d["drafted_at"], reverse=True)
     return drafts
 
 
-def _drafted_skill(config: Config, entry) -> Path | None:
-    """The draft's SKILL.md, wherever its row stands (installed included)."""
-    found = sorted(p for p in _draft_dir(config, entry.id).rglob("SKILL.md")
-                   if ".revisions" not in p.parts)
-    return found[0] if found else None
-
-
 def _shippable(config: Config, entry_id: str):
-    """(entry, SKILL.md) for a draft that may leave the page, or (None, why).
+    """(entry, SKILL.md) for a draft that may be installed, or (None, why).
 
-    One gate for the download and the install: a finished draft, and no open
-    question left. The id is looked up, never joined into a path.
+    A finished draft, and no open question left. The id is looked up, never
+    joined into a path.
     """
     entry = Ledger(config).get(entry_id)
     if not entry:
         return None, "no such entry"
-    if row_state(config, entry)["state"] not in ("drafted", "installed"):
+    state = row_state(config, entry)["state"]
+    if state == "installed":
+        return None, "it is installed already"
+    if state != "drafted":
         return None, "there is no finished draft"
-    skill_md = _drafted_skill(config, entry)
+    skill_md = skills.drafted_skill(config, entry.id)
     if skill_md is None:
         return None, "there is no finished draft"
     if split_open_questions(skill_md.read_text(encoding="utf-8"))[0]:
@@ -767,133 +752,42 @@ def _shippable(config: Config, entry_id: str):
     return (entry, skill_md), ""
 
 
-def draft_zip(config: Config, entry_id: str) -> tuple[str, bytes] | None:
-    """A draft as `<skill-name>.zip`, holding `<skill-name>/SKILL.md` and any
-    files beside it, so it unpacks straight into a skills directory.
+@_locked
+def install_skill(config: Config, entry_id: str) -> dict:
+    """Copy a finished draft into its project's `.claude/skills/<name>/` and
+    mark it installed. A skill belongs to the repo the candidate came from:
+    committed there, it reaches everyone who works in the repo.
 
-    Only a ledger entry with a finished draft is served; the id is looked up,
-    never joined into a path from the request.
+    The folder is built from the ledger only, never from the request, and a
+    folder already there is left alone. Nothing else is kept of the install
+    but the ledger's `skill_path`: from here on the folder is the skill,
+    changed on its card, and deleting it takes the skill out.
     """
-    got, _ = _shippable(config, entry_id)
-    if not got:
-        return None
-    entry, skill_md = got
-    root = _draft_dir(config, entry.id)
-    name = _skill_name(entry, skill_md)
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for path in _draft_files(config, entry.id):
-            archive.write(path, f"{name}/{path.relative_to(root)}")
-    return f"{name}.zip", buffer.getvalue()
-
-
-def _install_record(config: Config, entry_id: str) -> dict:
-    try:
-        return json.loads((_draft_dir(config, entry_id) / "installed.json").read_text())
-    except (OSError, ValueError):
-        return {}
-
-
-def install_skill(config: Config, entry_id: str, target: str,
-                  personal_dir: Path | None = None) -> dict:
-    """Copy a finished draft into a skills folder and mark it installed.
-
-    `project` is `<repo>/.claude/skills/<name>/`, the repo the candidate belongs
-    to: committed there, it reaches everyone who works in the repo. `personal`
-    is `~/.claude/skills/` (or the folder `skill-plus-plus web --skills-dir` names).
-    The folder is built from the ledger only, never from the request. A folder
-    of the same name that this draft did not install is left alone; our own is
-    replaced, which is how a revision reaches an installed skill.
-    """
-    from datetime import datetime, timezone
     from .capture import project_of
-    if target not in ("project", "personal"):
-        return {"ok": False, "error": "install where? project or personal"}
     got, why = _shippable(config, entry_id)
     if not got:
         return {"ok": False, "error": why}
     entry, skill_md = got
-    if target == "project":
-        home = project_of(entry.projects[0]) if entry.projects else ""
-        if not home:
-            return {"ok": False, "error": "this candidate was recorded without a project "
-                                          "folder; install it just for you"}
-        base = Path(home) / ".claude" / "skills"
-    else:
-        base = Path(personal_dir or Path.home() / ".claude" / "skills").expanduser()
-    dest = base / _skill_name(entry, skill_md)
-
-    previous = _install_record(config, entry.id)
-    if previous and Path(previous["path"]) != dest:
-        return {"ok": False, "error": f"already installed in {previous['path']}; uninstall it first"}
-    if dest.exists() and not previous:
-        return {"ok": False, "error": f"{dest} already exists and was not installed from "
-                                      f"this draft; it is left alone"}
-    if previous:
-        changed = _changed_since_install(previous)
-        if changed:
-            return {"ok": False, "error": f"{changed[0]} was changed after it was installed; "
-                                          f"keep your edits or remove the folder by hand"}
-        _remove_installed(previous)
-
-    root = _draft_dir(config, entry.id)
-    files = {}
-    for path in _draft_files(config, entry.id):
+    home = project_of(entry.projects[0]) if entry.projects else ""
+    if not home:
+        return {"ok": False, "error": "this candidate was recorded without a project "
+                                      "folder, so there is no project to install it into"}
+    dest = Path(home) / ".claude" / "skills" / _skill_name(entry, skill_md)
+    if dest.exists() or dest.is_symlink():
+        return {"ok": False, "error": f"{dest} already exists; it is left alone"}
+    # An edit still waiting from a skill that was here before is not this one's.
+    place = skills.project_place(home)
+    if f"edit:{place.store}/{dest.name}" not in _jobs:
+        skills.discard_edit(config, place, dest.name)
+    root = skills.draft_dir(config, entry.id)
+    for path in skills.draft_files(config, entry.id):
         rel = path.relative_to(root)
         (dest / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, dest / rel)
-        files[str(rel)] = _skill_digest(dest / rel)
-    (root / "installed.json").write_text(json.dumps({
-        "path": str(dest), "target": target, "files": files,
-        "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}, indent=1))
     ledger = Ledger(config)
     entry.skill_path = str(dest / "SKILL.md")
     ledger.save(entry)
     return {"ok": True, "path": str(dest)}
-
-
-def _changed_since_install(record: dict) -> list[str]:
-    dest = Path(record["path"])
-    return [rel for rel, digest in record.get("files", {}).items()
-            if (dest / rel).exists() and _skill_digest(dest / rel) != digest]
-
-
-def _remove_installed(record: dict) -> None:
-    """Remove the files an install wrote, and the folders it leaves empty.
-    Anything else in the folder was put there by someone else and stays."""
-    dest = Path(record["path"])
-    for rel in record.get("files", {}):
-        try:
-            (dest / rel).unlink()
-        except FileNotFoundError:
-            pass
-    # The skills folder too, if the install left it empty; nothing above it.
-    for folder in sorted({(dest / rel).parent for rel in record.get("files", {})} | {dest, dest.parent},
-                         key=lambda p: len(p.parts), reverse=True):
-        try:
-            folder.rmdir()
-        except OSError:
-            pass                   # not empty: someone else's files are in it
-
-
-def uninstall_skill(config: Config, entry_id: str) -> dict:
-    """Take out what `install_skill` put in, if nobody has changed it since."""
-    entry = Ledger(config).get(entry_id)
-    if not entry:
-        return {"ok": False, "error": "no such entry"}
-    record = _install_record(config, entry.id)
-    if not record:
-        return {"ok": False, "error": "it was not installed from this page"}
-    changed = _changed_since_install(record)
-    if changed:
-        return {"ok": False, "error": f"{changed[0]} was changed after it was installed; "
-                                      f"remove it by hand"}
-    _remove_installed(record)
-    (_draft_dir(config, entry.id) / "installed.json").unlink()
-    ledger = Ledger(config)
-    entry.skill_path = ""
-    ledger.save(entry)
-    return {"ok": True, "path": record["path"]}
 
 
 def _decide(config: Config, entry_id: str, command: str) -> dict:
@@ -917,7 +811,7 @@ def accept(config: Config, entry_id: str) -> dict:
 # and all: the draft is kept, and returns if the candidate is brought back and
 # promoted again. Two cases wait: a draft still being written would land in an
 # ignored entry, and an installed skill would stay in its skills folder while
-# the page calls it ignored, so it is uninstalled first.
+# the page calls it ignored, so its folder is removed first.
 IGNORABLE = ("undecided", "accepted", "drafted", "failed", "declined")
 
 
@@ -928,7 +822,8 @@ def decline(config: Config, entry_id: str) -> dict:
         return {"ok": False, "error": "no such entry"}
     state = row_state(config, entry)["state"]
     if state == "installed":
-        return {"ok": False, "error": "Uninstall the skill first, then ignore it."}
+        return {"ok": False, "error": "The skill is installed: remove its folder from "
+                                      ".claude/skills/ first, then ignore it."}
     if state not in IGNORABLE:
         return {"ok": False, "error": f"{entry.id} cannot be ignored while it is {state}"}
     proc = _run(config, "dismiss", entry.id)
@@ -959,7 +854,7 @@ def _draft_job(config: Config, entry_id: str, note: str = "") -> None:
         said = (proc.stdout or "") + (proc.stderr or "")
         if proc.returncode != 0:
             _write_status(config, entry_id, state="failed", message=_tail(said))
-        elif not sorted(_draft_dir(config, entry_id).rglob("SKILL.md")):
+        elif not sorted(skills.draft_dir(config, entry_id).rglob("SKILL.md")):
             # `skill-plus-plus draft` exits 0 without a file only for a stated decline.
             _write_status(config, entry_id, state="declined", message=_tail(said, 1))
         else:
@@ -1009,7 +904,9 @@ MAX_INSTRUCTION = 2000
 
 def _revise_job(config: Config, entry_id: str, instruction: str) -> None:
     try:
-        proc = _run(config, "revise", entry_id, "--instruction", instruction, "--apply")
+        # One argv element, as the draft note is: split in two, an instruction
+        # starting with "-" is read by argparse as an option and the run refused.
+        proc = _run(config, "revise", entry_id, f"--instruction={instruction}", "--apply")
         if proc.returncode != 0:
             _write_status(config, entry_id, state="revise-failed",
                           message=_tail((proc.stderr or "") or (proc.stdout or ""), 2))
@@ -1071,11 +968,201 @@ def answer_questions(config: Config, entry_id: str, answers: list) -> dict:
     return revise(config, entry_id, instruction, limit=MAX_ANSWERS + 1000)
 
 
-def make_handler(config: Config, skills_dir: Path | None = None):
+def _place(config: Config, key: str):
+    """The project a request names, if the page lists it. Never a path the
+    request supplies."""
+    return skills.project_place(key) if key in known_projects(config) else None
+
+
+def _project_skill(config: Config, key: str, name: str):
+    """(place, skill folder) for a request, or (None, why).
+
+    The request names a project and a skill folder in it, never a path. A name
+    is one safe folder name, so `..` and `/` cannot reach past the project's
+    `.claude/skills/`.
+    """
+    place = _place(config, key)
+    if place is None:
+        return None, "unknown project"
+    folder = place.skills / name
+    if not skills.SAFE_NAME.match(name) or not (folder / "SKILL.md").is_file():
+        return None, "no such skill"
+    return place, folder
+
+
+def read_project_skill(config: Config, project: str, name: str) -> dict:
+    """A skill's SKILL.md, for the page that opens it."""
+    place, folder = _project_skill(config, project, name)
+    if place is None:
+        return {"ok": False, "error": folder}
+    return {"ok": True, "name": folder.name, **skills.read_skill_md(folder)}
+
+
+def edit_state(config: Config, place, folder_name: str) -> dict:
+    """Where an edit of this skill stands, read from its status file only:
+    `{}` for none, else `editing`, `edit-ready` or `edit-failed`."""
+    current = skills.edit_dir(config, place, folder_name)
+    try:
+        status = json.loads((current / "status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    instruction = str(status.get("instruction") or "")
+    if status.get("state") == "editing":
+        fresh, orphaned = _job_fresh(status)
+        if fresh:
+            return {"state": "editing", "since": status.get("started"), "instruction": instruction}
+        return {"state": "edit-failed", "instruction": instruction,
+                "message": "the server restarted while the agent edited" if orphaned
+                           else "the edit did not finish"}
+    if status.get("state") == "ready":
+        if (current / "proposal").is_dir():
+            return {"state": "edit-ready", "instruction": instruction}
+        return {"state": "edit-failed", "instruction": instruction,
+                "message": "the proposal is missing"}
+    if status.get("state") == "failed":
+        return {"state": "edit-failed", "instruction": instruction,
+                "message": str(status.get("message") or "")}
+    return {}
+
+
+def _edit_job(config: Config, key: str, place, folder_name: str, instruction: str) -> None:
+    status = skills.edit_dir(config, place, folder_name) / "status.json"
+    try:
+        proc = _run(config, "edit-skill", folder_name, f"--project={place.key}",
+                    f"--instruction={instruction}", "--apply")
+        if proc.returncode != 0:
+            skills.write_json(status, {"state": "failed", "instruction": instruction,
+                                       "message": _tail((proc.stderr or "") or (proc.stdout or ""), 2)})
+        else:
+            skills.write_json(status, {"state": "ready", "instruction": instruction})
+    except Exception as exc:  # noqa: BLE001 - the thread must record, not raise
+        skills.write_json(status, {"state": "failed", "instruction": instruction,
+                                   "message": f"{type(exc).__name__}: {exc}"})
+    finally:
+        with _jobs_lock:
+            _jobs.pop(key, None)
+
+
+@_locked
+def edit_project_skill(config: Config, project: str, name: str, instruction: str) -> dict:
+    """Have the agent edit a copy of an installed skill, in the background.
+    What it made waits as a proposal; nothing in the skill changes until
+    Apply."""
+    instruction = (instruction or "").strip()
+    if not instruction:
+        return {"ok": False, "error": "say what to change"}
+    if len(instruction) > MAX_INSTRUCTION:
+        return {"ok": False, "error": f"at most {MAX_INSTRUCTION} characters"}
+    place, folder = _project_skill(config, project, name)
+    if place is None:
+        return {"ok": False, "error": folder}
+    key = f"edit:{place.store}/{folder.name}"
+    state = edit_state(config, place, folder.name).get("state")
+    if key in _jobs or state == "editing":
+        return {"ok": False, "error": "the agent is already editing this skill"}
+    if state == "edit-ready":
+        return {"ok": False, "error": "an edit is waiting: apply or discard it first"}
+    refused = skills.edit_refusal(folder)
+    if refused:
+        return {"ok": False, "error": f"it cannot be edited here: {refused}"}
+    skills.write_json(skills.edit_dir(config, place, folder.name) / "status.json",
+                      {"state": "editing", "started": time.time(), "boot": _BOOT,
+                       "instruction": instruction})
+    job = threading.Thread(target=_edit_job, daemon=True,
+                           args=(config, key, place, folder.name, instruction))
+    _jobs[key] = job
+    job.start()
+    return {"ok": True}
+
+
+def proposal_project_skill(config: Config, project: str, name: str) -> dict:
+    """The waiting edit of a skill, as a diff."""
+    place, folder = _project_skill(config, project, name)
+    if place is None:
+        return {"ok": False, "error": folder}
+    if edit_state(config, place, folder.name).get("state") != "edit-ready":
+        return {"ok": False, "error": "no edit is waiting for this skill"}
+    try:
+        return {"ok": True, **skills.diff_proposal(
+            skills.edit_dir(config, place, folder.name), folder)}
+    except (OSError, ValueError, KeyError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+# The last Apply, while it can be undone: its skill, and a token that only the
+# page which applied it holds. That page forgets the token at its next action
+# and on a reload; the next Apply here replaces it. One at a time, in memory:
+# a new server can undo nothing.
+_undo: dict = {}
+
+
+def _forget_undo(config: Config) -> None:
+    if _undo:
+        skills.forget_undo(config, skills.project_place(_undo["project"]), _undo["folder"])
+        _undo.clear()
+
+
+@_locked
+def apply_project_skill_edit(config: Config, project: str, name: str) -> dict:
+    """Apply the waiting edit. The answer carries the token Undo needs."""
+    place, folder = _project_skill(config, project, name)
+    if place is None:
+        return {"ok": False, "error": folder}
+    if edit_state(config, place, folder.name).get("state") != "edit-ready":
+        return {"ok": False, "error": "no edit is waiting for this skill"}
+    _forget_undo(config)                      # only the last Apply can be undone
+    try:
+        done = skills.apply_edit(config, place, folder)
+    except (RuntimeError, OSError, ValueError, KeyError) as exc:
+        return {"ok": False, "error": str(exc)}
+    _undo.update(token=secrets.token_urlsafe(16), project=place.key, folder=folder.name)
+    return {"ok": True, **done, "undo": _undo["token"]}
+
+
+@_locked
+def undo_project_skill_edit(config: Config, project: str, name: str, token: str) -> dict:
+    """Put the skill back as it was before the last Apply: with that Apply's
+    token only, and while the skill holds exactly what it wrote."""
+    place, folder = _project_skill(config, project, name)
+    if place is None:
+        return {"ok": False, "error": folder}
+    if not (_undo and token and secrets.compare_digest(token, _undo["token"])
+            and (place.key, folder.name) == (_undo["project"], _undo["folder"])):
+        return {"ok": False, "error": "it can't be undone any more"}
+    try:
+        changed = skills.undo_edit(config, place, folder)
+    except (RuntimeError, OSError) as exc:
+        return {"ok": False, "error": str(exc)}
+    _undo.clear()
+    return {"ok": True, "changed": changed}
+
+
+@_locked
+def discard_project_skill_edit(config: Config, project: str, name: str) -> dict:
+    place, folder = _project_skill(config, project, name)
+    if place is None:
+        return {"ok": False, "error": folder}
+    key = f"edit:{place.store}/{folder.name}"
+    if key in _jobs or edit_state(config, place, folder.name).get("state") == "editing":
+        return {"ok": False, "error": "the agent is still editing; wait for it to finish"}
+    skills.discard_edit(config, place, folder.name)
+    return {"ok": True}
+
+
+def _started_in() -> str:
+    """The project of the folder the server was started in, or "": where the
+    page opens when no project was chosen yet."""
+    from .capture import project_of
+    try:
+        return project_of(str(Path.cwd()))
+    except OSError:                           # a folder deleted since
+        return ""
+
+
+def make_handler(config: Config):
+    here = _started_in()
     actions = {
-        "/api/install": lambda p: install_skill(config, str(p.get("id", "")),
-                                                str(p.get("target", "")), skills_dir),
-        "/api/uninstall": lambda p: uninstall_skill(config, str(p.get("id", ""))),
+        "/api/install": lambda p: install_skill(config, str(p.get("id", ""))),
         "/api/accept": lambda p: accept(config, str(p.get("id", ""))),
         "/api/summary": lambda p: summarise(config, str(p.get("id", ""))),
         "/api/transcript": lambda p: transcript(config, str(p.get("session", ""))),
@@ -1088,6 +1175,19 @@ def make_handler(config: Config, skills_dir: Path | None = None):
         "/api/answer": lambda p: answer_questions(config, str(p.get("id", "")),
                                                   p.get("answers") or []),
         "/api/fold-now": lambda p: fold_now(config),
+        "/api/skill/read": lambda p: read_project_skill(config, str(p.get("project", "")),
+                                                        str(p.get("name", ""))),
+        "/api/skill/edit": lambda p: edit_project_skill(
+            config, str(p.get("project", "")), str(p.get("name", "")),
+            str(p.get("instruction") or "")),
+        "/api/skill/proposal": lambda p: proposal_project_skill(
+            config, str(p.get("project", "")), str(p.get("name", ""))),
+        "/api/skill/apply": lambda p: apply_project_skill_edit(
+            config, str(p.get("project", "")), str(p.get("name", ""))),
+        "/api/skill/undo": lambda p: undo_project_skill_edit(
+            config, str(p.get("project", "")), str(p.get("name", "")), str(p.get("token") or "")),
+        "/api/skill/discard": lambda p: discard_project_skill_edit(
+            config, str(p.get("project", "")), str(p.get("name", ""))),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -1144,27 +1244,7 @@ def make_handler(config: Config, skills_dir: Path | None = None):
             if url.path in ("/", "/index.html"):
                 return self._send(200, PAGE, "text/html; charset=utf-8")
             if url.path == "/api/state":
-                return self._send(200, json.dumps(collect_state(config)))
-            if url.path == "/api/draft.zip":
-                entry_id = (parse_qs(url.query).get("id") or [""])[0]
-                found = draft_zip(config, entry_id)
-                if not found:
-                    waiting = any(d["id"] == entry_id and d["questions"]
-                                  for d in list_drafts(config))
-                    if waiting:
-                        return self._send(409, json.dumps(
-                            {"error": "answer the open questions first"}))
-                    return self._send(404, json.dumps({"error": "no such draft"}))
-                filename, data = found
-                record_download(config, entry_id)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/zip")
-                self.send_header("Content-Disposition",
-                                 f'attachment; filename="{filename}"')
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-                return
+                return self._send(200, json.dumps({**collect_state(config), "here": here}))
             self._send(404, json.dumps({"error": "not found"}))
 
         def do_POST(self):
@@ -1175,6 +1255,8 @@ def make_handler(config: Config, skills_dir: Path | None = None):
                 payload = json.loads(self.rfile.read(length) or b"{}")
             except json.JSONDecodeError:
                 return self._send(400, json.dumps({"error": "bad json"}))
+            if not isinstance(payload, dict):
+                payload = {}                        # every action reads named fields
             action = actions.get(self.path)
             if not action:
                 return self._send(404, json.dumps({"error": "not found"}))
@@ -1183,10 +1265,11 @@ def make_handler(config: Config, skills_dir: Path | None = None):
     return Handler
 
 
-def serve(config: Config, skills_dir: Path | None = None, port: int = 8765,
+def serve(config: Config, port: int = 8765,
           open_browser: bool = True) -> ThreadingHTTPServer:
     """Serve on loopback only. Never bind anywhere else: there is no auth."""
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(config, skills_dir))
+    skills.forget_every_undo(config)          # left by a server that stopped
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(config))
     if open_browser:
         threading.Thread(target=webbrowser.open, daemon=True,
                          args=[f"http://127.0.0.1:{httpd.server_port}/"]).start()
@@ -1281,13 +1364,6 @@ PAGE = r"""<!doctype html>
  .badge.drafted{color:var(--go);border-color:var(--goline);background:var(--gobg)}
  .cand.drafted{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
  .draft.review{border-left:3px solid var(--go);background:linear-gradient(90deg,rgba(56,189,248,.07),var(--panel) 40%)}
- .draft.downloaded{border-left:3px solid var(--ok);background:linear-gradient(90deg,rgba(16,185,129,.07),var(--panel) 40%)}
- .badge.review{color:var(--go);border-color:var(--goline);background:var(--gobg)}
- .badge.downloaded{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
- .badge.installed{color:var(--ok);border-color:var(--okline);background:var(--okbg)}
- .draft.installed{border-left:3px solid var(--ok)}
- .where{font:12px var(--mono);color:var(--ok);white-space:nowrap;max-width:220px;
-   overflow:hidden;text-overflow:ellipsis}
  .badge.declined{color:var(--no);border-color:var(--noline);background:var(--nobg)}
  .clock{font:12px var(--mono);color:var(--muted);white-space:nowrap}
  .clock:empty{display:none}
@@ -1302,10 +1378,10 @@ PAGE = r"""<!doctype html>
  .clock.soon{color:#fbbf24}
  .clock.gone{color:var(--no)}
  .count{font:600 13px var(--mono);min-width:34px;text-align:right;flex-shrink:0;order:99}
- .section{display:flex;align-items:baseline;gap:10px;margin:22px 0 10px}
+ .section{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin:22px 0 10px}
  .section:first-child{margin-top:0}
- .section h2{margin:0;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--fg)}
- .section span{font-size:12px;color:var(--muted)}
+ .section h2{margin:0;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--fg);white-space:nowrap}
+ .section span{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
  .cand>.row{margin:0;border:0;background:none;cursor:pointer}
  .cand.open .chev{transform:rotate(90deg)}
  .cand .body{display:none;border-top:1px solid var(--line);padding:12px 16px 14px 44px}
@@ -1342,7 +1418,7 @@ PAGE = r"""<!doctype html>
  .runs{list-style:none;margin:0;padding:0;font-size:13px}
  .runs li{margin:2px 0}
  .run{background:none;border:0;padding:0;font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-   color:var(--accent);cursor:pointer;text-decoration:underline dotted}
+   color:var(--go);cursor:pointer;text-decoration:underline dotted}
  .run:hover{text-decoration:underline}
  .when{color:var(--muted);margin-left:10px}
  .convo{margin:6px 0 12px;padding:8px 12px;border-left:2px solid var(--line);max-height:340px;overflow:auto}
@@ -1421,21 +1497,96 @@ PAGE = r"""<!doctype html>
  .note .bar{display:flex;gap:8px;align-items:center}
  .blocked{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;color:var(--muted);
    border:1px solid var(--line);white-space:nowrap;cursor:not-allowed}
- a.download{font:500 12px var(--mono);padding:6px 12px;border-radius:5px;text-decoration:none;
-   color:var(--dim);border:1px solid var(--line);white-space:nowrap}
- @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}}
- /* A draft's row holds the most buttons (install, just for me, download,
-    ignore), so it breaks onto two lines sooner than a candidate's. */
+ /* The Skills tab: one block per project, its drafts to review, then its skills. */
+ .project{margin:0 0 32px}
+ .project-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:0 0 4px;
+   padding:0 0 8px;border-bottom:1px solid var(--line)}
+ .project-head h2{margin:0;font:600 15px var(--mono);color:var(--fg)}
+ .project-head span{font-size:12px;color:var(--muted)}
+ h3.sub{margin:16px 0 8px;font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+ .gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+ /* A card is the skill and nothing else: its name, what it is for, its state. */
+ button.skill{display:flex;flex-direction:column;gap:8px;min-width:0;width:100%;padding:14px 16px;
+   text-align:left;font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);
+   border-radius:10px;cursor:pointer;transition:border-color .12s}
+ button.skill:hover{border-color:var(--dim)}
+ button.skill:focus-visible{outline:2px solid var(--go);outline-offset:2px}
+ .skill .top{display:flex;align-items:center;gap:8px;min-width:0}
+ .skill .name{flex:1;min-width:0;font:600 13.5px var(--mono);color:var(--fg);white-space:nowrap;
+   overflow:hidden;text-overflow:ellipsis}
+ .skill .pills{display:flex;gap:6px;flex-shrink:0}
+ .skill .desc{font-size:12.5px;line-height:1.5;color:var(--dim);display:-webkit-box;-webkit-line-clamp:3;
+   -webkit-box-orient:vertical;overflow:hidden}
+ .pill{display:inline-flex;align-items:center;font:600 10px var(--mono);text-transform:uppercase;
+   letter-spacing:.06em;padding:2px 8px;border-radius:999px;border:1px solid;white-space:nowrap}
+ .pill .spin{width:8px;height:8px;margin-right:5px}
+ .pill.heed{color:#fbbf24;border-color:rgba(251,191,36,.45);background:rgba(251,191,36,.1)}
+ .pill.work{color:var(--go);border-color:var(--goline);background:var(--gobg)}
+ .pill.fail{color:var(--no);border-color:var(--noline);background:var(--nobg)}
+ button.danger:hover{color:var(--no);border-color:var(--noline);background:var(--nobg)}
+ /* An opened skill: its SKILL.md, what can be done with it, and its edit. */
+ dialog#viewer{width:min(900px,94vw);height:min(86vh,900px);max-width:none;max-height:none;padding:0;
+   border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--fg)}
+ dialog#viewer::backdrop{background:rgba(0,0,0,.6)}
+ body:has(dialog[open]){overflow:hidden}
+ .viewer{display:grid;grid-template-rows:auto minmax(0,1fr);grid-template-columns:minmax(0,1fr);height:100%}
+ .vhead{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:14px 18px;border-bottom:1px solid var(--line)}
+ .vname{font:600 15px var(--mono);margin-right:4px;min-width:0;overflow-wrap:anywhere}
+ .vhead .grow{flex:1}
+ .vpane{overflow:auto;padding:18px 22px}
+ .vnote{font:12px var(--mono);color:var(--muted);margin:6px 0}
+ .vpane .err{font:12px var(--mono);color:var(--no);margin:0 0 8px}
+ .edit{margin:0 0 20px;padding:0 0 18px;border-bottom:1px solid var(--line)}
+ .edit h4{margin:0 0 4px;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.04em;color:var(--fg)}
+ .edit label{display:block;margin:0 0 2px;font-size:13px;color:var(--fg)}
+ .edit .hint{margin:0 0 8px;font-size:12px;color:var(--dim)}
+ .edit textarea{width:100%;min-height:80px;resize:vertical;font:13px/1.5 var(--sans);color:var(--fg);
+   background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;margin:0 0 8px}
+ .edit .bar{display:flex;gap:8px;align-items:center}
+ .edit .failed{justify-content:space-between;margin:0 0 10px}
+ .edit .failed .err{margin:0}
+ .edit .applied{justify-content:space-between;margin:0 0 10px}
+ .edit .applied .ok{margin:0;font:12px var(--mono);color:var(--ok)}
+ .edit .warns{margin:0 0 10px;padding:8px 12px 8px 28px;border:1px solid rgba(251,191,36,.35);
+   background:rgba(251,191,36,.06);border-radius:6px;font-size:12.5px;color:var(--fg)}
+ .diff{margin:8px 0 12px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+ .diff summary,.diff .dh{padding:6px 10px;font:12px var(--mono);background:var(--surface);cursor:pointer}
+ .diff pre{margin:0;padding:8px 0;font:12px/1.5 var(--mono);overflow:auto;background:var(--bg)}
+ .diff .l{display:block;padding:0 10px;white-space:pre}
+ .diff .add{color:var(--ok);background:var(--okbg)} .diff .del{color:var(--no);background:var(--nobg)}
+ .diff .hunk{color:var(--go)} .diff .meta{color:var(--muted)}
+ /* The page's own pop-up, for a question to answer or a message to read. */
+ dialog#ask{width:min(440px,92vw);max-width:none;padding:0;border:1px solid var(--line);
+   border-radius:12px;background:var(--panel);color:var(--fg)}
+ dialog#ask::backdrop{background:rgba(0,0,0,.6)}
+ .ask{margin:0;padding:18px 20px 16px}
+ .ask h2{margin:0 0 8px;font:600 14px/1.45 var(--sans);color:var(--fg);overflow-wrap:anywhere}
+ .ask p{margin:0 0 8px;font-size:13px;line-height:1.55;color:var(--dim);white-space:pre-line;
+   overflow-wrap:anywhere}
+ .ask .bar{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+ .ask button.danger{color:#fff;border-color:var(--no);background:var(--no);font-weight:600}
+ .ask button.danger:hover{filter:brightness(1.1)}
+ @media(max-width:880px){.gallery{grid-template-columns:repeat(2,minmax(0,1fr))}}
+ @media(max-width:560px){.gallery{grid-template-columns:minmax(0,1fr)}
+   dialog#viewer{width:100vw;height:100dvh;border-radius:0}}
+ /* The tabs and the project switcher don't fit a phone's width on one line. */
+ @media(max-width:640px){.row{flex-wrap:wrap}.title{flex-basis:100%}
+   header{flex-wrap:wrap;padding:10px 16px}nav{flex-wrap:wrap}nav button{white-space:nowrap}
+   header select{max-width:100%}}
+ /* A draft's row holds its install and ignore buttons, so it breaks onto two
+    lines sooner than a candidate's. */
  @media(max-width:880px){.draft .row{flex-wrap:wrap}.draft .title{flex-basis:calc(100% - 40px)}}
 </style></head><body>
-<header><span style="display:flex;align-items:center;gap:18px"><b>Skill++</b>
+<header><span style="display:flex;align-items:center;gap:6px 18px;flex-wrap:wrap"><b>Skill++</b>
 <nav id="nav"></nav></span><select id="project" aria-label="Project" hidden></select></header>
 <main id="list"></main>
+<dialog id="viewer" aria-labelledby="viewer-title"></dialog>
+<dialog id="ask" aria-labelledby="ask-title"></dialog>
 <script>
 let S = {rows:[], drafts:[]}, busy = new Set(), timer = null;
-// A candidate with a draft is reviewed in the Drafts tab, not listed here.
-// A draft's row lives in the Drafts tab, installed ones too; a skill installed
-// by hand, with no draft here, stays on the Candidates tab.
+// A candidate with a draft lives on the Skills tab, not here, under its
+// project: in To review while it is a draft, as a skill card once installed. A
+// skill installed by hand, with no draft here, stays on the Candidates tab.
 const DOCS = "https://skill-plus-plus-org.github.io/usage/";
 // Nothing captured looks the same as nothing repeated yet, so the page says
 // which: a warning while no hooks feed it, and an empty list that explains
@@ -1476,8 +1627,10 @@ let noting = new Set(), notes = {};
 let openRuns = new Set(), convos = {}, convoError = {}, openReqs = new Set();
 // Every POST says it is JSON: the server refuses anything else, because a
 // body without that header is one another site could send cross-site.
-const post = (path, body) => fetch(path, {method: "POST",
+const send = (path, body) => fetch(path, {method: "POST",
   headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+// An action. Whatever it is, the last Apply can't be undone after it.
+const post = (path, body) => { justApplied = null; return send(path, body); };
 const esc = s => String(s ?? "").replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -1489,7 +1642,7 @@ function actions(r){
       <button class="decline" data-act="decline" data-id="${id}"${off} title="${IGNORE_HINT}">Ignore</button>`;
     case "accepted": return draftButton(r) + ignoreButton(r);
     case "creating": return `<span class="state"><span class="spin"></span>Creating skill…</span>`;
-    case "drafted": return `<a class="state ok" data-goto="${id}" title="Review in Drafts">Review</a>`;
+    case "drafted": return `<a class="state ok" data-goto="${id}" title="Review it under Skills">Review</a>`;
     case "revising": return `<span class="state"><span class="spin"></span>Revising…</span>`;
     case "installed": return `<span class="state ok" title="${esc(r.path)}">Skill installed</span>`;
     case "failed": case "declined":
@@ -1500,11 +1653,39 @@ function actions(r){
   }
 }
 
+// The page's own pop-ups, for a question to answer or a message to read. The
+// browser's own confirm and alert boxes can be switched off, and Claude's
+// in-app browser does: a question there answered "no" without being shown, so
+// Ignore seemed to do nothing, and an error said nothing. A <dialog> of the
+// page's own is never blocked.
+let askBound = false, answer = null;
+function popup(body, buttons){
+  const dlg = document.getElementById("ask");
+  if(!askBound){
+    askBound = true;
+    dlg.addEventListener("close", () => { const done = answer; answer = null; if(done) done(dlg.returnValue); });
+    dlg.addEventListener("click", ev => { if(ev.target === dlg) dlg.close(); });   // beside it
+  }
+  if(answer){ answer(""); answer = null; }       // a newer one takes the place of one still open
+  dlg.returnValue = "";
+  dlg.innerHTML = `<form method="dialog" class="ask">${body}<div class="bar">${buttons}</div></form>`;
+  if(!dlg.open) dlg.showModal();
+  return new Promise(done => { answer = done; });
+}
+// A question: its first paragraph is what is asked, the rest says why. Cancel,
+// Esc and a click beside it all answer no; Cancel has the focus, so Enter does.
+async function ask(message, action){
+  const [question, ...why] = message.split("\n\n");
+  return await popup(`<h2 id="ask-title">${esc(question)}</h2>${why.map(w => `<p>${esc(w)}</p>`).join("")}`,
+    `<button value="">Cancel</button><button value="yes" class="danger">${esc(action)}</button>`) === "yes";
+}
+const tell = message => popup(`<p id="ask-title">${esc(message)}</p>`, `<button value="ok" class="create">OK</button>`);
+
 // Ignore is the one decision that is easy to make by mistake and quiet
 // afterwards: an ignored procedure is still recognised, so it never shows up
 // again to remind anyone. A pending card says so on hover; a promoted one, which
-// someone already chose, asks first. An installed skill is uninstalled first,
-// or it would stay in its skills folder while the page calls it ignored.
+// someone already chose, asks first. An installed skill can't be ignored: it
+// would stay in its skills folder while the page calls it ignored.
 const IGNORE_HINT = "Won't be proposed again. You can bring it back from Ignored.";
 function ignoreButton(r, drafted){
   if(noting.has(r.id)) return "";
@@ -1517,8 +1698,8 @@ function ignoreWarning(title, drafted){
     + "\n\nYou can bring it back any time from Ignored.";
 }
 function bindIgnore(list){
-  list.querySelectorAll("[data-ignore]").forEach(b => b.onclick = () => {
-    if(confirm(ignoreWarning(b.dataset.title, b.dataset.drafted))) act("decline", b.dataset.ignore);
+  list.querySelectorAll("[data-ignore]").forEach(b => b.onclick = async () => {
+    if(await ask(ignoreWarning(b.dataset.title, b.dataset.drafted), "Ignore")) act("decline", b.dataset.ignore);
   });
 }
 
@@ -1546,7 +1727,7 @@ async function startDraft(id){
   try {
     const note = (notes[id] || "").trim();
     const r = await (await post("/api/create", {id, note})).json();
-    if(!r.ok){ alert(r.error || "failed"); return; }
+    if(!r.ok){ tell(r.error || "failed"); return; }
     // The note stays in `notes`, so a retry after a failed run starts from it.
     noting.delete(id);
   } finally { busy.delete(id); await load(); }
@@ -1558,23 +1739,29 @@ async function startDraft(id){
 const PROJECT_KEY = "skill_plus_plus.project";
 let ALL = null, project = null;
 try { const v = localStorage.getItem(PROJECT_KEY); if (v !== null) project = JSON.parse(v); } catch (e) {}
-const inProject = x => project === null || (x.projects || [""]).includes(project);
+const inProject = x => x.projects.includes(project);
+// One project at a time, always: the one chosen last, or else the one the
+// page was started in, or else the first. A candidate and its skill belong to
+// one project, and nothing on the page is about several.
+function pickProject(){
+  const keys = (ALL.projects || []).map(p => p.key);
+  if (!keys.includes(project)) project = keys.includes(ALL.here) ? ALL.here : keys[0] ?? null;
+}
 function applyProject(){
-  S = {...ALL, rows: ALL.rows.filter(inProject), drafts: ALL.drafts.filter(inProject)};
+  S = {...ALL, rows: ALL.rows.filter(inProject), drafts: ALL.drafts.filter(inProject),
+       skills: (ALL.skills || []).filter(g => g.project === project)};
 }
 function renderProjects(){
   const sel = document.getElementById("project");
   const list = ALL.projects || [];
-  if (project !== null && !list.some(p => p.key === project)) project = null;   // gone since
-  // Shown whenever there is a project: candidates and skills each belong to
-  // one, and this is where the page says which. With one, it is named rather
-  // than offered as "All projects", which would show the same.
+  // Shown whenever there is a project, one or more: this is where the page
+  // says which project it shows.
   sel.hidden = !list.length;
-  sel.innerHTML = (list.length > 1 ? `<option value="*">All projects</option>` : "") + list.map(p =>
-    `<option value="${esc(p.key)}" title="${esc(p.path || "sessions recorded without a folder")}">${esc(p.name)}</option>`).join("");
-  sel.value = project !== null ? project : list.length === 1 ? list[0].key : "*";
+  sel.innerHTML = list.map(p =>
+    `<option value="${esc(p.key)}" title="${esc(p.path)}">${esc(p.name)}</option>`).join("");
+  sel.value = project ?? "";
   sel.onchange = () => {
-    project = sel.value === "*" ? null : sel.value;
+    project = sel.value;
     try { localStorage.setItem(PROJECT_KEY, JSON.stringify(project)); } catch (e) {}
     applyProject(); render();
   };
@@ -1596,7 +1783,7 @@ function syncSeen(){
   saveSeen();
 }
 const isNew = d => !d.revising && seen && seen.cards[d.id] !== d.drafted_at;
-const newSinceTab = () => S.drafts.filter(d => isNew(d) && stamp(d.drafted_at) > seen.tab).length;
+const newSinceTab = () => S.drafts.filter(d => !d.installed && isNew(d) && stamp(d.drafted_at) > seen.tab).length;
 function markTabSeen(){
   const top = Math.max(seen.tab, ...S.drafts.map(d => stamp(d.drafted_at)));
   if(top !== seen.tab){ seen.tab = top; saveSeen(); }
@@ -1608,9 +1795,10 @@ function markCardSeen(id){
 
 function renderNav(){
   const nav = document.getElementById("nav");
-  nav.innerHTML = [["candidates","Candidates",S.rows.filter(r => !inDrafts(r)).length],["drafts","Drafts",S.drafts.length]]
+  const onTab = S.drafts.filter(d => !d.installed).length + (S.skills || []).reduce((n, g) => n + g.skills.length, 0);
+  nav.innerHTML = [["candidates","Candidates",S.rows.filter(r => !inDrafts(r)).length],["skills","Skills",onTab]]
     .map(([k,l,n]) => {
-      const fresh = k === "drafts" ? newSinceTab() : 0;
+      const fresh = k === "skills" ? newSinceTab() : 0;
       return `<button data-view="${k}" aria-selected="${view===k}">${l} (${n})${fresh
         ? `<span class="new" title="${fresh} new draft${fresh===1?"":"s"} since you last looked">${fresh} new</span>` : ""}</button>`;
     }).join("");
@@ -1734,7 +1922,7 @@ function questionsBlock(d){
         data-other placeholder="write your own answer" value="${esc(a.text || "")}">`)}</div>`;
   };
   return `<div class="questions"><h4>Open questions</h4>
-    <p class="hint">The agent could not tell these from the recorded runs. Pick an answer or write your own; the skill downloads once none are left.</p>
+    <p class="hint">The agent could not tell these from the recorded runs. Pick an answer or write your own; the skill can be installed once none are left.</p>
     ${d.questions.map(one).join("")}
     <div class="bar" style="margin-top:12px"><button class="create" data-answer-send="${id}">Send answers</button></div>
   </div>`;
@@ -1751,33 +1939,33 @@ function reviseBlock(d){
     <button data-revise-cancel="${id}">Cancel</button></div></div>`;
 }
 
-function renderDrafts(list){
-  // Install is the way a skill reaches its project: into the repo's
-  // .claude/skills/, where committing it shares it. Download stays for
-  // anywhere else.
-  const installActs = d => d.installed
-    ? `<span class="where" title="${esc(d.installed)}">${d.installed_target === "project" ? "in " + esc(d.project_name) : "for you"}</span>`
-      + (d.install_stale ? `<button class="create" data-install="${esc(d.id)}" data-target="${esc(d.installed_target)}" title="The draft changed since it was installed">Update</button>` : "")
-      + `<button data-uninstall="${esc(d.id)}" data-where="${esc(d.installed)}">Uninstall</button>`
-    : (d.project_name ? `<button class="create" data-install="${esc(d.id)}" data-target="project" title="Into the repo's .claude/skills/. Commit it to share it with everyone in the repo.">Install in ${esc(d.project_name)}</button>` : "")
-      + `<button data-install="${esc(d.id)}" data-target="personal" title="Into ~/.claude/skills/, only for you">${d.project_name ? "Just for me" : "Install for me"}</button>`
-      + `<a class="download" href="/api/draft.zip?id=${encodeURIComponent(d.id)}" download="${esc(d.name)}.zip">Download</a>`;
-  const kind = d => d.installed ? "installed" : d.downloaded_at ? "downloaded" : "review";
-  // A draft can be ignored like its candidate; one being revised waits, and an
-  // installed one is uninstalled first.
-  const draftIgnore = d => d.revising ? ""
-    : d.installed ? ` <button class="decline" disabled title="Uninstall the skill first, then ignore it">Ignore</button>`
-    : ignoreButton(d, true);
-  const card = d => `<div class="draft ${kind(d)} ${open.has(d.id) || d.revising ? "open" : ""} ${d.revising ? "busy" : ""} ${isNew(d)?"fresh":""}">
+// The Skills tab, one project at a time: the project's drafts to review and
+// install, then the skills it has. A draft, once installed, is one of them.
+// Edit has the agent change a copy, shown as a diff that changes nothing
+// until Apply.
+let viewer = null, viewerBound = false, editText = {};
+// The skill whose edit was just applied, and the token its Undo needs; null
+// once anything else is done, and after a reload.
+let justApplied = null;
+const skillKey = (p, n) => p + "\n" + n;
+function findGallery(p){ return ((ALL || S).skills || []).find(g => g.project === p) || null; }
+function findCard(p, n){
+  const g = findGallery(p);
+  return g ? g.skills.find(c => c.name === n) || null : null;
+}
+function draftCard(d){
+  const install = d.questions.length
+    ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
+    : `<button class="create" data-install="${esc(d.id)}" title="Into ${esc(d.project_name)}'s .claude/skills/. Commit it to share it with everyone in the repo.">Install in ${esc(d.project_name)}</button>`;
+  // A draft can be ignored like its candidate; one being revised waits.
+  const ignore = d.revising ? "" : ignoreButton(d, true);
+  return `<div class="draft review ${open.has(d.id) || d.revising ? "open" : ""} ${d.revising ? "busy" : ""} ${isNew(d)?"fresh":""}">
       <div class="row" data-toggle="${esc(d.id)}">
         <span class="chev">›</span>
         <span class="title" title="${esc(d.title)}">${esc(d.name)}</span>
         ${isNew(d) ? `<span class="new" title="Written since you last opened it">New</span>` : ""}
         <span class="ago" title="${esc(when(d.drafted_at))}">${d.revising ? `<span class="spin"></span>Revising…` : "drafted " + ago(d.drafted_at)}</span>
-        <span class="badge ${kind(d)}">${{installed: "Installed", downloaded: "Downloaded", review: "To review"}[kind(d)]}</span>
-        <span class="acts">${d.questions.length
-          ? `<span class="blocked" title="Answer the open questions first">${d.questions.length} open question${d.questions.length===1?"":"s"}</span>`
-          : installActs(d)}${draftIgnore(d)}</span>
+        <span class="acts">${install}${ignore}</span>
       </div>
       <p class="desc">${esc(d.description)}</p>
       <div class="body">
@@ -1787,30 +1975,45 @@ function renderDrafts(list){
         <div class="md">${md(d.body)}</div>
         ${reviseBlock(d)}
       </div></div>`;
-  const toReview = S.drafts.filter(d => kind(d) === "review");
-  const installed = S.drafts.filter(d => kind(d) === "installed");
-  const downloaded = S.drafts.filter(d => kind(d) === "downloaded");
-  const part = (title, note, items, none) => `<div class="section"><h2>${title}</h2><span>${note}</span></div>
-    ${items.length ? items.map(card).join("") : `<p class="empty">${none}</p>`}`;
-  list.innerHTML = S.drafts.length
-    ? part("To review", "Drafts not installed or downloaded yet.", toReview, "Nothing waiting.")
-      + part("Installed", "In a skills folder, where your agent loads them. A revision can be passed on with Update.", installed, "Nothing installed yet.")
-      + (downloaded.length ? part("Downloaded", "Downloaded but not installed from here.", downloaded, "") : "")
-    : `<p class="empty">No drafts yet. Promote a candidate, then Draft Skill.</p>`;
+}
+function statePills(c){
+  const e = c.edit || {};
+  return [
+    e.state === "editing" ? `<span class="pill work"><span class="spin"></span>Editing</span>` : "",
+    e.state === "edit-ready" ? `<span class="pill heed" title="The agent's change is waiting for you">Edit ready</span>` : "",
+    e.state === "edit-failed" ? `<span class="pill fail" title="${esc(e.message)}">Edit failed</span>` : "",
+  ].filter(Boolean).join("");
+}
+function skillCard(g, c){
+  const pills = statePills(c), e = c.edit || {};
+  return `<button class="skill${e.state === "editing" ? " busy" : ""}" data-open-skill data-project="${esc(g.project)}" data-name="${esc(c.name)}">
+    <span class="top"><span class="name">${esc(c.name)}</span>${pills ? `<span class="pills">${pills}</span>` : ""}</span>
+    <span class="desc">${esc(c.description) || "No description."}</span></button>`;
+}
+function projectHTML(g, drafts){
+  const counts = [plural(g.skills.length, "skill"), drafts.length ? `${plural(drafts.length, "draft")} to review` : ""]
+    .filter(Boolean).join(" · ");
+  const warn = !g.exists ? `<div class="warn"><strong>Folder not found.</strong> ${esc(g.project)} is gone.</div>` : "";
+  const review = drafts.length ? `<h3 class="sub">To review</h3>${drafts.map(draftCard).join("")}` : "";
+  const skills = g.skills.length
+    ? `<h3 class="sub">Skills</h3><div class="gallery">${g.skills.map(c => skillCard(g, c)).join("")}</div>`
+    : g.exists ? `<p class="empty">No skills in this project yet.${drafts.length ? " Install one from a draft above." : ""}</p>` : "";
+  return `<section class="project"><div class="project-head"><h2>${esc(g.name)}</h2><span title="${esc(g.project)}">${counts}</span></div>${warn}${review}${skills}</section>`;
+}
+function skillsTabHTML(){
+  const galleries = S.skills || [], waiting = S.drafts.filter(d => !d.installed);
+  return galleries.map(g => projectHTML(g, waiting.filter(d => d.projects.includes(g.project)))).join("")
+    || `<div class="empty"><p><strong>Nothing here yet.</strong></p>
+    <p>Promote a candidate and press Draft Skill: the draft shows up here, under its project, to review and install.</p></div>`;
+}
+function bindSkillsTab(list){
   list.querySelectorAll("[data-install]").forEach(b => b.onclick = async () => {
     b.disabled = true;
-    const r = await (await post("/api/install", {id: b.dataset.install, target: b.dataset.target})).json();
-    if (!r.ok) { alert(r.error || "install failed"); b.disabled = false; return; }
+    const r = await (await post("/api/install", {id: b.dataset.install})).json();
+    if (!r.ok) { tell(r.error || "install failed"); b.disabled = false; return; }
     await load();
   });
-  list.querySelectorAll("[data-uninstall]").forEach(b => b.onclick = async () => {
-    if (!confirm(`Remove the skill installed in\n${b.dataset.where}?\n\nOnly the files installed from this page are removed.`)) return;
-    b.disabled = true;
-    const r = await (await post("/api/uninstall", {id: b.dataset.uninstall})).json();
-    if (!r.ok) { alert(r.error || "uninstall failed"); b.disabled = false; return; }
-    await load();
-  });
-  list.querySelectorAll("a.download").forEach(a => a.addEventListener("click", () => setTimeout(load, 1000)));
+  list.querySelectorAll("[data-open-skill]").forEach(b => b.onclick = () => openViewer(b.dataset.project, b.dataset.name));
   bindIgnore(list);
   list.querySelectorAll("[data-revise-open]").forEach(b => b.onclick = () => {
     writing.add(b.dataset.reviseOpen); render();
@@ -1841,10 +2044,10 @@ function renderDrafts(list){
       const answer = a.choice && a.choice !== "other" ? q.options[+a.choice] : a.text;
       return {question: q.question, answer: (answer || "").trim()};
     }).filter(a => a.answer);
-    if(!payload.length){ alert("Answer at least one question."); return; }
+    if(!payload.length){ tell("Answer at least one question."); return; }
     b.disabled = true;
     const r = await (await post("/api/answer", {id, answers: payload})).json();
-    if(!r.ok){ alert(r.error || "failed"); b.disabled = false; return; }
+    if(!r.ok){ tell(r.error || "failed"); b.disabled = false; return; }
     delete answers[id]; await load();
   });
   list.querySelectorAll("[data-revise-send]").forEach(b => b.onclick = async () => {
@@ -1852,7 +2055,7 @@ function renderDrafts(list){
     if(!instruction) return;
     b.disabled = true;
     const r = await (await post("/api/revise", {id, instruction})).json();
-    if(!r.ok){ alert(r.error || "failed"); b.disabled = false; return; }
+    if(!r.ok){ tell(r.error || "failed"); b.disabled = false; return; }
     writing.delete(id); delete drafts[id]; await load();
   });
   list.querySelectorAll("[data-toggle]").forEach(h => h.onclick = ev => {
@@ -1863,6 +2066,147 @@ function renderDrafts(list){
     markCardSeen(id);
     h.parentElement.classList.remove("fresh");
     h.querySelector(".new")?.remove();
+  });
+}
+
+function diffHTML(f){
+  const head = `${esc(f.path)} <span class="vnote">${esc(f.change)}${f.binary ? ", binary" : ` · +${f.added} −${f.removed}`}</span>`;
+  if(f.binary) return `<div class="diff"><div class="dh">${head}</div></div>`;
+  const lines = f.diff.split("\n").filter((l, i, all) => l || i < all.length - 1).map(l => {
+    const kind = l.startsWith("@@") ? "hunk" : l.startsWith("+++") || l.startsWith("---") ? "meta"
+      : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "";
+    return `<span class="l ${kind}">${esc(l) || " "}</span>`;
+  }).join("");
+  return `<details class="diff" open><summary>${head}</summary><pre>${lines}</pre>${f.truncated
+    ? `<p class="vnote">Cut short here; Apply writes the whole change.</p>` : ""}</details>`;
+}
+function proposalHTML(p){
+  if(!p || p.loading) return `<div class="edit"><p class="vnote">Loading the proposed change…</p></div>`;
+  if(p.error) return `<div class="edit"><p class="err">${esc(p.error)}</p></div>`;
+  const warns = p.warnings.length ? `<ul class="warns">${p.warnings.map(w => `<li>${mdInline(w)}</li>`).join("")}</ul>` : "";
+  const stale = p.stale ? `<p class="err">The skill changed after the agent took its copy, so this can't be applied. Discard it and ask again.</p>` : "";
+  return `<div class="edit"><h4>Proposed change</h4><p class="hint">You asked: ${esc(p.instruction)}</p>${warns}${stale}
+    ${p.files.map(diffHTML).join("")}
+    <div class="bar"><button class="create" data-edit-apply${p.stale ? " disabled" : ""}>Apply</button>
+    <button class="danger" data-edit-discard>Discard</button></div></div>`;
+}
+function editHTML(v){
+  const c = findCard(v.project, v.name);
+  if(!c) return "";
+  const e = c.edit || {};
+  if(e.state === "editing") return `<div class="edit">${working("The agent is editing a copy",
+    `The skill stays as it is until you apply the change. You asked: ${esc(e.instruction)}`, e.since)}</div>`;
+  if(e.state === "edit-ready") return proposalHTML(v.proposal);
+  const failed = e.state === "edit-failed" ? `<div class="bar failed"><p class="err">Last edit failed: ${esc(e.message || "no reason given")}</p>
+    <button data-edit-dismiss title="Clear it; the skill is as it was">Dismiss</button></div>` : "";
+  const undo = justApplied && justApplied.project === v.project && justApplied.name === v.name
+    ? `<div class="bar applied"><p class="ok">The edit is applied.</p>
+      <button data-edit-undo title="Put the skill back as it was. Only until your next action.">Undo</button></div>` : "";
+  if(!v.editing) return failed || undo ? `<div class="edit">${failed}${undo}</div>` : "";
+  return `<div class="edit">${failed}<label for="edit-box">What should change?</label>
+    <p class="hint">Your agent edits a copy. You see the change here and apply it or not; the skill stays as it is until then.</p>
+    <textarea id="edit-box" data-edit-project="${esc(v.project)}" data-edit-name="${esc(v.name)}" placeholder="e.g. also check the milestone's due date before building the deck">${esc(editText[skillKey(v.project, v.name)] || "")}</textarea>
+    <div class="bar"><button class="create" data-edit-send>Send to agent</button><button data-edit-cancel>Cancel</button></div></div>`;
+}
+function viewerHeadHTML(v){
+  const c = findCard(v.project, v.name);
+  const close = `<button data-vclose>Close</button>`;
+  if(!c) return `<span class="vname" id="viewer-title">${esc(v.name)}</span><span class="grow"></span>${close}`;
+  const e = c.edit || {}, pending = e.state === "editing" || e.state === "edit-ready";
+  const noEdit = c.edit_block ? `It can't be edited from here: ${c.edit_block}` : "";
+  return `<span class="vname" id="viewer-title">${esc(v.name)}</span>${statePills(c)}<span class="grow"></span>
+    ${pending || v.editing ? "" : `<button data-vedit${noEdit ? ` disabled title="${esc(noEdit)}"` : ""}>Edit</button>`}
+    ${close}`;
+}
+function viewerHTML(v){
+  const d = v.data;
+  const body = !d ? `<p class="vnote">Loading…</p>`
+    : d.text === null ? `<p class="err">${esc(d.error || "SKILL.md can't be read")}</p>`
+    : `<div class="md">${md(d.text)}</div>${d.truncated ? `<p class="vnote">Only the start is shown.</p>` : ""}`;
+  return `<div class="viewer"><div class="vhead" id="vhead"></div>
+    <div class="vpane"><div id="vedit"></div><div id="vfile">${body}</div></div></div>`;
+}
+function paintViewer(){
+  const dlg = document.getElementById("viewer");
+  if(!viewer || !dlg) return;
+  dlg.innerHTML = viewerHTML(viewer);
+  paintViewerParts();
+}
+// Repainted on every poll without touching the SKILL.md being read: its head
+// (state, actions) and its edit.
+function paintViewerParts(){
+  const head = viewer && document.getElementById("vhead"), box = document.getElementById("vedit");
+  if(!head || !box) return;
+  const c = findCard(viewer.project, viewer.name), state = c && c.edit && c.edit.state;
+  if(state !== "edit-ready") viewer.proposal = null;
+  else if(!viewer.proposal){ viewer.proposal = {loading: true}; loadProposal(viewer); }
+  if(state === "editing" || state === "edit-ready") viewer.editing = false;
+  head.innerHTML = viewerHeadHTML(viewer);
+  box.innerHTML = editHTML(viewer);
+}
+async function loadProposal(v){
+  const r = await (await send("/api/skill/proposal", {project: v.project, name: v.name})).json();
+  if(viewer !== v) return;
+  v.proposal = r.ok ? r : {error: r.error || "no change is waiting"};
+  paintViewerParts();
+}
+async function openViewer(project, name){
+  const dlg = document.getElementById("viewer");
+  bindViewer(dlg);
+  const v = viewer = {project, name, data: null, proposal: null, editing: false};
+  paintViewer();
+  if(!dlg.open) dlg.showModal();
+  const r = await (await send("/api/skill/read", {project, name})).json();
+  if(viewer !== v) return;
+  v.data = r.ok ? r : {text: null, error: r.error || "it can't be read"};
+  paintViewer();
+}
+async function viewerAct(b, path, body){
+  const v = viewer;
+  b.disabled = true;
+  const r = await (await post(path, body || {project: v.project, name: v.name})).json();
+  if(!r.ok){ tell(r.error || "failed"); b.disabled = false; return; }
+  if(r.note) tell(r.note);
+  if(path === "/api/skill/edit"){ delete editText[skillKey(v.project, v.name)]; v.editing = false; }
+  if(r.undo) justApplied = {project: v.project, name: v.name, token: r.undo};
+  v.proposal = null;
+  await load();
+  // Apply and Undo change SKILL.md: read it again.
+  if((path === "/api/skill/apply" || path === "/api/skill/undo") && viewer === v) openViewer(v.project, v.name);
+}
+function bindViewer(dlg){
+  if(viewerBound) return;
+  viewerBound = true;
+  dlg.addEventListener("close", () => { viewer = null; dlg.innerHTML = ""; });
+  dlg.addEventListener("input", ev => {
+    const t = ev.target.closest("[data-edit-name]");
+    if(t) editText[skillKey(t.dataset.editProject, t.dataset.editName)] = t.value;
+  });
+  dlg.addEventListener("click", ev => {
+    if(ev.target === dlg) return dlg.close();          // the backdrop
+    const b = ev.target.closest("button");
+    if(!b || b.disabled || !viewer) return;
+    const v = viewer, ds = b.dataset;
+    if("vclose" in ds) return dlg.close();
+    if("vedit" in ds){
+      v.editing = true; paintViewerParts();
+      const box = document.getElementById("edit-box");
+      if(box) box.focus();
+      return;
+    }
+    if("editCancel" in ds){ v.editing = false; return paintViewerParts(); }
+    if("editSend" in ds){
+      const instruction = (editText[skillKey(v.project, v.name)] || "").trim();
+      if(instruction) viewerAct(b, "/api/skill/edit", {project: v.project, name: v.name, instruction});
+      return;
+    }
+    if("editApply" in ds) return viewerAct(b, "/api/skill/apply");
+    if("editUndo" in ds)
+      return viewerAct(b, "/api/skill/undo", {project: v.project, name: v.name, token: (justApplied || {}).token});
+    if("editDismiss" in ds) return viewerAct(b, "/api/skill/discard");
+    if("editDiscard" in ds)
+      return ask("Discard the proposed change?\n\nThe skill stays as it is.", "Discard")
+        .then(yes => yes && viewerAct(b, "/api/skill/discard"));
   });
 }
 
@@ -1950,7 +2294,7 @@ function renderConvo(c){
 async function fetchConvo(session){
   if(convos[session] || convoError[session]) return;
   try {
-    const res = await (await post("/api/transcript", {session})).json();
+    const res = await (await send("/api/transcript", {session})).json();
     if(res.ok){ convos[session] = res; } else { convoError[session] = res.error || "failed"; }
   } catch(e){ convoError[session] = String(e); }
   if(view === "candidates") render();
@@ -1961,7 +2305,7 @@ async function fetchSummary(id){
   if(!r || r.summary || summarising.has(id) || summaryError[id]) return;
   summarising.add(id);
   try {
-    const res = await (await post("/api/summary", {id})).json();
+    const res = await (await send("/api/summary", {id})).json();
     const row = S.rows.find(x => x.id === id);
     if(res.ok){ if(row) row.summary = res.summary; } else { summaryError[id] = res.error || "failed"; }
   } catch(e){ summaryError[id] = String(e); }
@@ -1973,7 +2317,7 @@ async function fetchSummary(id){
 // for the next draft, an answer, a revision. Put it back where it was.
 function render(){
   syncSeen();
-  if(view === "drafts") markTabSeen();
+  if(view === "skills") markTabSeen();
   const t = document.activeElement;
   const typing = t && t.tagName === "TEXTAREA" ? {
     at: [...t.attributes].filter(a => a.name.startsWith("data-"))
@@ -1987,7 +2331,11 @@ function render(){
 function paint(){
   renderNav();
   const list = document.getElementById("list");
-  if(view === "drafts") return renderDrafts(list);
+  if(view === "skills"){
+    list.innerHTML = skillsTabHTML();
+    bindSkillsTab(list);
+    return paintViewerParts();
+  }
   const highlight = r => r.state === "dismissed" ? "declined"
     : ["drafted", "revising", "installed"].includes(r.state) ? "drafted"
     : ["undecided", "collecting"].includes(r.state) ? (r.ready ? "ready" : "")
@@ -2003,13 +2351,13 @@ function paint(){
         title="Deleted by skill-plus-plus expire ${S.ttl} days after it was last recognized, unless you promote it first">${r.days_left === 0 ? "⏱ expired" : `⏱ ${r.days_left}d`}</span>`}
       <span class="seen count ${r.occurrences >= S.threshold ? "reached" : ""}" title="recognized ${r.occurrences} time${r.occurrences===1?"":"s"}">${r.occurrences}×</span></div>
       ${noteBlock(r)}
-      <div class="body">${r.state === "creating" ? working("Writing the skill", "The agent reads the first run and drafts the skill. It appears under Drafts when it is done.", r.since) : ""}${candidateBody(r)}</div></div>`;
+      <div class="body">${r.state === "creating" ? working("Writing the skill", "The agent reads the first run and drafts the skill. It appears on the Skills tab when it is done.", r.since) : ""}${candidateBody(r)}</div></div>`;
   const declined = S.rows.filter(r => r.state === "dismissed");
   const promoted = S.rows.filter(r => !["undecided", "collecting", "dismissed"].includes(r.state) && !inDrafts(r));
   const open_ = S.rows.filter(r => ["undecided", "collecting"].includes(r.state));
   const ready = open_.filter(r => r.ready), collecting = open_.filter(r => !r.ready);
   list.innerHTML = `${captureWarning()}${memoryWarning()}
-    ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>Candidates you promoted. Draft a skill from them; the draft appears in the Drafts tab.</span></div>
+    ${promoted.length ? `<div class="section"><h2>Promoted</h2><span>Candidates you promoted. Draft a skill from them; the draft appears on the Skills tab, under its project.</span></div>
     ${promoted.map(card).join("")}` : ""}
     <div class="section"><h2>Still collecting</h2><span>Work Skill++ saw you repeat. Once something is seen ${S.threshold}×, you can promote or ignore it.</span></div>
     ${ready.length + collecting.length ? `<div class="collecting">
@@ -2047,7 +2395,7 @@ function paint(){
     render();
   });
   list.querySelectorAll("[data-goto]").forEach(a => a.onclick = () => {
-    view = "drafts"; open.add(a.dataset.goto); markCardSeen(a.dataset.goto); render();
+    view = "skills"; open.add(a.dataset.goto); markCardSeen(a.dataset.goto); render();
   });
 }
 
@@ -2055,18 +2403,21 @@ async function act(what, id){
   busy.add(id); render();
   try {
     const r = await (await post("/api/" + what, {id})).json();
-    if(!r.ok) alert(r.error || "failed");
+    if(!r.ok) tell(r.error || "failed");
   } finally { busy.delete(id); await load(); }
 }
 
 async function load(){
   ALL = await (await fetch("/api/state")).json();
+  pickProject();
   applyProject();
   renderProjects();
   render();
   clearTimeout(timer);
-  // Every project's rows: a draft running in another project still finishes.
-  if(ALL.rows.some(r => r.state === "creating" || r.state === "revising")) timer = setTimeout(load, 5000);
+  // Every project's rows and skills: a draft or an edit running in another
+  // project still finishes.
+  const editing = (ALL.skills || []).some(g => g.skills.some(c => c.edit && c.edit.state === "editing"));
+  if(editing || ALL.rows.some(r => r.state === "creating" || r.state === "revising")) timer = setTimeout(load, 5000);
 }
 load();
 </script>

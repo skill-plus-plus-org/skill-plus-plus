@@ -76,8 +76,10 @@ with what it has seen before. Two thresholds decide what you see:
 
 A candidate belongs to one project: the git repo the work was done in (the
 folder itself outside a repo). The same procedure in two repos is two
-candidates, since the skill made from it belongs in that repo. When the page
-holds more than one project, a menu beside the tabs shows one at a time.
+candidates, since the skill made from it belongs in that repo. Nothing is
+recorded without a project. The page shows one project at a time, picked in the
+menu beside the tabs. It opens on the project you chose last, or on the one
+`skill-plus-plus web` was started in.
 
 ```bash
 skill-plus-plus web            # the review page, http://127.0.0.1:8765
@@ -91,14 +93,15 @@ under the requests they served; open a request to see every step in order.
 Promote what is worth a skill, ignore what is not. An ignored candidate is
 still recognised when you repeat it, so it is never proposed again; **Bring
 back** under **Ignored** undoes it. A promoted or drafted candidate can be
-ignored too, after a confirmation; an installed skill is uninstalled first.
+ignored too, after a confirmation; an installed skill's folder is removed from
+`.claude/skills/` first.
 
 ### Shortcuts
 
 - **`/skill-plus-plus-new`**, or `skill-plus-plus dictate`, describes a procedure instead of
   performing it: the agent asks what the description leaves out, and the
-  candidate skips the three-times rule. *Work in progress: how it works may
-  change.*
+  candidate skips the three-times rule. It belongs to the project you run it
+  in, like captured work. *Work in progress: how it works may change.*
 - **`SKILL_PLUS_PLUS_RECURRENCE=1`** makes every candidate ready at once.
 
 ## From a candidate to a skill
@@ -110,20 +113,19 @@ ignored too, after a confirmation; an installed skill is uninstalled first.
    and under `## Open questions` whatever it could not tell from the run. It may
    also decline, when the work is not a reusable procedure; the page then says
    why, and you can draft again with a note.
-3. In **Drafts**, answer the open questions. The answers go back to the agent,
-   which folds each into the skill. **Revise** sends any other instruction.
-4. **Install** once no question is left:
-   - **Install in `<project>`** writes it to the repo's `.claude/skills/<name>/`.
-     Commit that folder and everyone who works in the repo has the skill.
-   - **Just for me** writes it to `~/.claude/skills/<name>/` (or the folder
-     `skill-plus-plus web --skills-dir` names).
+3. On the **Skills** tab, the draft waits under its project, in **To review**.
+   Answer the open questions there. The answers go back to the agent, which
+   folds each into the skill. **Revise** sends any other instruction.
+4. **Install in `<project>`** once no question is left. It writes the skill to
+   the repo's `.claude/skills/<name>/`; commit that folder and everyone who
+   works in the repo has it. A skill belongs to the project it was made from,
+   so there is no install for every project. A folder of the same name that the
+   page did not install is never touched.
 
-   After a revision, **Update** replaces the installed copy. **Uninstall**
-   removes only the files the page installed, and leaves the skill alone once
-   you have edited it. A folder of the same name that the page did not install
-   is never touched. **Download** gives a zip for anywhere else; a skill you
-   unzip by hand is recorded with
-   `skill-plus-plus promote <id> --skill-path <folder>/SKILL.md`.
+   Installed, the draft becomes one of the project's skills (below). From then
+   on the folder is the skill, and **Edit** on its card changes it. To take a
+   skill out, delete its folder: nothing else is kept of the install, and its
+   draft comes back to review.
 
 The same from the terminal:
 
@@ -131,6 +133,9 @@ The same from the terminal:
 skill-plus-plus draft <id> --note "what to look out for" --apply
 skill-plus-plus revise <id> --instruction "what to change" --apply
 ```
+
+`revise` changes a draft until it is installed; after that it refuses, and
+`edit-skill` (below) changes the skill.
 
 The agent is whatever `SKILL_PLUS_PLUS_AGENT` names, `claude -p` by default. It runs in
 a temporary folder with only the draft instructions and a way to read the
@@ -150,6 +155,35 @@ skill-plus-plus bundle --format upload --out ~/skill-uploads
 An uploaded skill lives in your account, not on your machine. Read it before
 uploading. For a team, `--format plugin --plugin-name <name> --with-commands`
 writes a Claude Code plugin folder instead.
+
+## Skills in your projects
+
+The **Skills** tab shows the project's drafts to review first, then every skill
+it has in `.claude/skills/`, three to a row, whoever put it there: Skill++, you
+or a teammate. A card is the skill's name and what it is for, with a label
+while an edit is running or waiting.
+
+Click a card to open the skill: its `SKILL.md`, and what you can do with it.
+
+- **Edit** asks your agent for a change: say what should change, and it edits
+  a copy in a temporary folder. The change comes back as a diff. Nothing in the
+  project changes until you press **Apply**; **Discard** drops it. Apply is
+  refused if the skill changed after the agent took its copy. The draft a
+  skill was installed from stays as it was. A linked skill folder, and one over
+  100 files or 1 MB, are not edited from here.
+- **Undo**, right after Apply, puts the skill back as it was. It lasts until
+  your next action or a reload of the page, and is refused if anything changed
+  the skill since.
+
+The same edit from the terminal:
+
+```bash
+skill-plus-plus edit-skill <folder> --project ~/code/my-repo --instruction "what to change" --apply
+```
+
+Open Claude Code sessions pick up a changed `SKILL.md` at once. After the first
+install into a project creates its `.claude/skills/` folder, run
+`/reload-skills` there.
 
 ## Housekeeping
 
@@ -175,7 +209,7 @@ edits settings or spends a model call is a dry run until you add `--apply`.
 | Deciding | `promote`, `dismiss` (or `ignore`), `reopen`, `ignored` |
 | Drafting | `draft`, `revise`, `name`, `scaffold`, `dictate` (work in progress) |
 | Fixing candidates | `split`, `merge`, `retitle`, `sift` |
-| Skills you have | `lifecycle`, `tier`, `check`, `reconcile`, `bundle`, `expire`, `accuracy` |
+| Skills you have | `edit-skill`, `lifecycle`, `tier`, `check`, `reconcile`, `bundle`, `expire`, `accuracy` |
 | Internal (run by the hooks) | `hook`, `fold-session`, `fold-pending` |
 
 ## Memory
@@ -259,6 +293,10 @@ All settings are environment variables.
 - *Inconclusive*: the agent wrote nothing and did not say it was declining. A
   denied tool is the usual cause; its output is in the log.
 - *Timed out*: drafts get 900 seconds; `skill-plus-plus draft … --timeout N` gives more.
+
+**An edit failed.** Read
+`~/.claude/skill-plus-plus/edits/<project>/<name>/current/agent.log`; the causes
+are the same as for a draft. **Dismiss** clears it.
 
 **The page will not start: `Address already in use`.** Another `skill-plus-plus web` is
 running. Stop it with Ctrl-C in its terminal, or use `skill-plus-plus web --port 8766`.

@@ -253,7 +253,13 @@ def scan(skills_dir: Path, config: Config,
 
 def move_tier(skill: SkillInfo, target_tier: str, skills_dir: Path,
               config: Config) -> Path:
-    """Move a skill between hot / cold / archived. Never deletes."""
+    """Move a skill between hot / cold / archived. Never deletes.
+
+    A folder of the same name already in the target tier is never replaced:
+    the cold and archive tiers are shared by every project, and two projects
+    both have a `deploy` skill soon enough. It used to be removed to make room,
+    which deleted the other project's skill.
+    """
     destinations = {
         "hot": skills_dir,
         "cold": config.cold_dir,
@@ -266,8 +272,8 @@ def move_tier(skill: SkillInfo, target_tier: str, skills_dir: Path,
     dest = dest_root / skill.path.parent.name
     if dest.resolve() == skill.path.parent.resolve():
         return dest
-    if dest.exists():
-        shutil.rmtree(dest) if dest.is_dir() else dest.unlink()
+    if dest.exists() or dest.is_symlink():
+        raise FileExistsError(f"{dest} already exists; move or rename it first")
     shutil.move(str(skill.path.parent), str(dest))
     return dest
 
