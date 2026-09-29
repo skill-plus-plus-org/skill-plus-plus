@@ -153,8 +153,8 @@ new Code session in the desktop app) and work as usual.
 - `install` without `--apply` only shows what it would do, downloads included.
   Your settings file is backed up before it is changed.
 - `--user` instead of `--project` captures every project on the machine.
-- The two models are about 10 GB on disk, and folding a session takes about
-  13 GB of free memory. Skill++ only starts when that fits with 2 GB to spare,
+- The two models are about 6.4 GB on disk, and folding a session takes about
+  7 GB of free memory. Skill++ only starts when that fits with 2 GB to spare,
   and otherwise waits, so it never pushes your machine into swap
   ([Memory](docs/usage.md#memory)). `--no-models` leaves Ollama alone.
 - `skill-plus-plus install --project ~/code/my-repo --remove --apply` takes the hooks
@@ -311,8 +311,8 @@ including sessions of our own work that we cannot publish.
 ## 🧭 When to use · when to skip
 
 **Good fit if you** repeat procedures in Claude Code (the CLI or the desktop
-app's Code tab), on macOS or Linux, with about 15 GB of memory free now and
-then: the local model takes about 13 GB while it folds a session, and Skill++
+app's Code tab), on macOS or Linux, with about 9 GB of memory free now and
+then: the local model takes about 7 GB while it folds a session, and Skill++
 waits until that fits.
 
 **Skip it if you** mostly do one-off work, run Windows, or use another agent:

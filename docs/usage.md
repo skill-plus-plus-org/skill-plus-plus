@@ -180,16 +180,18 @@ edits settings or spends a model call is a dry run until you add `--apply`.
 
 ## Memory
 
-The local model is the one large thing Skill++ runs. On an 18 GB Mac, loading
-`gemma4:e4b` and `nomic-embed-text` took **12.8 GB** of free memory, whatever
-the session: a one-word question costs as much as a whole session. With other
-apps open, a fold ran at 92 % memory used, and macOS swapped out 4.7 GB in
+The local model is the one large thing Skill++ runs. On an 18 GB Mac, a fold
+with `gemma4:e4b-it-qat` and `nomic-embed-text` takes about **7 GB** of free
+memory, whatever the session: a one-word question costs as much as a whole
+session. `gemma4:e4b`, the default before it, took 12.8 GB, and with other
+apps open a fold ran at 92 % memory used while macOS swapped out 4.7 GB in
 100 seconds. So Skill++ guards its memory use:
 
 - **It starts only if the models fit.** A fold loads the models only when
-  what they take still leaves 2 GB free. What they take is measured on your
-  computer: estimated from their size at first, then the largest amount a
-  fold has actually used here.
+  what they take still leaves 2 GB free: with the default models, from about
+  9 GB free. What they take is measured on your computer: estimated from
+  their size at first, which asks for about 10 GB free, then the largest
+  amount a fold has actually used here.
 - **It stops when memory runs short.** If free memory falls below 2 GB while a
   fold runs, or macOS reports critical memory pressure, Skill++ stops and
   unloads the models at once.

@@ -8,16 +8,17 @@ All notable changes to Skill++. The format follows
 
 ### Added
 
-- A memory guard for the local model. Measured on an 18 GB Mac, loading the
-  two models took 12.8 GB of free memory, and a fold with other apps open ran
-  at 92 % used with macOS swapping. There was no leak; the model is simply
-  large. Now a fold loads the models only when they fit with 2 GB to spare,
-  stops and unloads them at once if free memory falls below that, and unloads
-  them as soon as it ends instead of after Ollama's five minutes. What the
-  models take is measured on each computer. A session that doesn't fit is kept
-  and folded later: when the computer is idle, at the next session start, or
-  with **Fold now** on the review page. A desktop notification says when a fold
-  waits or is stopped, and `doctor` and `stats` show the figures.
+- A memory guard for the local model. Measured on an 18 GB Mac, loading
+  `gemma4:e4b` and the embedder took 12.8 GB of free memory, and a fold with
+  other apps open ran at 92 % used with macOS swapping. There was no leak; the
+  model is simply large. Now a fold loads the models only when they fit with
+  2 GB to spare, stops and unloads them at once if free memory falls below
+  that, and unloads them as soon as it ends instead of after Ollama's five
+  minutes. What the models take is measured on each computer; with
+  `gemma4:e4b-it-qat` a fold starts at about 9 GB free. A session that doesn't
+  fit is kept and folded later: when the computer is idle, at the next session
+  start, or with **Fold now** on the review page. A desktop notification says
+  when a fold waits or is stopped, and `doctor` and `stats` show the figures.
   `SKILL_PLUS_PLUS_MEMORY_GUARD`, `SKILL_PLUS_PLUS_MEMORY_RESERVE_GB`,
   `SKILL_PLUS_PLUS_IDLE_MINUTES` and `SKILL_PLUS_PLUS_NOTIFY` configure it.
 

@@ -2,8 +2,9 @@
 
 The local model is the one large thing Skill++ runs. Measured on an 18 GB Mac
 (docs/usage.md, "Memory"): loading gemma4:e4b and nomic-embed-text took 12.8
-GB of available memory, and a fold with other apps open sat at 92 % used, macOS
-pressure at warning, with 4.7 GB swapped out in 100 seconds. Nothing leaked: a
+GB of available memory (a fold with gemma4:e4b-it-qat, the default after it,
+about 7), and a fold with other apps open sat at 92 % used, macOS pressure at
+warning, with 4.7 GB swapped out in 100 seconds. Nothing leaked: a
 one-word question locks as much as a whole session. So the fix is not in how a
 session is read but in when the models may load, and how long they stay.
 
@@ -48,7 +49,10 @@ GB = 1024 ** 3
 # Size on disk times this is the first guess at what loading takes. Measured in
 # bytes on the calibration run: 9.88e9 on disk (gemma4:e4b and nomic-embed-text,
 # as Ollama lists them) took 13.7e9 of available memory, which is 12.8 GiB: the
-# weights plus the buffers and cache that loading brings along.
+# weights plus the buffers and cache that loading brings along. It guesses high
+# for gemma4:e4b-it-qat: 6.42e9 on disk, 8.3 GiB guessed, 7.0 GiB measured. The
+# guess only decides the first fold of a model set on a computer; from then on
+# the measured figure does (`need_bytes`).
 NEED_FACTOR = 1.39
 # How long `unload` waits for Ollama to stop listing a model. It answers the
 # unload at once and lets go a moment later; a check made in between counted a

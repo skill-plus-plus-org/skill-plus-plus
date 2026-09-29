@@ -136,8 +136,9 @@ class Config:
         self.min_episode_steps = _int_env("SKILL_PLUS_PLUS_MIN_EPISODE_STEPS", 2)
         # The memory guard (`skill_plus_plus.memory`). The local model is not
         # small: on an 18 GB Mac, loading gemma4:e4b and the embedder took 12.8
-        # GB of available memory, and a fold with other apps open ran at 92 %
-        # used with 4.7 GB swapped out in 100 s. So a fold starts only when the
+        # GB of available memory (gemma4:e4b-it-qat, the default after it, about
+        # 7), and a fold with other apps open ran at 92 % used with 4.7 GB
+        # swapped out in 100 s. So a fold starts only when the
         # models fit with this much memory still free, and stops, unloading
         # them, the moment less than this is left. An absolute figure, not a
         # share of RAM: what keeps a machine out of swap is headroom in
