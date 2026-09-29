@@ -118,7 +118,7 @@ class Config:
         # session ends, and writes the summaries the review page shows. None
         # of it runs while the developer works.
         self.ollama_url = _str_env("SKILL_PLUS_PLUS_OLLAMA", "http://127.0.0.1:11434")
-        self.local_model = _str_env("SKILL_PLUS_PLUS_LOCAL_MODEL", "gemma4:e4b")
+        self.local_model = _str_env("SKILL_PLUS_PLUS_LOCAL_MODEL", "gemma4:e4b-it-qat")
         # Which embedding model decides "same procedure" (`skill_plus_plus.matching`).
         self.embed_model = _str_env("SKILL_PLUS_PLUS_EMBED_MODEL", "nomic-embed-text")
         # Cosine at or above which an episode joins an existing entry. Set where

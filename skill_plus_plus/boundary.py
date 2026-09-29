@@ -20,9 +20,9 @@ Two things keep each call fast, and neither may be undone:
 
 * the one-word answer that `prompts/new_job.md` ends by asking for, because the
   length of what is generated, not of what is read, sets the time a call takes;
-* thinking off (`JUDGE_THINKS`): the default model, `gemma4:e4b`, can think,
-  and on a model that thinks the same one-word question takes minutes instead
-  of a second.
+* thinking off (`JUDGE_THINKS`): the default model, `gemma4:e4b-it-qat`, can
+  think, and on a model that thinks the same one-word question takes minutes
+  instead of a second.
 
 Why the question is asked here — the per-tool-call judge it replaced, the
 polarity test that settled it, the framings rejected since and what each cost —
@@ -123,6 +123,17 @@ _THINK_CTX = 8192
 SHOW_NEXT = True
 NEXT_LABEL = "## What the assistant did after the new message"
 
+# Whether the question says so when the earlier task's work ended in a completion
+# marker (`segment.COMPLETION_MARKERS`: a commit, a push, a pull request) and
+# nothing changed after it. On. The command is already among the last actions,
+# but as one line of a heredoc, and `gemma4:e4b-it-qat` reads past it: on C-same
+# it answers "no" right after the `git commit`, and "yes" with the line, which
+# moved no other verdict on the recorded sessions (docs/research/benchmarks.md,
+# "A finished commit, said in one line"). A marker no longer cuts on its own, a
+# verdict does, so this is a fact the judge weighs rather than a rule.
+# `tests/benchmarks/judge_replay.py --no-completion` measures without it.
+SHOW_COMPLETION = True
+
 
 def render_step(step: dict) -> str:
     """One clause describing what the assistant just did: "ran `…`".
@@ -178,8 +189,8 @@ def render_step(step: dict) -> str:
     return core
 
 
-_SLOT_RE = re.compile(r"\{(GOAL|PRIOR|STEP_OUTPUT|REPLY_BEFORE|PROMPT|"
-                      r"REPLY_AFTER|NEXT_BLOCK)\}")
+_SLOT_RE = re.compile(r"\{(GOAL|PRIOR|STEP_OUTPUT|REPLY_BEFORE|COMPLETION|"
+                      r"PROMPT|REPLY_AFTER|NEXT_BLOCK)\}")
 
 
 def _block(label: str, text: str) -> str:
@@ -209,11 +220,45 @@ def _tail(text: str, limit: int) -> str:
     return "… " + (cut[cut.find(" ") + 1:] if " " in cut else cut)
 
 
+def completion_before(steps: list[dict], index: int) -> str:
+    """The completion marker the earlier task's work ended on, or "".
+
+    Walks back from the step the gap follows, past steps that only look
+    (`git status`, `git log`), to the last step that changed something. Only a
+    Bash marker that succeeded counts: a commit a hook rejected is work still in
+    progress, and an edit after the commit means the work went on.
+
+    Only through the reply to the last message, never past it. A new task often
+    opens with "suggest how, don't change anything yet", a reply that only
+    reads; walking on past it found the previous task's commit and flagged
+    "Implement it." as if it came straight after one, at four gaps that are one
+    task on the recorded sessions.
+    """
+    from .normalize import normalize_links
+    from .segment import COMPLETION_MARKERS, is_prompt, is_read_only
+
+    for step in reversed(steps[:index + 1]):
+        if is_prompt(step):
+            return ""
+        if is_read_only(step):
+            continue
+        if step.get("tool") != "Bash" or step.get("failed"):
+            return ""
+        command = str((step.get("input") or {}).get("command", ""))
+        return next((link for link in normalize_links(command)
+                     if link in COMPLETION_MARKERS), "")
+    return ""
+
+
 def gap_extras(steps: list[dict], index: int, said: list[dict]) -> dict:
     """The optional slots for one gap, cut to the current settings."""
     from .segment import is_prompt
 
     out = {}
+    if SHOW_COMPLETION:
+        marker = completion_before(steps, index)
+        if marker:
+            out["completion"] = marker
     if STEP_OUTPUT_CHARS:
         out["step_output"] = _head(steps[index].get("tool_returned", ""),
                                    STEP_OUTPUT_CHARS)
@@ -255,6 +300,9 @@ def build_prompt(goal: str, prior: list[str], step: dict,
                               extras.get("step_output", "")),
         "REPLY_BEFORE": _block("Then the assistant told the developer:",
                                extras.get("reply_before", "")),
+        "COMPLETION": (f"\n\nBefore the new message, `{extras['completion']}` "
+                       "succeeded and nothing was changed after it."
+                       if extras.get("completion") else ""),
         "PROMPT": said.strip() or "> (nothing)",
         "REPLY_AFTER": _block("The assistant answered:",
                               extras.get("reply_after", "")),
