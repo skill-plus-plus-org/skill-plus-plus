@@ -45,11 +45,11 @@ skill-plus-plus install --settings path/to/settings.json --apply
 
 It also copies two slash commands into the matching `commands/` folder,
 `/skill-plus-plus-review` and `/skill-plus-plus-new`, and downloads the two
-Ollama models detection needs (`gemma4:e4b` and `nomic-embed-text`, about 10 GB)
-if they are missing. The dry run lists what it would download. Ollama itself
-has to be installed and running first (https://ollama.com); without it the
-hooks go in anyway, and sessions wait until it answers. `--no-models` skips the
-download.
+Ollama models detection needs (`gemma4:e4b-it-qat` and `nomic-embed-text`, about
+6.4 GB) if they are missing. The dry run lists what it would download. Ollama
+itself has to be installed and running first (https://ollama.com); without it
+the hooks go in anyway, and sessions wait until it answers. `--no-models` skips
+the download.
 
 Hooks are read when a session starts, so start a new session afterwards (a new
 chat in the CLI, or a new Code session in the desktop app), and check:
@@ -225,7 +225,7 @@ All settings are environment variables.
 | `SKILL_PLUS_PLUS_RECURRENCE` | `3` | times a task must repeat before it can be promoted |
 | `SKILL_PLUS_PLUS_TTL_DAYS` | `14` | how long `skill-plus-plus expire` keeps a candidate that is not promoted, counted from its last recognition |
 | `SKILL_PLUS_PLUS_OLLAMA` | `http://127.0.0.1:11434` | the Ollama server |
-| `SKILL_PLUS_PLUS_LOCAL_MODEL` | `gemma4:e4b` | the model that cuts sessions and names candidates |
+| `SKILL_PLUS_PLUS_LOCAL_MODEL` | `gemma4:e4b-it-qat` | the model that cuts sessions and names candidates |
 | `SKILL_PLUS_PLUS_EMBED_MODEL` | `nomic-embed-text` | the model that matches repeats |
 | `SKILL_PLUS_PLUS_MATCH_FLOOR` | `0.93` | similarity at which two runs' commands count as the same procedure |
 | `SKILL_PLUS_PLUS_MATCH_FLOOR_TURNS` | `0.85` | the same, for runs compared by their conversation |

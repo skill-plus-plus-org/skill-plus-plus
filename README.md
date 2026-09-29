@@ -122,9 +122,9 @@ about how you work changes.
 ## 💸 What it costs: nothing, until you ask
 
 Watching, cutting and matching run on two open models on your machine
-(`gemma4:e4b` and `nomic-embed-text`, through Ollama): no tokens, no API calls,
-and nothing leaves your laptop. The only call to a frontier model is your own
-agent writing the skill: once per draft or revision, and only when you press
+(`gemma4:e4b-it-qat` and `nomic-embed-text`, through Ollama): no tokens, no API
+calls, and nothing leaves your laptop. The only call to a frontier model is your
+own agent writing the skill: once per draft or revision, and only when you press
 **Draft Skill** or **Revise**. Only then does that one run's conversation go to
 it.
 
@@ -205,11 +205,12 @@ which anyone can replay.
 ### 1. Where does one task end?
 
 One chat is rarely one task. At every message you typed between two tool calls,
-Skill++ asks a local model (`gemma4:e4b`, through Ollama) one question: 113
-questions for 415 tool calls across the recordings. The question sets the
-earlier task and your new message side by side in named sections, says what
-counts as a new task, and asks for one word. It runs in the background after
-the session ends, in under a second and a half per message.
+Skill++ asks a local model (`gemma4:e4b-it-qat`, through Ollama) one question:
+113 questions for 415 tool calls across the recordings. The question sets the
+earlier task and your new message side by side in named sections, says when the
+earlier work ended in a commit, says what counts as a new task, and asks for one
+word. It runs in the background after the session ends, in under a second and a
+half per message.
 
 **Every one of the 13 task switches found, 0 false cuts in 100 places** where a
 review, a correction or a follow-up must stay in its task.
@@ -257,9 +258,10 @@ quote the line of the draft behind every yes.
 
 Measured on the 30 public recordings of code and knowledge work in
 [tests/fixtures/sessions/](tests/fixtures/sessions/), which anyone can replay
-with the commands below, with the defaults (`gemma4:e4b`, `nomic-embed-text`).
-Eight of them are the recordings of the video above, which were held out while
-the judge's question was tuned. The weak rows stay in the tables.
+with the commands below, with the defaults (`gemma4:e4b-it-qat`,
+`nomic-embed-text`). Eight of them are the recordings of the video above, which
+were held out while the judge's question was tuned. The weak rows stay in the
+tables.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/numbers-dark.svg">

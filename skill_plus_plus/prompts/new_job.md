@@ -8,7 +8,7 @@ What the developer asked for, in order:
 
 The assistant's last actions on it:
 
-{PRIOR}{STEP_OUTPUT}{REPLY_BEFORE}
+{PRIOR}{STEP_OUTPUT}{REPLY_BEFORE}{COMPLETION}
 
 ## New message from the developer
 

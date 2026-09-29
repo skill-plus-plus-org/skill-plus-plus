@@ -1154,7 +1154,8 @@ def _has_model(models: list[str], want: str) -> bool:
 
 # What `install` tells a reader before a download, not what it relies on: the
 # pull reports its real size as it goes.
-_MODEL_SIZES = {"gemma4:e4b": "about 10 GB", "nomic-embed-text": "about 0.3 GB"}
+_MODEL_SIZES = {"gemma4:e4b-it-qat": "about 6 GB", "gemma4:e4b": "about 10 GB",
+                "nomic-embed-text": "about 0.3 GB"}
 
 
 def _pull_model(config: Config, name: str) -> str:
@@ -1714,7 +1715,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             print(f"wrote {path}")
     except OSError as exc:
         print(f"could not update the slash commands: {exc}", file=sys.stderr)
-    # Last: a 10 GB download should not hold up the hooks.
+    # Last: a 6 GB download should not hold up the hooks.
     if models:
         _install_models(Config(args.root), apply=True)
     print(_next_steps(args, Config(args.root).recurrence_threshold))
