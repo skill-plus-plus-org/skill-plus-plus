@@ -6,6 +6,8 @@ All notable changes to Skill++. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-30
+
 ### Added
 
 - A memory guard for the local model. Measured on an 18 GB Mac, loading
